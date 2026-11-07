@@ -710,8 +710,8 @@ var BGM_TRACKS = [
   { file: 'orchid.mp3', title: 'Orchid', artist: 'HoliznaCC0', license: 'CC0' },
   { file: 'tranquil-mindscape.mp3', title: 'Tranquil Mindscape', artist: 'HoliznaCC0', license: 'CC0' },
   { file: 'wetlands.mp3', title: 'Wetlands', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'coffee-lounge.mp3', title: 'Coffee Lounge', artist: 'PeriTune', license: 'CC BY 4.0' },
-  { file: 'positive3.mp3', title: 'Positive3', artist: 'PeriTune', license: 'CC BY 4.0' }
+  { file: 'let-it-happen.mp3', title: 'Let It Happen', artist: 'OtoLogic', license: 'CC BY 4.0' },
+  { file: 'in-that-mood.mp3', title: 'In That Mood', artist: 'OtoLogic', license: 'CC BY 4.0' }
 ];
 var bgm = {
   audio: null, order: [], pos: 0, current: -1, playsLeft: 1,
