@@ -516,5 +516,206 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.trackPlays(90) === 1 && L.trackPlays(255) === 1 && L.trackPlays(0) === 1, '再生回数: 通常の曲と長さ不明は 1 回');
 }
 
+/* 20. ピース形状プロファイル (古典的ノブの寸法を実測で固定する)
+ * 最初期の実装は「制御点を headHalf に置けば頭幅になる」という誤解で、実測
+ * すると頭幅 0.13〜0.20・首は最小 0.076・付け根幅は最大 0.84 まで広がり、
+ * タブが細長く垂れて見えた。5ベジェ版は頭の下にえぐれを作ったため「細い首＋
+ * 笠状の頭」の二段変形 (鏡餅) になった。現行は楕円頭＋S字フィレットの単一
+ * ノブで、首は頭の 0.74〜0.78 倍に保つ (2026-11-08 実機指摘)。
+ * ここでは生成した辺を細密にサンプリングし、輪郭の実寸 (セル比) が古典的
+ * ノブの範囲に収まることを全辺で保証する。幅は高さ方向の帯ごとに
+ * 「その高さでの輪郭の横幅」を測る。 */
+{
+  function tabProfile(e) {
+    const pts = L.sampleEdge(e, 96), s = e.sign;
+    const tab = pts.map(p => ({ u: p.u, h: p.v * s })).filter(p => p.h > 0.004);
+    const t = Math.max.apply(null, tab.map(p => p.h));
+    const BINS = 40, widths = new Array(BINS).fill(null);
+    tab.forEach(p => {
+      const b = Math.min(BINS - 1, Math.floor(p.h / t * BINS));
+      if (!widths[b]) widths[b] = { min: p.u, max: p.u };
+      else { widths[b].min = Math.min(widths[b].min, p.u); widths[b].max = Math.max(widths[b].max, p.u); }
+    });
+    for (let b = 0; b < BINS; b++) { // 空ビンは隣から補間
+      if (widths[b]) continue;
+      let lo = b - 1; while (lo >= 0 && !widths[lo]) lo--;
+      let hi = b + 1; while (hi < BINS && !widths[hi]) hi++;
+      if (lo >= 0 && hi < BINS) widths[b] = { min: (widths[lo].min + widths[hi].min) / 2, max: (widths[lo].max + widths[hi].max) / 2 };
+      else if (lo >= 0) widths[b] = widths[lo];
+      else if (hi < BINS) widths[b] = widths[hi];
+    }
+    const band = (lo, hi, fn) => {
+      let out = fn === 'min' ? Infinity : -Infinity;
+      for (let i = 0; i < BINS; i++) {
+        const ctr = (i + 0.5) / BINS;
+        if (ctr < lo || ctr >= hi || !widths[i]) continue;
+        const w = widths[i].max - widths[i].min;
+        out = fn === 'min' ? Math.min(out, w) : Math.max(out, w);
+      }
+      return out;
+    };
+    const es = L.edgeSegments(e);
+    return {
+      t: t,
+      neck: band(0.10, 0.55, 'min'),   // 首域 (高さ10〜55%) の最小幅
+      head: band(0.55, 0.97, 'max'),   // 頭域 (高さ55〜97%) の最大幅
+      base: es.segs[es.segs.length - 1].x3 - es.lineTo.u // 付け根の遷移幅 xs..xe
+    };
+  }
+  let heightOk = true, neckOk = true, headOk = true, ratioOk = true, baseOk = true, worst = null;
+  for (const pieces of [36, 100, 400, 2025]) {
+    for (const date of ['2026-11-07', '2026-11-08', '2026-12-25', '2027-03-14']) {
+      const edges = L.generateEdges(date, pieces);
+      const all = [];
+      edges.h.forEach(r => r.forEach(e => e && all.push(e)));
+      edges.v.forEach(r => r.forEach(e => e && all.push(e)));
+      for (const e of all) {
+        const p = tabProfile(e);
+        if (!(p.t >= 0.15 && p.t <= 0.25)) { heightOk = false; worst = p; }
+        if (!(p.neck >= 0.15 && p.neck <= 0.20)) { neckOk = false; worst = p; }
+        if (!(p.head >= 0.21 && p.head <= 0.25)) { headOk = false; worst = p; }
+        if (!(p.neck >= p.head * 0.70 && p.neck <= p.head * 0.82)) { ratioOk = false; worst = p; }
+        if (!(p.base >= 0.30 && p.base <= 0.38)) { baseOk = false; worst = p; }
+      }
+    }
+  }
+  const wj = worst ? ' (違反例: ' + JSON.stringify(worst) + ')' : '';
+  ok(heightOk, '形状: タブ高さは全辺で 0.15〜0.25 (約20%)' + wj);
+  ok(neckOk, '形状: 首幅は全辺で 0.15〜0.20 (細い首にしない)' + wj);
+  ok(headOk, '形状: 頭幅は全辺で 0.21〜0.25 (丸い頭の実寸)' + wj);
+  ok(ratioOk, '形状: 首は頭の 0.70〜0.82 倍 (単一ノブの比率)' + wj);
+  ok(baseOk, '形状: 付け根の遷移幅は全辺で 0.30〜0.38 (裾を広げすぎない)' + wj);
+}
+
+/* 21. ピース形状プロファイルの単峰性 (二段変形の再発防止)
+ * 5ベジェ版は「細い首の上に笠状の頭が乗る」二段変形になり、幅プロファイルに
+ * 首と頭の間に余分な極小・極大が現れた。現行仕様では、幅プロファイルは
+ * 有効域 (高さ10%以上) で「付け根から首まで単調減少 → 頭まで単調増加 →
+ * 頂まで単調減少」の3区間だけからなり、極小は首の1回・極大は頭の1回だけ。
+ * ノブ曲線だけの点列 (直線部の点を除く) で測る。頭/首比もここで固定する。 */
+{
+  function knobProfile(e) {
+    const ptsAll = L.sampleEdge(e, 96), s = e.sign;
+    const pts = ptsAll.slice(2, ptsAll.length - 1); // 直線部の2点と終点を除いたノブ曲線のみ
+    const tab = pts.map(p => ({ u: p.u, h: p.v * s })).filter(p => p.h > 0.004);
+    const t = Math.max.apply(null, tab.map(p => p.h));
+    const BINS = 40, widths = new Array(BINS).fill(null);
+    tab.forEach(p => {
+      const b = Math.min(BINS - 1, Math.floor(p.h / t * BINS));
+      if (!widths[b]) widths[b] = { min: p.u, max: p.u };
+      else { widths[b].min = Math.min(widths[b].min, p.u); widths[b].max = Math.max(widths[b].max, p.u); }
+    });
+    for (let b = 0; b < BINS; b++) { // 空ビンは隣から補間
+      if (widths[b]) continue;
+      let lo = b - 1; while (lo >= 0 && !widths[lo]) lo--;
+      let hi = b + 1; while (hi < BINS && !widths[hi]) hi++;
+      if (lo >= 0 && hi < BINS) widths[b] = { min: (widths[lo].min + widths[hi].min) / 2, max: (widths[lo].max + widths[hi].max) / 2 };
+      else if (lo >= 0) widths[b] = widths[lo];
+      else if (hi < BINS) widths[b] = widths[hi];
+    }
+    const w = widths.map(x => x.max - x.min);
+    let startIdx = 0; while ((startIdx + 0.5) / BINS < 0.10) startIdx++;
+    let neckIdx = startIdx, neckMin = Infinity;
+    for (let i = startIdx; i < BINS; i++) { if ((i + 0.5) / BINS < 0.60 && w[i] < neckMin) { neckMin = w[i]; neckIdx = i; } }
+    let headIdx = neckIdx, headMax = -Infinity;
+    for (let i = neckIdx; i < BINS; i++) if (w[i] > headMax) { headMax = w[i]; headIdx = i; }
+    const TOL = 0.01;
+    let uni = headIdx > neckIdx;
+    for (let i = startIdx; i < neckIdx && uni; i++) if (w[i + 1] > w[i] + TOL) uni = false;
+    for (let i = neckIdx; i < headIdx && uni; i++) if (w[i + 1] < w[i] - TOL) uni = false;
+    for (let i = headIdx; i < BINS - 1 && uni; i++) if (w[i + 1] > w[i] + TOL) uni = false;
+    return { uni: uni, ratio: headMax / neckMin, neckIdx: neckIdx, headIdx: headIdx };
+  }
+  let uniOk = true, ratioOk = true, worst = null;
+  for (const pieces of [36, 100, 400, 2025]) {
+    for (const date of ['2026-11-07', '2026-11-08', '2026-12-25', '2027-03-14']) {
+      const edges = L.generateEdges(date, pieces);
+      const all = [];
+      edges.h.forEach(r => r.forEach(e => e && all.push(e)));
+      edges.v.forEach(r => r.forEach(e => e && all.push(e)));
+      for (const e of all) {
+        const p = knobProfile(e);
+        if (!p.uni) { uniOk = false; worst = p; }
+        if (!(p.ratio >= 1.2 && p.ratio <= 1.45)) { ratioOk = false; worst = p; }
+      }
+    }
+  }
+  const wj = worst ? ' (違反例: ' + JSON.stringify(worst) + ')' : '';
+  ok(uniOk, '形状: 幅プロファイルは全辺で単峰 (極小は首1回・極大は頭1回、二段変形なし)' + wj);
+  ok(ratioOk, '形状: 頭/首比は全辺で 1.2〜1.45' + wj);
+}
+
+/* 22. 辺の端点と角の一致 (バリの再発防止)
+ * 旧実装は edgeSegments の端点を (0, s*a) / (1, s*e) とし、辺の端点自体が
+ * ジッター分ずれていたため、角で横辺の終端と縦辺の始端が一致せず輪郭に
+ * 段差 (バリ) が残った (実測: 角の接続ギャップ最大 0.063・中央値 0.035)。
+ * 端点は角 (0,0)/(1,0) に完全一致し、組み立てた輪郭の角接続も完全一致する
+ * こと、そして輪郭ポリゴンが自己交差しないことを全数で保証する。 */
+{
+  const seedSets = [
+    ['2026-11-07', 36], ['2026-11-08', 36], ['2026-11-08', 100],
+    ['2026-12-25', 400], ['2027-03-14', 2025]
+  ];
+  // (1) 全辺で sampleEdge の始点 (0,0)・終点 (1,0) に完全一致
+  let endOk = true, totalEdges = 0;
+  for (const [date, pieces] of seedSets) {
+    const edges = L.generateEdges(date, pieces);
+    const all = [];
+    edges.h.forEach(r => r.forEach(e => e && all.push(e)));
+    edges.v.forEach(r => r.forEach(e => e && all.push(e)));
+    for (const e of all) {
+      totalEdges++;
+      const pts = L.sampleEdge(e, 8);
+      const f = pts[0], l = pts[pts.length - 1];
+      if (!(f.u === 0 && f.v === 0 && l.u === 1 && l.v === 0)) endOk = false;
+    }
+  }
+  ok(endOk, 'バリ: 全辺 (' + totalEdges + ' 本) で sampleEdge の始点=(0,0)・終点=(1,0) に完全一致');
+  // (2) セル輪郭の角接続が完全一致 (辺の終点 === 次の辺の始点、盤端含む)
+  let cornerOk = true, totalCorners = 0, worstGap = 0;
+  const sideNames = ['top', 'right', 'bottom', 'left'];
+  for (const [date, pieces] of seedSets) {
+    const edges = L.generateEdges(date, pieces), n = edges.n;
+    for (let row = 0; row < n; row++) for (let col = 0; col < n; col++) {
+      const sp = sideNames.map(s => L.sideSamples(edges, col, row, s, 8));
+      for (let k = 0; k < 4; k++) {
+        totalCorners++;
+        const eP = sp[k][sp[k].length - 1], sP = sp[(k + 1) % 4][0];
+        const gap = Math.hypot(eP.x - sP.x, eP.y - sP.y);
+        if (gap > worstGap) worstGap = gap;
+        if (gap !== 0) cornerOk = false;
+      }
+    }
+  }
+  ok(cornerOk, 'バリ: 全セル角 (' + totalCorners + ' 箇所) で接続ギャップ = 0 (最大 ' + worstGap + ')');
+  // (3) 輪郭ポリゴンの自己交差なし (非隣接セグメント同士の交差を全数チェック)
+  function segInt(p1, p2, p3, p4) {
+    const d1 = (p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x);
+    const d2 = (p4.x - p3.x) * (p2.y - p3.y) - (p4.y - p3.y) * (p2.x - p3.x);
+    const d3 = (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
+    const d4 = (p2.x - p1.x) * (p4.y - p1.y) - (p2.y - p1.y) * (p4.x - p1.x);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  }
+  function outlineSelfIntersects(pts) {
+    const m = pts.length;
+    for (let i = 0; i < m; i++) {
+      for (let j = i + 2; j < m; j++) {
+        if (i === 0 && j === m - 1) continue; // 周回で隣接
+        if (segInt(pts[i], pts[(i + 1) % m], pts[j], pts[(j + 1) % m])) return true;
+      }
+    }
+    return false;
+  }
+  let crossOk = true, checkedCells = 0;
+  for (const [date, pieces] of [['2026-11-07', 36], ['2026-11-08', 100], ['2026-12-25', 400]]) {
+    const edges = L.generateEdges(date, pieces), n = edges.n;
+    for (let row = 0; row < n; row++) for (let col = 0; col < n; col++) {
+      checkedCells++;
+      if (outlineSelfIntersects(L.pieceOutlinePoints(edges, col, row, 8))) crossOk = false;
+    }
+  }
+  ok(crossOk, 'バリ: 輪郭ポリゴンに自己交差なし (' + checkedCells + ' セル全数)');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -68,38 +68,99 @@ function imageSizeFor(pieces) {
  *   横境界 h[row][col]: u は +x 方向、v の + は +y (下のピース側)
  *   縦境界 v[row][col]: u は +y 方向、v の + は +x (右のピース側)
  * sign=+1 のとき、横境界では上のピースにデコ (下へ出る)、縦境界では左のピースにデコ (右へ出る)。
- * 輪郭 = 直線部 + 3次ベジェ3本 (付け根の遷移 → ノブ本体 → 付け根の遷移)。
- * 個体差: t (高さ 0.7〜1.3倍)、b (中心のずれ ±0.15)、a/c/d/e (制御点ジッター数%)。
+ * 輪郭 = 直線部 + 3次ベジェ8本。頭は「楕円」(横半径 headHalf、中心は高さ
+ * 0.65t、縦半径 0.35t) で定義し、最広点から 30° 下の接合点で輪郭に合流する。
+ * 付け根→首は凹フィレット、首→接合点は変曲のある S 字でつなぎ、全ての継ぎ目で
+ * 接線を一致させる (G1 連続)。幅プロファイルは「付け根 → 首 (最小) → 頭 (最大)
+ * → 頂」の単峰型になるよう寸法を決めている。
+ * 古典的ノブの寸法 (セル比・全幅、実測値): 頭 ≈0.22〜0.24 / 首 ≈0.16〜0.19
+ * (頭の 0.74〜0.78 倍、頭/首比 ≈1.29〜1.34) / 付け根の遷移幅 ≈0.32〜0.34 /
+ * 高さ ≈0.16〜0.24。headHalf / neckHalf / filletHalf は曲線が実際に通る半幅。
+ *
+ * 【旧実装の不具合1 (2026-11-08 実測で判明)】最初期の edgeSegments はノブ本体を
+ * 「首→首を結ぶ1本のベジェ」で描き、制御点だけを headHalf 位置に置いていた。
+ * ベジェ曲線は制御点に届かないため、引数の headHalf (半幅 0.14〜0.21) に
+ * 対して実際の頭幅は全幅 0.13〜0.20 しかなく、逆に付け根は xs = c-headHalf-0.06
+ * から始まるため遷移幅が全幅 0.40 (最大 0.84) に及んだ。結果として
+ * 「広い裾がなだらかに細くなり、細い首の上に小さな頭が乗る」垂れた形になり、
+ * 実機で「タブが細長く垂れる・首が極端に細い」と見えていた。
+ * 【旧実装の不具合2 (同日、5ベジェ版)】節点を曲線上の点に直したが、頭の側面の
+ * 制御点を headHalf+0.02 まで外へ張り出させて「頭の下のえぐれ」を作ったため、
+ * 首の上に別パーツの笠が乗ったような二段変形 (頭の下にもう一つの膨らみ) に
+ * なり、「鏡餅みたい」と却下された。現行は楕円＋S字フィレットで単一ノブ化。
+ * 【旧実装の不具合3 (同日、端点のバリ)】edgeSegments の端点を start=(0, s*a) /
+ * end=(1, s*e) とし、辺の端点自体を直線 (v=0) からジッター分ずらしていた。
+ * 角では横辺の終端と縦辺の始端が一致せず、輪郭に段差が残った (実測: |a|/|e|
+ * は最大 0.045・中央値 0.022、角の接続ギャップは最大 0.063・中央値 0.035)。
+ * Draradech 原法どおり端点は必ず角 (0,0)/(1,0) に一致させ、a/e は付け根
+ * フィレットの基部高さ ha=a*0.3 / he=e*0.3 としてのみ効かせる。
+ * 個体差: t (高さ 0.8〜1.2倍)、b (中心のずれ ±0.15)、a/c/d/e (制御点ジッター数%)。
  */
 function genEdge(rng) {
   function jit() { return (rng() * 2 - 1) * JITTER; }
   var sign = rng() < 0.5 ? 1 : -1;
-  var t = TABSIZE * (0.7 + rng() * 0.6);          // 低いノブ〜高いノブ
+  var t = TABSIZE * (0.8 + rng() * 0.4);          // ノブ高さ 0.16〜0.24
   var b = (rng() * 2 - 1) * 0.15;                  // ノブ中心のずれ ±15%
   var a = jit(), c = jit(), d = jit(), e = jit();
-  // ノブが辺からはみ出さない保証: 頭の半幅 + 付け根の余白 + |ずれ| < 0.5
-  var headHalf = 0.085 + t * 0.40 + Math.abs(d) * 0.5;
-  var fillet = 0.06;
-  var maxShift = 0.5 - headHalf - fillet - 0.02;
+  // 頭・首・付け根は曲線が実際に通る半幅。首は頭の 0.74〜0.78 倍に保ち、
+  // 細い首＋笠状の頭という二段変形にならない寸法にする
+  var headHalf = 0.115 + c * 0.11;                 // 頭の横半径 (半幅 0.110〜0.120、全幅 ≈0.22〜0.24)
+  var neckHalf = headHalf * (0.76 + d * 0.35);     // 首の半幅 (頭の 0.744〜0.776 倍)
+  var filletHalf = headHalf + 0.052;               // 付け根遷移の半幅 (全幅 ≈0.32〜0.34)
+  // ノブが辺からはみ出さない保証: 付け根の半幅 + |ずれ| + 余白 < 0.5
+  var maxShift = 0.5 - filletHalf - 0.02;
   if (Math.abs(b) > maxShift) b = Math.sign(b) * Math.max(0, maxShift);
-  return { sign: sign, t: t, a: a, b: b, c: c, d: d, e: e, headHalf: headHalf, neckHalf: 0.045 + d * 0.5 };
+  return { sign: sign, t: t, a: a, b: b, c: c, d: d, e: e, headHalf: headHalf, neckHalf: neckHalf, filletHalf: filletHalf };
 }
-/* 辺のベジェ区間列を返す。start: {u,v}, segs: [{x1,y1,x2,y2,x3,y3}] (終点のみ保持) */
+/* 辺のベジェ区間列を返す。start: {u,v}, segs: [{x1,y1,x2,y2,x3,y3}] (終点のみ保持)
+ * 構成 (左→右): 付け根フィレット → 首→接合 (S字) → 楕円弧 (接合→最広→頂→
+ * 最広→接合) → 接合→首 (S字) → 付け根フィレット。節点は全て曲線上の点で、
+ * 首では鉛直接線、接合点・最広点・頂点では楕円の接線に制御点を揃える (G1)。
+ * 高さ方向の節点: 首 0.375t / 接合 0.475t / 最広 (= 楕円中心) 0.65t / 頂 1.0t。
+ * start=(0,0) / end=(1,0) は角に完全一致させる (端点にジッターを持たせない)。 */
 function edgeSegments(edge) {
+  var s = edge.sign, t = edge.t;
   var c = 0.5 + edge.b;
-  var t = edge.t, s = edge.sign;
-  var nh = edge.neckHalf, hh = edge.headHalf, fl = 0.06;
-  var xs = c - hh - fl, xe = c + hh + fl;
-  var a = edge.a, e = edge.e, tilt = edge.c;
-  var segs = [
-    // 付け根の遷移: 直線部から首へなめらかに入る
-    { x1: c - nh - 0.055, y1: s * 0.0, x2: c - nh - 0.040, y2: s * t * 0.45, x3: c - nh, y3: s * t * 0.60 },
-    // ノブ本体: 首より幅広い丸い頭 (制御点を高くして頂点が t に届くようにする)
-    { x1: c - hh - 0.02 + tilt, y1: s * t * 1.12, x2: c + hh + 0.02 + tilt, y2: s * t * 1.12, x3: c + nh, y3: s * t * 0.60 },
-    // 付け根の遷移: 首から直線部へ戻る
-    { x1: c + nh + 0.040, y1: s * t * 0.45, x2: c + nh + 0.055, y2: s * 0.0, x3: xe, y3: s * e * 0.3 }
+  var Rh = edge.headHalf, nh = edge.neckHalf, bx = edge.filletHalf;
+  var cx = c + edge.c * 0.3;                    // 頭楕円の中心 u (微小チルト)
+  var yc = t * 0.65, Rv = t * 0.35;             // 楕円の中心高さ・縦半径 (頂 = yc+Rv = t)
+  var PHI = Math.PI / 6;                        // 接合点は最広点から 30° 下
+  var hj = yc - Rv * Math.sin(PHI);             // 接合点の高さ = 0.475t
+  var h1 = hj - t * 0.10;                       // 首の高さ = 0.375t
+  var ha = edge.a * 0.3, he = edge.e * 0.3;     // 付け根の高さ (直線部の傾きを引き継ぐ)
+  // 楕円パラメータ点と、θ 減少方向 (= 輪郭の進行方向) の接線ベクトル
+  function P(th) { return { u: cx + Rh * Math.cos(th), h: yc + Rv * Math.sin(th) }; }
+  function D(th) { return { u: Rh * Math.sin(th), h: -Rv * Math.cos(th) }; }
+  // 楕円弧 θA→θB (θA>θB) を1本のベジェで近似 (制御点は両端の接線上)
+  function arc(thA, thB) {
+    var k = (4 / 3) * Math.tan((thA - thB) / 4);
+    var pA = P(thA), pB = P(thB), dA = D(thA), dB = D(thB);
+    return { x1: pA.u + k * dA.u, y1: pA.h + k * dA.h, x2: pB.u - k * dB.u, y2: pB.h - k * dB.h, x3: pB.u, y3: pB.h };
+  }
+  var THJ = Math.PI + PHI, THJR = -PHI;         // 接合点のパラメータ角 (左 210° / 右 -30°)
+  var J = P(THJ), JR = P(THJR);
+  var NL = { u: cx - nh, h: h1 }, NR = { u: cx + nh, h: h1 };
+  var BL = { u: c - bx, h: ha }, BR = { u: c + bx, h: he };
+  var g2 = 0.38;                                // 接合点での接線方向の制御点距離係数
+  var dJ = D(THJ), dJR = D(THJR);
+  var segsH = [
+    // 付け根 (左): ベースから首へ絞る凹フィレット (首側は鉛直接線で受ける)
+    { x1: BL.u + 0.62 * (NL.u - BL.u), y1: BL.h + 0.30 * (NL.h - BL.h), x2: NL.u, y2: NL.h - 0.42 * (NL.h - BL.h), x3: NL.u, y3: NL.h },
+    // 首→接合 (左): 鉛直に立ち上がり、楕円の接線に滑らかに合流する S 字
+    { x1: NL.u, y1: NL.h + 0.45 * (J.h - NL.h), x2: J.u - g2 * dJ.u, y2: J.h - g2 * dJ.h, x3: J.u, y3: J.h },
+    arc(THJ, Math.PI),                          // 接合→最広 (左)
+    arc(Math.PI, Math.PI / 2),                  // 最広→頂 (左)
+    arc(Math.PI / 2, 0),                        // 頂→最広 (右)
+    arc(0, THJR),                               // 最広→接合 (右)
+    // 接合→首 (右): 左の S 字と対称
+    { x1: JR.u + g2 * dJR.u, y1: JR.h + g2 * dJR.h, x2: NR.u, y2: NR.h + 0.45 * (JR.h - NR.h), x3: NR.u, y3: NR.h },
+    // 付け根 (右): 首からベースへ戻る凹フィレット
+    { x1: NR.u, y1: NR.h - 0.42 * (NR.h - BR.h), x2: BR.u - 0.62 * (BR.u - NR.u), y2: BR.h + 0.30 * (NR.h - BR.h), x3: BR.u, y3: BR.h }
   ];
-  return { start: { u: 0, v: s * a }, lineTo: { u: xs, v: s * a * 0.3 }, segs: segs, end: { u: 1, v: s * e } };
+  var segs = segsH.map(function (sg) {
+    return { x1: sg.x1, y1: s * sg.y1, x2: sg.x2, y2: s * sg.y2, x3: sg.x3, y3: s * sg.y3 };
+  });
+  return { start: { u: 0, v: 0 }, lineTo: { u: BL.u, v: s * ha }, segs: segs, end: { u: 1, v: 0 } };
 }
 /* 辺をサンプリングした点列 [{u,v}] を返す (始点→終点) */
 function sampleEdge(edge, perSeg) {
@@ -1264,8 +1325,11 @@ function getWoodTile() {
     c.save();
     c.beginPath(); c.rect(0, y, 512, ph); c.clip();
     // 木目: 横に流れる柔らかい波線 (少なく・薄く)。周期は 512 の約数にして
-    // 横方向のタイル継ぎ目でも線がつながるようにする
-    for (var i = 0; i < 7; i++) {
+    // 横方向のタイル継ぎ目でも線がつながるようにする。
+    // 本数は板あたり4本まで、濃さも抑えめに留める: 細い線が多いと実機の
+    // 高倍率表示 (353%等) で密な横縞 (モアレ状) に見えるため、高周波成分を
+    // 減らす (2026-11-08 実機指摘への穏当な対策)。
+    for (var i = 0; i < 4; i++) {
       var gy = y + rng() * ph, amp = 0.8 + rng() * 2.4;
       var per = 512 / (2 + Math.floor(rng() * 4)), phase = rng() * 6.28;
       c.beginPath();
@@ -1273,8 +1337,8 @@ function getWoodTile() {
         var yy = gy + Math.sin(x / per * 6.28 + phase) * amp;
         if (x === 0) c.moveTo(x, yy); else c.lineTo(x, yy);
       }
-      c.strokeStyle = 'rgba(' + (gr[0] + (rng() * (gr[1] - gr[0])) | 0) + ',' + (gr[2] + (rng() * (gr[3] - gr[2])) | 0) + ',' + (gr[4] + (rng() * (gr[5] - gr[4])) | 0) + ',' + (0.03 + rng() * 0.07).toFixed(3) + ')';
-      c.lineWidth = 0.8 + rng() * 2.4;
+      c.strokeStyle = 'rgba(' + (gr[0] + (rng() * (gr[1] - gr[0])) | 0) + ',' + (gr[2] + (rng() * (gr[3] - gr[2])) | 0) + ',' + (gr[4] + (rng() * (gr[5] - gr[4])) | 0) + ',' + (0.025 + rng() * 0.045).toFixed(3) + ')';
+      c.lineWidth = 1.2 + rng() * 2.0;
       c.stroke();
     }
     // 幅の広い柔らかい色の流れ (絵画的なムラ) を板ごとに1本、薄く入れる

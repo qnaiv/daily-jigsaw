@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ピース形状デバッグ (shape-debug)</title>
+<style>
+  body { margin: 0; padding: 20px; background: #efe7d7; color: #33261a;
+         font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.note { margin: 4px 0 14px; font-size: 13px; color: #6b5844; max-width: 860px; line-height: 1.6; }
+  .row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { font-size: 14px; font-weight: bold; margin: 0 0 6px; }
+  canvas { background: #f7f1e3; border: 1px solid #c9b48c; border-radius: 8px; }
+  table { border-collapse: collapse; margin-top: 18px; background: #fffaf0; font-size: 13px; }
+  th, td { border: 1px solid #c9b48c; padding: 5px 10px; text-align: right; }
+  th { background: #e7d9bd; }
+  td:first-child, th:first-child { text-align: left; }
+</style>
+</head>
+<body>
+<h1>ピース形状デバッグ — 実際の生成コードによる描画</h1>
+<p class="note">
+  app.js の実コード（PureLogic.generateEdges / pieceOutlinePoints）で、固定シード
+  <b>2026-11-08 × 36ピース</b> の盤面から左上 3×3 のピースを組み立てた状態で描いています。
+  隣り合うピース同士で辺の曲線を共有するため、タブとブランクが噛み合う様子がそのまま見えます。
+  右の「写真」側はテクスチャをピース形に切り抜いたもので、読み込めない環境では生成テクスチャで代用します。
+</p>
+<div class="row">
+  <figure>
+    <figcaption>シルエット（輪郭のみ）</figcaption>
+    <canvas id="sil" width="920" height="920"></canvas>
+  </figure>
+  <figure>
+    <figcaption>写真テクスチャ付き</figcaption>
+    <canvas id="photo" width="920" height="920"></canvas>
+  </figure>
+</div>
+<table id="metrics">
+  <thead>
+    <tr><th>中心ピースの辺</th><th>タブ高さ (%セル)</th><th>首の幅 (%セル)</th><th>頭の幅 (%セル)</th><th>付け根幅 (%セル)</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<p class="note">数値は sampleEdge の細密サンプリングから実測したもの（タブのない直線辺は — ）。</p>
+
+<script>
+  /* app.js のブラウザUI部は fetch('data/images.json') で起動するため、
+   * デバッグページでは fetch を未解決のままにして UI を止め、
+   * 同期的に定義される PureLogic (純粋ロジック) だけを使う。 */
+  window.fetch = function () { return new Promise(function () {}); };
+</script>
+<script src="./app.js"></script>
+<script>
+(function () {
+  var L = window.PureLogic;
+  var DATE = '2026-11-08', PIECES = 36;
+  var edges = L.generateEdges(DATE, PIECES);
+  var CELL = 250, MARGIN = 85; // 3×3 の外側にタブがはみ出す余白
+  var BLOCK = 3;
+
+  function piecePath(ctx, col, row) {
+    var pts = L.pieceOutlinePoints(edges, col, row, 24);
+    ctx.beginPath();
+    pts.forEach(function (p, i) {
+      var x = MARGIN + (col + p.x) * CELL, y = MARGIN + (row + p.y) * CELL;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+  }
+
+  /* ---- シルエット ---- */
+  var sil = document.getElementById('sil').getContext('2d');
+  var fills = ['#3d4f63', '#54677f'];
+  for (var r = 0; r < BLOCK; r++) for (var c = 0; c < BLOCK; c++) {
+    piecePath(sil, c, r);
+    sil.fillStyle = fills[(r + c) % 2];
+    sil.fill();
+    sil.strokeStyle = 'rgba(255,250,238,0.9)';
+    sil.lineWidth = 2;
+    sil.stroke();
+  }
+
+  /* ---- 写真テクスチャ ---- */
+  var photo = document.getElementById('photo').getContext('2d');
+  var tex = document.createElement('canvas');
+  tex.width = tex.height = BLOCK * CELL;
+  function drawGeneratedTexture() {
+    var t = tex.getContext('2d');
+    var g = t.createLinearGradient(0, 0, 0, tex.height);
+    g.addColorStop(0, '#a8c6e0'); g.addColorStop(0.45, '#dfe9ee'); g.addColorStop(0.46, '#5d7d5a'); g.addColorStop(1, '#2e4d3a');
+    t.fillStyle = g; t.fillRect(0, 0, tex.width, tex.height);
+    t.fillStyle = '#71879b';
+    t.beginPath(); t.moveTo(0, 345); t.lineTo(220, 180); t.lineTo(420, 345); t.closePath(); t.fill();
+    t.fillStyle = '#5d7186';
+    t.beginPath(); t.moveTo(300, 345); t.lineTo(520, 150); t.lineTo(750, 345); t.closePath(); t.fill();
+    t.fillStyle = 'rgba(255,255,255,0.85)';
+    t.beginPath(); t.moveTo(485, 175); t.lineTo(520, 150); t.lineTo(555, 175); t.lineTo(535, 190); t.lineTo(520, 178); t.lineTo(505, 190); t.closePath(); t.fill();
+    t.fillStyle = '#3f6d8e'; t.fillRect(0, 560, tex.width, 190);
+    t.fillStyle = 'rgba(255,255,255,0.25)';
+    for (var i = 0; i < 26; i++) t.fillRect((i * 173) % tex.width, 580 + (i * 89) % 150, 46, 5);
+  }
+  function drawPhoto() {
+    photo.clearRect(0, 0, 920, 920);
+    for (var r = 0; r < BLOCK; r++) for (var c = 0; c < BLOCK; c++) {
+      photo.save();
+      piecePath(photo, c, r);
+      photo.clip();
+      photo.drawImage(tex, MARGIN, MARGIN);
+      photo.restore();
+      piecePath(photo, c, r);
+      photo.strokeStyle = 'rgba(30,20,10,0.55)';
+      photo.lineWidth = 1.5;
+      photo.stroke();
+    }
+  }
+  drawGeneratedTexture();
+  drawPhoto();
+  var img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = function () {
+    var t = tex.getContext('2d');
+    t.clearRect(0, 0, tex.width, tex.height);
+    t.drawImage(img, 0, 0, tex.width, tex.height);
+    drawPhoto();
+  };
+  img.src = 'https://picsum.photos/id/1015/750/750';
+
+  /* ---- 中心ピース (1,1) の4辺の実測値 ---- */
+  function profileOf(edge) {
+    if (!edge) return null;
+    var pts = L.sampleEdge(edge, 96), s = edge.sign;
+    var tab = pts.map(function (p) { return { u: p.u, h: p.v * s }; }).filter(function (p) { return p.h > 0.004; });
+    if (!tab.length) return null;
+    var t = Math.max.apply(null, tab.map(function (p) { return p.h; }));
+    var BINS = 40, widths = new Array(BINS).fill(null);
+    tab.forEach(function (p) {
+      var b = Math.min(BINS - 1, Math.floor(p.h / t * BINS));
+      if (!widths[b]) widths[b] = { min: p.u, max: p.u };
+      else { widths[b].min = Math.min(widths[b].min, p.u); widths[b].max = Math.max(widths[b].max, p.u); }
+    });
+    for (var b = 0; b < BINS; b++) {
+      if (widths[b]) continue;
+      var lo = b - 1; while (lo >= 0 && !widths[lo]) lo--;
+      var hi = b + 1; while (hi < BINS && !widths[hi]) hi++;
+      if (lo >= 0 && hi < BINS) widths[b] = { min: (widths[lo].min + widths[hi].min) / 2, max: (widths[lo].max + widths[hi].max) / 2 };
+      else if (lo >= 0) widths[b] = widths[lo]; else if (hi < BINS) widths[b] = widths[hi];
+    }
+    function range(lo, hi, fn) {
+      var out = fn === 'min' ? Infinity : -Infinity;
+      for (var i = 0; i < BINS; i++) {
+        var ctr = (i + 0.5) / BINS;
+        if (ctr < lo || ctr >= hi || !widths[i]) continue;
+        var w = widths[i].max - widths[i].min;
+        out = fn === 'min' ? Math.min(out, w) : Math.max(out, w);
+      }
+      return isFinite(out) ? out : null;
+    }
+    var es = L.edgeSegments(edge);
+    return {
+      t: t, neck: range(0.10, 0.55, 'min'), head: range(0.55, 0.97, 'max'),
+      base: es.segs[es.segs.length - 1].x3 - es.lineTo.u
+    };
+  }
+  var n = edges.n, center = { col: 1, row: 1 };
+  var rowsData = [
+    ['上辺', edges.h[center.row][center.col]],
+    ['下辺', edges.h[center.row + 1][center.col]],
+    ['左辺', edges.v[center.row][center.col]],
+    ['右辺', edges.v[center.row][center.col + 1]]
+  ];
+  var tbody = document.querySelector('#metrics tbody');
+  rowsData.forEach(function (rd) {
+    var p = profileOf(rd[1]);
+    var tr = document.createElement('tr');
+    function td(v) { return '<td>' + (v == null ? '—' : (v * 100).toFixed(1)) + '</td>'; }
+    tr.innerHTML = '<td>' + rd[0] + '</td>' + (p ? td(p.t) + td(p.neck) + td(p.head) + td(p.base) : td(null) + td(null) + td(null) + td(null));
+    tbody.appendChild(tr);
+  });
+})();
+</script>
+</body>
+</html>
