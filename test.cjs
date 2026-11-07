@@ -341,5 +341,31 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(g2.length === 2 && approx(g2f.gx, 21) && approx(g2f.gy, 15.5), 'グループ確定: 合体しない塊は追随量だけ動き、自由座標を保つ');
 }
 
+/* 12. コレクション詳細の完成盤面レイアウト / 描画プラン */
+{
+  for (const pieces of L.DIFFICULTIES) {
+    const n = Math.round(Math.sqrt(pieces));
+    const lay = L.completedBoardLayout(pieces, 960);
+    ok(lay.n === n && Math.abs(lay.cellPx * (n + 2) - 960) < 1e-6 && lay.ox === lay.cellPx && lay.oy === lay.cellPx && Math.abs(lay.boardPx - lay.cellPx * n) < 1e-6,
+      '完成盤面レイアウト: ' + pieces + 'ピースは n=' + n + '、余白1セルで盤が収まる');
+    const plan = L.detailRenderPlan(pieces);
+    ok(plan.n === n && plan.sizePx > 0 && plan.perSeg >= 5 && plan.perSeg <= 10,
+      '詳細描画プラン: ' + pieces + 'ピース (sizePx=' + plan.sizePx + ', perSeg=' + plan.perSeg + ')');
+  }
+  const planMax = L.detailRenderPlan(2025), planMin = L.detailRenderPlan(36);
+  ok(planMax.perSeg < planMin.perSeg && planMax.sizePx < planMin.sizePx, '詳細描画プラン: 最大難易度は解像度とサンプリングを落として軽量化する');
+  // 詳細の辺シード (レコード日付×難易度) が決定的で、完成盤面の全ピース輪郭が作れること
+  const de1 = L.generateEdges('2026-11-03', 225), de2 = L.generateEdges('2026-11-03', 225);
+  let outlineOk = true;
+  for (let id = 0; id < 225; id++) {
+    const home = L.pieceHome(id, 15);
+    const pts = L.pieceOutlinePoints(de1, home.col, home.row, L.detailRenderPlan(225).perSeg);
+    if (pts.length < 8) { outlineOk = false; break; }
+    pts.forEach(p => { if (!isFinite(p.x) || !isFinite(p.y)) outlineOk = false; });
+  }
+  ok(outlineOk && JSON.stringify(de1.h) === JSON.stringify(de2.h) && JSON.stringify(de1.v) === JSON.stringify(de2.v),
+    '詳細の辺生成は決定的で、全ピースの輪郭点が有限値で作れる');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

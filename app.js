@@ -398,6 +398,26 @@ function isEdgePiece(id, n) {
   var h = pieceHome(id, n);
   return h.col === 0 || h.row === 0 || h.col === n - 1 || h.row === n - 1;
 }
+
+/* ---- コレクション詳細の「完成盤面」描画用レイアウト ----
+ * 詳細では写真を通常表示でなく、マットに完成させたときと同じ見た目
+ * (全ピースがホーム座標に置かれ、輪郭と凹凸が見える) で Canvas 描画する。
+ * プレイ画面のマット (fitView('mat')) と同じく、盤の周りに1セルの余白を取る。 */
+function completedBoardLayout(pieces, sizePx) {
+  var n = Math.round(Math.sqrt(pieces));
+  var cellPx = sizePx / (n + 2);
+  return { n: n, cellPx: cellPx, ox: cellPx, oy: cellPx, boardPx: cellPx * n };
+}
+/* 詳細描画の解像度と辺サンプリング密度。表示は1回だけなので重くなりすぎない
+ * 範囲で、ピース数が多い難易度ほど解像度と密度を落として固まらないようにする。 */
+function detailRenderPlan(pieces) {
+  var n = Math.round(Math.sqrt(pieces));
+  return {
+    n: n,
+    sizePx: n >= 45 ? 736 : n >= 28 ? 864 : 960,
+    perSeg: n >= 28 ? 6 : 10
+  };
+}
 function formatTime(sec) {
   sec = Math.max(0, Math.floor(sec));
   var m = Math.floor(sec / 60), s = sec % 60, hh = Math.floor(m / 60);
@@ -419,7 +439,8 @@ var PureLogic = {
   absorbMerges: absorbMerges, clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, initialScatter: initialScatter,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
-  isEdgePiece: isEdgePiece, formatTime: formatTime
+  isEdgePiece: isEdgePiece, formatTime: formatTime,
+  completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
 
@@ -500,6 +521,7 @@ function applyTheme() {
     b.classList.toggle('active', b.getAttribute('data-theme-opt') === uiTheme);
   });
   if (state) { renderStartScreen(); draw(); } // 箱の色と Canvas (木目/マット) を新テーマで描き直す
+  if (typeof detailRecord !== 'undefined' && detailRecord && !$('detailModal').hidden) renderDetailPuzzle(detailRecord); // 詳細のマット色も追従
 }
 function setUiTheme(name) {
   if (THEME_NAMES.indexOf(name) < 0) return;
@@ -1391,8 +1413,19 @@ function renderCollection() {
     grid.appendChild(card);
   });
 }
+/* ---------- コレクション詳細: 完成盤面をジグソー風に描く ----------
+ * 写真をそのまま出すのではなく、そのレコードの難易度 n で「全ピースが
+ * マット上の正しい位置に置かれた状態」を Canvas に1回だけ描く。
+ * 辺は既存の generator をレコードの日付×難易度シードで再生成する
+ * (当時の形と一致しなくてよいが、開くたびに同じ形になる)。
+ * ピースの描き方はプレイ画面と揃える: 輪郭パスでクリップして写真を描き、
+ * 縁に線を付ける (pieceBitmap と同じ流儀)。背景はマット色にして、
+ * マットに置いて完成させたときの見た目にする。 */
+var detailRecord = null;
+var detailSeq = 0; // 非同期読み込みの競合ガード (開き直したら古い描画を捨てる)
+
 function openDetail(r) {
-  $('detailImg').src = 'https://picsum.photos/id/' + r.imageId + '/800/800';
+  detailRecord = r;
   $('detailText').innerHTML =
     '日付: ' + r.date + '<br>難易度: ' + r.pieces + 'ピース<br>クリアタイム: ' + formatTime(r.bestTimeSec) +
     '<br>手数: ' + (r.moves != null ? r.moves : '-') +
@@ -1400,6 +1433,88 @@ function openDetail(r) {
     (r.author ? '<br>作者: ' + r.author : '');
   // 過去日をプレイしに行く導線は作らない (コレクションは閲覧のみ)
   $('detailModal').hidden = false;
+  renderDetailPuzzle(r);
+}
+
+/* 詳細用の写真を正方形キャンバスで用意する。読み込み失敗時はゲーム本体と
+ * 同じ抽象画フォールバック (そのレコードの日付シード生成) をソースにする。 */
+function loadDetailSource(r) {
+  return new Promise(function (resolve) {
+    var size = Math.min(1080, imageSizeFor(r.pieces));
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = function () {
+      var side = Math.min(img.naturalWidth, img.naturalHeight);
+      var cv = document.createElement('canvas');
+      cv.width = size; cv.height = size;
+      cv.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+      resolve(cv);
+    };
+    img.onerror = function () { resolve(makeFallbackCanvas(r.date)); };
+    img.src = 'https://picsum.photos/id/' + r.imageId + '/' + size + '/' + size;
+  });
+}
+/* 完成盤面用のピース輪郭パス (盤面座標)。buildPiecePath と同じ組み立てだが、
+ * ゲームの state ではなく引数の edges / レイアウトから作る。 */
+function detailPiecePath(edges, col, row, layout, perSeg) {
+  var path = new Path2D();
+  var sides = ['top', 'right', 'bottom', 'left'];
+  sides.forEach(function (side, si) {
+    var pts = sideSamples(edges, col, row, side, perSeg);
+    pts.forEach(function (p, i) {
+      var x = layout.ox + (col + p.x) * layout.cellPx;
+      var y = layout.oy + (row + p.y) * layout.cellPx;
+      if (si === 0 && i === 0) path.moveTo(x, y); else path.lineTo(x, y);
+    });
+  });
+  path.closePath();
+  return path;
+}
+/* マット + 完成盤面を描く。src が null の間はマットと「読み込み中」だけ出す */
+function paintDetailBoard(cv, r, src) {
+  var plan = detailRenderPlan(r.pieces);
+  var layout = completedBoardLayout(r.pieces, plan.sizePx);
+  var ctx = cv.getContext('2d');
+  var n = layout.n;
+  // マット全面 + 盤の土台 (プレイ画面のマット描画と揃える)
+  ctx.fillStyle = THEMES[uiTheme].mat;
+  ctx.fillRect(0, 0, plan.sizePx, plan.sizePx);
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.fillRect(layout.ox, layout.oy, layout.boardPx, layout.boardPx);
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(layout.ox, layout.oy, layout.boardPx, layout.boardPx);
+  if (!src) {
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = '600 ' + Math.max(14, Math.round(plan.sizePx * 0.028)) + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('読み込み中…', plan.sizePx / 2, plan.sizePx / 2);
+    return;
+  }
+  var edges = generateEdges(r.date, r.pieces);
+  for (var id = 0; id < n * n; id++) {
+    var home = pieceHome(id, n);
+    var path = detailPiecePath(edges, home.col, home.row, layout, plan.perSeg);
+    ctx.save();
+    ctx.clip(path);
+    ctx.drawImage(src, layout.ox, layout.oy, layout.boardPx, layout.boardPx);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(30,30,30,0.35)';
+    ctx.lineWidth = Math.max(1, layout.cellPx * 0.02);
+    ctx.stroke(path);
+  }
+}
+function renderDetailPuzzle(r) {
+  var seq = ++detailSeq;
+  var cv = $('detailCanvas');
+  var plan = detailRenderPlan(r.pieces);
+  cv.width = plan.sizePx;
+  cv.height = plan.sizePx;
+  paintDetailBoard(cv, r, null); // 先にマットだけ描いて待たせない
+  loadDetailSource(r).then(function (src) {
+    if (seq !== detailSeq) return; // 別の詳細が開かれたら古い結果は捨てる
+    paintDetailBoard(cv, r, src);
+  });
 }
 
 /* ---------- コントロール配線 ---------- */

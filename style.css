@@ -408,6 +408,7 @@ button { font: inherit; cursor: pointer; }
 .praise { background: var(--praise-bg); border: 1px solid var(--brass); color: var(--praise-ink); border-radius: 10px; padding: 8px 12px; font-weight: 700; }
 .result-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 #detailText { font-size: 14px; line-height: 1.7; text-align: left; width: 100%; }
+#detailCanvas { width: 100%; max-width: 528px; height: auto; aspect-ratio: 1; display: block; border-radius: 10px; }
 
 .settings-body { min-width: min(88vw, 320px); align-items: stretch; }
 .settings-body h2 { margin: 4px 0 2px; font-size: 17px; font-weight: 800; letter-spacing: .08em; text-align: center; }
