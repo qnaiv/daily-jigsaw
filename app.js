@@ -43,19 +43,11 @@ function msToDateStr(ms) {
 }
 function daysBetween(aStr, bStr) { return Math.round((dateToMs(aStr) - dateToMs(bStr)) / 86400000); }
 function addDays(dateStr, delta) { return msToDateStr(dateToMs(dateStr) + delta * 86400000); }
-function isValidDateStr(s) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s || '')) return false;
-  var ms = dateToMs(s);
-  return msToDateStr(ms) === s;
-}
 function jstTodayString(now) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now || new Date());
 }
-/* ?date= の解決: 不正/未来日は今日にクランプ */
-function resolvePlayDate(param, todayStr) {
-  if (param && isValidDateStr(param) && daysBetween(param, todayStr) <= 0) return param;
-  return todayStr;
-}
+/* 日付移動は廃止 (ユーザー指定): アプリは常に今日 (JST) のお題だけを開く。
+ * ?date= パラメータにも対応しない。過去の記録はコレクションで見るだけ。 */
 
 /* ---- お題決定: (対象日 - 基準日) mod プール ---- */
 function pickImageId(dateStr, pool) {
@@ -333,7 +325,7 @@ var PureLogic = {
   TABSIZE: TABSIZE, JITTER: JITTER, SNAP_DIST: SNAP_DIST,
   hashSeed: hashSeed, mulberry32: mulberry32, rngFromString: rngFromString,
   dateToMs: dateToMs, msToDateStr: msToDateStr, daysBetween: daysBetween, addDays: addDays,
-  isValidDateStr: isValidDateStr, jstTodayString: jstTodayString, resolvePlayDate: resolvePlayDate,
+  jstTodayString: jstTodayString,
   pickImageId: pickImageId, imageSizeFor: imageSizeFor,
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
@@ -447,9 +439,8 @@ function computeStreak() {
 }
 
 /* ---------- 画面状態 ---------- */
-var params = new URLSearchParams(location.search);
 var todayStr = jstTodayString();
-var playDate = resolvePlayDate(params.get('date'), todayStr);
+var playDate = todayStr; // 日付移動は廃止: 常に今日のお題だけ
 var difficulty = DIFFICULTIES.indexOf(store.lastDifficulty) >= 0 ? store.lastDifficulty : 36;
 var state = null; // ゲーム開始時に構築
 
@@ -1133,19 +1124,36 @@ function openDetail(r) {
     '<br>手数: ' + (r.moves != null ? r.moves : '-') +
     '<br>完成図: ' + (r.previewViewed ? '見た（' + r.previewCount + '回）' : '見ずにクリア') +
     (r.author ? '<br>作者: ' + r.author : '');
-  $('detailPlayBtn').onclick = function () { location.href = '?date=' + r.date; };
+  // 過去日をプレイしに行く導線は作らない (コレクションは閲覧のみ)
   $('detailModal').hidden = false;
 }
 
 /* ---------- コントロール配線 ---------- */
+/* 難易度セレクタ (案D: 重なったカード)。傾きはカード位置で決定的に決める。
+ * 選択中カードの想定時間はカード列の下に1行だけ出す。 */
+var DIFF_TIME_LABELS = { 36: '3〜8分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 784: '半日〜1日', 1225: '1〜2日', 2025: '数日がかり' };
+var DIFF_SUB_LABELS = { 36: 'かんたん', 2025: 'おに' };
+var DIFF_TILTS = [-3, -1.2, 2.2, -2, 1.4, -0.6, 2.5];
 function buildDifficultySeg() {
   var seg = $('difficultySeg');
   seg.innerHTML = '';
-  var labels = { 36: '36 かんたん', 100: '100', 225: '225', 400: '400', 784: '784', 1225: '1225', 2025: '2025 おに' };
-  DIFFICULTIES.forEach(function (d) {
+  DIFFICULTIES.forEach(function (d, i) {
     var b = document.createElement('button');
-    b.type = 'button'; b.className = 'seg-btn' + (d === difficulty ? ' active' : '');
-    b.textContent = labels[d];
+    b.type = 'button';
+    b.className = 'diff-card' + (d === difficulty ? ' active' : '');
+    b.style.setProperty('--tilt', DIFF_TILTS[i % DIFF_TILTS.length] + 'deg');
+    b.style.zIndex = d === difficulty ? 20 : i + 1;
+    var num = document.createElement('span');
+    num.className = 'diff-num';
+    num.textContent = d;
+    b.appendChild(num);
+    if (DIFF_SUB_LABELS[d]) {
+      var sub = document.createElement('span');
+      sub.className = 'diff-sub';
+      sub.textContent = DIFF_SUB_LABELS[d];
+      b.appendChild(sub);
+    }
+    b.setAttribute('aria-pressed', d === difficulty ? 'true' : 'false');
     b.addEventListener('click', function () {
       if (d === difficulty) return;
       if (state) persistProgress();
@@ -1156,6 +1164,8 @@ function buildDifficultySeg() {
     });
     seg.appendChild(b);
   });
+  var subLabel = DIFF_SUB_LABELS[difficulty];
+  $('difficultyTime').textContent = (subLabel ? subLabel + ' ・ ' : '') + '想定 ' + DIFF_TIME_LABELS[difficulty];
 }
 
 /* ---------- タイマーの一時停止/再開 ---------- */
@@ -1201,8 +1211,6 @@ function openSettings() {
   settingsAutoPaused = false;
   if (timerRunning()) { pauseTimer(); settingsAutoPaused = true; persistProgress(); }
   updateSettingsPauseBtn();
-  $('settingsDateNext').disabled = playDate >= todayStr;
-  $('settingsDateToday').disabled = playDate === todayStr;
   $('settingsModal').hidden = false;
 }
 function closeSettings() {
@@ -1265,11 +1273,6 @@ function wireControls() {
     closeSettings();
     restartPuzzle();
   });
-  $('settingsDatePrev').addEventListener('click', function () { location.href = '?date=' + addDays(playDate, -1); });
-  $('settingsDateNext').addEventListener('click', function () {
-    if (playDate < todayStr) location.href = '?date=' + addDays(playDate, 1);
-  });
-  $('settingsDateToday').addEventListener('click', function () { location.href = location.pathname; });
   $('resumePlayBtn').addEventListener('click', function () {
     uiHome = false;
     applyVisibility();
@@ -1282,8 +1285,6 @@ function wireControls() {
   });
   $('collectionBtn').addEventListener('click', showCollection);
   $('collectionBack').addEventListener('click', showPlay);
-  $('datePrevBtn').addEventListener('click', function () { location.href = '?date=' + addDays(playDate, -1); });
-  $('dateTodayBtn').addEventListener('click', function () { location.href = location.pathname; });
   $('resumeClose').addEventListener('click', function () { $('resumeBanner').hidden = true; });
   document.querySelectorAll('[data-close]').forEach(function (el) {
     el.addEventListener('click', function () {
@@ -1417,7 +1418,6 @@ function startGame(pool) {
   $('fadeVeil').classList.remove('on');
   var d = new Date(dateToMs(playDate));
   $('themeDateLabel').textContent = d.getUTCFullYear() + '年' + (d.getUTCMonth() + 1) + '月' + d.getUTCDate() + '日のお題';
-  $('dateTodayBtn').hidden = playDate === todayStr;
   $('themeCredit').textContent = '';
   $('streakNum').textContent = computeStreak();
   $('loadingOverlay').style.display = 'flex';

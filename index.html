@@ -12,39 +12,41 @@
 </head>
 <body>
 
-<!-- スタート画面: 難易度を選ぶのはここだけ。開始済みの難易度は「つづきから」になる -->
+<!-- スタート画面: 難易度を選ぶのはここだけ。開始済みの難易度は「つづきから」になる。
+     デザインは「紙 + タイポグラフィ、枠少なめ」。難易度だけ重なったカード (案D)。 -->
 <section id="startView">
   <div class="start-inner">
-    <div class="start-top">
-      <div class="start-title">
-        <h1>まいにちジグソー</h1>
-        <span id="streakBadge" class="streak" title="連続クリア日数">🔥 <span id="streakNum">0</span>日</span>
-      </div>
-      <div class="start-nav">
-        <button id="datePrevBtn" class="btn btn-glass" type="button">← 昨日</button>
-        <button id="dateTodayBtn" class="btn btn-glass" type="button" hidden>今日に戻る</button>
-        <button id="collectionBtn" class="btn btn-glass" type="button">コレクション</button>
-      </div>
-    </div>
-
-    <p class="start-theme">
-      <span id="themeDateLabel">読み込み中…</span>
-      <span id="themeCredit" class="credit"></span>
-      <span id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</span>
-    </p>
+    <header class="start-head">
+      <p class="start-kicker">DAILY JIGSAW</p>
+      <h1 class="start-title-text">まいにちジグソー</h1>
+      <p class="start-meta">
+        <span id="themeDateLabel">読み込み中…</span>
+        <span class="start-meta-sep">・</span>
+        <span id="streakBadge" class="streak" title="連続クリア日数">連続 <span id="streakNum">0</span>日</span>
+      </p>
+      <p class="start-creditline">
+        <span id="themeCredit" class="credit"></span>
+        <span id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</span>
+      </p>
+    </header>
 
     <div id="giftBox" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div>
     <p id="startHint" class="start-hint">箱をタップ</p>
 
     <div id="resumePanel" hidden>
       <p id="resumeInfo" class="resume-info"></p>
-      <button id="resumePlayBtn" class="btn btn-accent btn-big" type="button">つづきから遊ぶ</button>
+      <button id="resumePlayBtn" class="resume-link" type="button">つづきから遊ぶ <span class="resume-arrow" aria-hidden="true">→</span></button>
     </div>
 
     <div class="start-difficulty">
       <span class="start-difficulty-label">難易度</span>
-      <div id="difficultySeg" class="seg" role="group" aria-label="難易度"></div>
+      <div id="difficultySeg" class="diff-fan" role="group" aria-label="難易度"></div>
+      <p id="difficultyTime" class="diff-time"></p>
     </div>
+
+    <nav class="start-links">
+      <button id="collectionBtn" class="text-link" type="button">コレクション →</button>
+    </nav>
 
     <footer class="start-footer">
       <span>写真: <a href="https://picsum.photos" target="_blank" rel="noopener">Lorem Picsum</a>（Unsplash出典）</span>
@@ -95,16 +97,8 @@
       <button id="settingsPreviewBtn" class="btn settings-item" type="button">完成図を見る</button>
       <button id="settingsCollectionBtn" class="btn settings-item" type="button">コレクション</button>
       <button id="settingsHomeBtn" class="btn settings-item" type="button">スタート画面に戻る</button>
-      <div class="settings-date">
-        <span class="settings-date-label">日付を変える</span>
-        <div class="settings-date-btns">
-          <button id="settingsDatePrev" class="btn" type="button">← 前日</button>
-          <button id="settingsDateToday" class="btn" type="button">今日</button>
-          <button id="settingsDateNext" class="btn" type="button">翌日 →</button>
-        </div>
-      </div>
       <div class="settings-theme">
-        <span class="settings-date-label">テーマ</span>
+        <span class="settings-section-label">テーマ</span>
         <div class="settings-theme-btns">
           <button class="btn theme-btn" type="button" data-theme-opt="walnut">ウォルナット</button>
           <button class="btn theme-btn" type="button" data-theme-opt="nordic">北欧ペーパー</button>
@@ -145,7 +139,7 @@
     <div class="result-actions">
       <button id="resultCopyBtn" class="btn" type="button">結果をコピー</button>
       <button id="resultCollectionBtn" class="btn" type="button">コレクションを見る</button>
-      <button id="resultCloseBtn" class="btn btn-accent" type="button">閉じる</button>
+      <button id="resultCloseBtn" class="btn btn-underline" type="button">閉じる</button>
     </div>
   </div>
 </div>
@@ -156,7 +150,6 @@
     <img id="detailImg" alt="クリアしたパズルの画像">
     <div id="detailText"></div>
     <div class="result-actions">
-      <button id="detailPlayBtn" class="btn btn-accent" type="button">このパズルをもう一度遊ぶ</button>
       <button class="btn" type="button" data-close>閉じる</button>
     </div>
   </div>

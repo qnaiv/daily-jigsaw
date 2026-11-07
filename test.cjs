@@ -116,10 +116,9 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const wrap = L.addDays('2026-11-07', pool.ids.length);
   ok(L.pickImageId(wrap, pool) === pool.ids[0], 'プール一周で ids[0] に戻る');
   ok(L.pickImageId('2026-11-06', pool) === pool.ids[pool.ids.length - 1], '基準日前日 → ids[末尾]');
-  ok(L.resolvePlayDate('2999-01-01', '2026-11-07') === '2026-11-07', '未来日は今日にクランプ');
-  ok(L.resolvePlayDate('2026-11-01', '2026-11-07') === '2026-11-01', '過去日はそのまま');
-  ok(L.resolvePlayDate('garbage', '2026-11-07') === '2026-11-07', '不正な日付は今日にクランプ');
-  ok(L.resolvePlayDate('2026-02-30', '2026-11-07') === '2026-11-07', '実在しない日付は今日にクランプ');
+  // 日付移動は廃止 (常に今日のお題だけ開く): ?date= 解決用の関数は存在しない
+  ok(L.resolvePlayDate === undefined, '日付移動は廃止: resolvePlayDate は存在しない');
+  ok(/^\d{4}-\d{2}-\d{2}$/.test(L.jstTodayString(new Date('2026-11-07T03:00:00Z'))), '今日 (JST) の文字列が取れる');
 }
 
 /* 6. 相対スナップとグリッド吸着 */
