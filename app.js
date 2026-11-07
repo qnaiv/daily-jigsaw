@@ -661,12 +661,43 @@ function saveAudioSettings() {
   saveStore();
 }
 
+/* ---------- サウンド設定の同期 (設定シート ⇔ スタート画面) ----------
+ * 同じ設定のコントロールが両画面にあるので、値の反映はここへ集約し、
+ * どちらを触っても両方のコントロール表示が常に一致するようにする。 */
+function syncAudioControls() {
+  [['bgmToggle', bgmOn], ['bgmToggleStart', bgmOn],
+   ['seToggle', seOn], ['seToggleStart', seOn]].forEach(function (p) {
+    var el = $(p[0]); if (el) el.checked = p[1];
+  });
+  var vol = Math.round(bgmVolume * 100);
+  ['bgmVolume', 'bgmVolumeStart'].forEach(function (id) {
+    var el = $(id); if (el) el.value = vol;
+  });
+}
+function onBgmToggleChanged(checked) {
+  bgmOn = checked;
+  saveAudioSettings();
+  bgmApplySettings(); // 中で syncAudioControls も呼ぶ
+}
+function onBgmVolumeInput(value) {
+  bgmVolume = value / 100;
+  saveAudioSettings();
+  bgmApplySettings();
+}
+function onSeToggleChanged(checked) {
+  seOn = checked;
+  saveAudioSettings();
+  syncAudioControls();
+}
+
 /* ---- BGM ----
  * プレイリスト 13 曲 (合計 40:56)。選曲 UI は持たず、シャッフルで
  * 全曲一巡するまで重複なく再生する (順列の規則は PureLogic)。
  * 短い曲 (90 秒未満) は 2 回続けて再生してから次へ進む。
- * 再生開始は最初のユーザー操作のあと (自動再生ポリシー)。曲が替わるたびに
- * 右下へ曲名と作者を小さく出して数秒で消す (クレジット表示を兼ねる)。 */
+ * 再生開始は最初のユーザー操作のあと (自動再生ポリシー)。最初の play() が
+ * 端末に受け付けられなかった場合に備え、ユーザー操作のたびに再試行する
+ * (bgmTryPlay)。曲名と作者は、その曲が再生されている間ずっと右下へ
+ * 小さく出しっぱなしにする (クレジット表示を兼ねる)。 */
 var BGM_TRACKS = [
   { file: 'meditation-impromptu-01.mp3', title: 'Meditation Impromptu 01', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
   { file: 'meditation-impromptu-02.mp3', title: 'Meditation Impromptu 02', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
@@ -684,7 +715,7 @@ var BGM_TRACKS = [
 ];
 var bgm = {
   audio: null, order: [], pos: 0, current: -1, playsLeft: 1,
-  started: false, hiddenPaused: false, toastTimer: null, errorStreak: 0
+  started: false, hiddenPaused: false, errorStreak: 0, dead: false
 };
 function bgmEnsure() {
   if (bgm.audio) return bgm.audio;
@@ -703,13 +734,20 @@ function bgmEnsure() {
       bgmNext();
     }
   });
-  a.addEventListener('playing', function () { bgm.errorStreak = 0; });
+  a.addEventListener('playing', function () {
+    bgm.errorStreak = 0;
+    bgm.dead = false;
+    bgmShowNowPlaying(); // 再生が実際に始まったら曲名クレジットを出す
+  });
+  a.addEventListener('pause', function () { bgmHideNowPlaying(); }); // 止まっている間は隠す
   a.addEventListener('error', function () {
     // 読めない曲で止まらないよう次へ進む。ただし全曲読めない場合は
     // 一巡ぶん試したところで諦める (次へ進み続ける無限ループにしない)
     if (!bgm.started) return;
     bgm.errorStreak++;
-    if (bgm.errorStreak < BGM_TRACKS.length) bgmNext();
+    if (bgm.errorStreak < BGM_TRACKS.length) { bgmNext(); return; }
+    bgm.dead = true; // 全曲失敗: 操作のたびの再試行で叩き続けないようにする
+    bgmHideNowPlaying();
   });
   bgm.audio = a;
   return a;
@@ -717,20 +755,32 @@ function bgmEnsure() {
 function bgmPlayPromise(p) {
   if (p && p.catch) p.catch(function () { /* 自動再生拒否などは黙って無視 */ });
 }
-function bgmShowToast(track) {
+/* 曲名クレジット: その曲が再生されている間、右下に出しっぱなしにする。
+ * 表示は Audio の playing イベント、非表示は pause イベントに連動させる
+ * ので、オフにしたとき・タブを隠して一時停止したとき・全曲失敗のときは
+ * 消える。テキストだけ先に差し替えるのは bgmPlayTrack (曲の切替時)。 */
+function bgmSetNowPlayingText() {
   var el = $('bgmToast');
-  if (!el) return;
-  el.textContent = '♪ ' + track.title + ' — ' + track.artist;
-  el.classList.add('show');
-  if (bgm.toastTimer) clearTimeout(bgm.toastTimer);
-  bgm.toastTimer = setTimeout(function () { el.classList.remove('show'); }, 4500);
+  if (!el || bgm.current < 0) return;
+  var t = BGM_TRACKS[bgm.current];
+  el.textContent = '♪ ' + t.title + ' — ' + t.artist;
+}
+function bgmShowNowPlaying() {
+  bgmSetNowPlayingText();
+  var el = $('bgmToast');
+  if (el && bgm.current >= 0) el.classList.add('show');
+}
+function bgmHideNowPlaying() {
+  var el = $('bgmToast');
+  if (el) el.classList.remove('show');
 }
 function bgmPlayTrack(idx) {
   var a = bgmEnsure();
   bgm.current = idx;
   bgm.playsLeft = 1; // loadedmetadata で短い曲なら 2 に更新される
   a.src = 'audio/' + BGM_TRACKS[idx].file;
-  bgmShowToast(BGM_TRACKS[idx]);
+  a.volume = bgmVolume; // 再生直前に必ず現在の音量を要素へ適用する
+  bgmSetNowPlayingText();
   bgmPlayPromise(a.play());
 }
 function bgmNext() {
@@ -749,13 +799,35 @@ function bgmStart() {
   bgm.pos = 0;
   bgmPlayTrack(bgm.order[0]);
 }
+/* ユーザー操作を合図に「鳴るべきなら鳴らす」。未開始なら開始し、開始済み
+ * でも止まっていたら音量を適用し直して play() を再試行する。
+ * 以前は started が立った後の再試行経路が設定シート (bgmApplySettings)
+ * しかなく、最初の play() が端末に受け付けられなかった場合に、音量
+ * スライダーを触るまで無音のままだった (実機で確認された不具合)。
+ * これで箱タップやピースを掴む操作でも必ず鳴り始める。
+ * オフのとき・全曲読めなかった (dead) とき・タブが隠れているときは何もしない */
+function bgmTryPlay() {
+  if (!bgmOn || bgm.dead) return;
+  if (!bgm.started) { bgmStart(); return; }
+  var a = bgm.audio;
+  if (!a || document.hidden || !a.paused) return;
+  a.volume = bgmVolume;
+  bgmPlayPromise(a.play());
+}
 function bgmApplySettings() {
   var a = bgmEnsure();
   a.volume = bgmVolume;
+  syncAudioControls();
   if (!bgmOn) {
     a.pause();
+    bgmHideNowPlaying(); // 再生が始まっていないと pause イベントが来ないので明示的に隠す
+  } else if (bgm.dead) {
+    // 全曲読めなかった状態からの明示的な再試行 (オンに戻す操作自体を合図にする)
+    bgm.dead = false;
+    bgm.errorStreak = 0;
+    bgmPlayTrack(bgm.current >= 0 ? bgm.current : 0);
   } else if (!bgm.started) {
-    bgmStart(); // 設定シートの操作自体がユーザー操作なので開始してよい
+    bgmStart(); // 設定の操作自体がユーザー操作なので開始してよい
   } else if (a.paused && !document.hidden) {
     bgmPlayPromise(a.play()); // オフ→オンに戻したら再開する
   }
@@ -864,11 +936,12 @@ function seLid() { // 紙の擦れ (バンドパス 400→1400Hz, 0.25s) + 小�
   seNoise(0.25, 'bandpass', [400, 1400], 0.4);
   seTone([220, 90], 0.07, 0.28, 'sine', 0.22);
 }
-/* 最初のユーザー操作 (キャプチャ段階で受けるので、ステージ側の
- * pointerdown ハンドラより先に AudioContext の生成と BGM 開始が走る) */
+/* ユーザー操作のたびにキャプチャ段階で受ける (ステージ側の pointerdown
+ * ハンドラより先に AudioContext の生成と BGM の開始/再試行が走る)。
+ * 「最初の操作だけ」ではなく毎回呼ぶのが bgmTryPlay の再試行の要。 */
 function onFirstUserGesture() {
   ensureSeContext();
-  if (bgmOn && !bgm.started) bgmStart();
+  bgmTryPlay();
 }
 document.addEventListener('pointerdown', onFirstUserGesture, true);
 document.addEventListener('keydown', onFirstUserGesture, true);
@@ -2289,28 +2362,19 @@ function wireControls() {
   document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
     b.addEventListener('click', function () { setUiTheme(b.getAttribute('data-theme-opt')); });
   });
-  /* サウンド設定: 保存済みの値をコントロールへ反映し、変更は即保存 + 即適用。
-   * クレジット一覧は BGM_TRACKS から生成する (曲名・作者・ライセンス)。 */
-  $('bgmToggle').checked = bgmOn;
-  $('bgmVolume').value = Math.round(bgmVolume * 100);
-  $('seToggle').checked = seOn;
+  /* サウンド設定: 設定シートとスタート画面の両方に同じ設定のコントロールが
+   * あり、変更は即保存 + 即適用、表示は syncAudioControls で両画面を一致
+   * させる。クレジット一覧は BGM_TRACKS から生成する (曲名・作者・ライセンス)。 */
+  syncAudioControls();
   $('bgmCredits').innerHTML = BGM_TRACKS.map(function (t) {
     return '<li>' + t.title + ' — ' + t.artist + '（' + t.license + '）</li>';
   }).join('');
-  $('bgmToggle').addEventListener('change', function () {
-    bgmOn = $('bgmToggle').checked;
-    saveAudioSettings();
-    bgmApplySettings();
-  });
-  $('bgmVolume').addEventListener('input', function () {
-    bgmVolume = $('bgmVolume').value / 100;
-    saveAudioSettings();
-    bgmApplySettings();
-  });
-  $('seToggle').addEventListener('change', function () {
-    seOn = $('seToggle').checked;
-    saveAudioSettings();
-  });
+  $('bgmToggle').addEventListener('change', function () { onBgmToggleChanged($('bgmToggle').checked); });
+  $('bgmToggleStart').addEventListener('change', function () { onBgmToggleChanged($('bgmToggleStart').checked); });
+  $('bgmVolume').addEventListener('input', function () { onBgmVolumeInput($('bgmVolume').value); });
+  $('bgmVolumeStart').addEventListener('input', function () { onBgmVolumeInput($('bgmVolumeStart').value); });
+  $('seToggle').addEventListener('change', function () { onSeToggleChanged($('seToggle').checked); });
+  $('seToggleStart').addEventListener('change', function () { onSeToggleChanged($('seToggleStart').checked); });
   document.querySelectorAll('[data-settings-close]').forEach(function (el) {
     el.addEventListener('click', closeSettings);
   });

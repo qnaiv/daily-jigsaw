@@ -305,6 +305,21 @@ button { font: inherit; cursor: pointer; }
 }
 .theme-opt.active .theme-swatch { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--brass); }
 
+/* スタート画面のサウンド調整: テーマ切替と同じ紙面の調子で、区切り線 +
+ * 小さな見出し。注意書き「♪ 音が出ます」は見出しの横に小さく添える。
+ * 中身は設定シートと連動 (app.js の syncAudioControls)。 */
+.start-audio { width: 100%; margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.start-audio-head { display: flex; align-items: baseline; gap: 10px; }
+.start-audio-label { color: var(--paper-dim); font-size: 11px; font-weight: 700; letter-spacing: .3em; }
+.start-audio-note { color: var(--paper-dim); font-size: 11px; letter-spacing: .05em; }
+.start-audio-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 36px; font-size: 12.5px; font-weight: 600; letter-spacing: .04em;
+  color: var(--paper-ink); cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.start-audio-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); flex: none; cursor: pointer; }
+.start-audio-row input[type="range"] { width: 52%; accent-color: var(--accent); cursor: pointer; }
+
 .start-footer {
   margin-top: auto; width: 100%; display: flex; justify-content: space-between; gap: 10px;
   color: var(--paper-dim); font-size: 11px; flex-wrap: wrap;
@@ -481,8 +496,9 @@ button { font: inherit; cursor: pointer; }
 .settings-row input[type="range"] { width: 55%; accent-color: var(--accent); cursor: pointer; }
 .credit-list { margin: 2px 0 0; padding: 0; list-style: none; font-size: 11.5px; line-height: 1.65; color: var(--muted); text-align: left; }
 
-/* BGM の曲名トースト: 曲が替わるたびに右下へ小さく出て、数秒でフェードアウト。
- * 右下の表面切替ボタンと重ならないよう、その上に置く。クレジット表示を兼ねる。 */
+/* BGM の曲名クレジット: その曲が再生されている間、右下へ小さく出しっぱなし。
+ * 止まると消える (表示連動は app.js が playing / pause イベントで行う)。
+ * 右下の表面切替ボタンと重ならないよう、その上に置く。 */
 #bgmToast {
   position: absolute; right: 10px; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 6;
   max-width: 72vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -491,7 +507,7 @@ button { font: inherit; cursor: pointer; }
   opacity: 0; transition: opacity .6s ease;
   backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
 }
-#bgmToast.show { opacity: 1; }
+#bgmToast.show { opacity: .92; }
 
 #confettiWrap { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
 #confettiWrap[hidden] { display: none; }

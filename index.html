@@ -58,6 +58,18 @@
       <button class="theme-opt" type="button" data-theme-opt="atelier"><span class="theme-swatch sw-atelier" aria-hidden="true"></span>ダーク・アトリエ</button>
     </div>
 
+    <!-- 音の調整はタイトル画面でもできるように (設定シートと store 連動)。
+         ゲームは音が出るので、その旨を小さく注意書きする -->
+    <div class="start-audio">
+      <div class="start-audio-head">
+        <span class="start-audio-label">サウンド</span>
+        <span class="start-audio-note">♪ 音が出ます</span>
+      </div>
+      <label class="start-audio-row"><span>BGM</span><input type="checkbox" id="bgmToggleStart"></label>
+      <label class="start-audio-row"><span>BGM音量</span><input type="range" id="bgmVolumeStart" min="0" max="100" step="1"></label>
+      <label class="start-audio-row"><span>効果音（SE）</span><input type="checkbox" id="seToggleStart"></label>
+    </div>
+
     <footer class="start-footer">
       <span>写真: <a href="https://picsum.photos" target="_blank" rel="noopener">Lorem Picsum</a>（Unsplash出典）</span>
       <a href="https://github.com/qnaiv/daily-jigsaw" target="_blank" rel="noopener">GitHub</a>
