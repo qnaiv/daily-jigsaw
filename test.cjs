@@ -138,20 +138,25 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.snapToGrid(2.4) === 2 && L.snapToGrid(2.5) === 3 && L.snapToGrid(-1.6) === -2, 'グリッド吸着は最寄りの整数へ');
 }
 
-/* 7. 初期散らばり配置の決定性 (全ピース最初から机に出ている) */
+/* 7. 初期散らばり配置 (ぶちまけた状態: ベースセル + ±0.4セルのずらし + z-order シャッフル) */
 {
   const s1 = L.initialScatter('2026-11-07', 100);
   const s2 = L.initialScatter('2026-11-07', 100);
-  ok(eq(s1, s2), '散らばり: 同じ日付×難易度で配置が完全一致');
+  ok(eq(s1, s2), '散らばり: 同じ日付×難易度で配置が完全一致 (決定的)');
   ok(s1.length === 100 && new Set(s1.flatMap(c => c.pieces)).size === 100, '散らばり: 全ピースがちょうど1回ずつ現れる');
-  ok(s1.every(c => c.surface === 'desk' && c.pieces.length === 1 && Number.isInteger(c.gx) && Number.isInteger(c.gy)), '散らばり: 全ピースが机の上・グリッド座標に単体で置かれる');
-  ok(new Set(s1.map(c => c.gx + ',' + c.gy)).size === 100, '散らばり: 置き場所が重ならない');
+  ok(s1.every(c => c.surface === 'desk' && c.pieces.length === 1), '散らばり: 全ピースが机の上に単体で置かれる');
+  ok(new Set(s1.map(c => Math.round(c.gx) + ',' + Math.round(c.gy))).size === 100, '散らばり: ベースセルは重ならない (重なりは部分的なずらしだけ)');
+  const jittered = s1.filter(c => Math.abs(c.gx - Math.round(c.gx)) > 0.05 || Math.abs(c.gy - Math.round(c.gy)) > 0.05).length;
+  ok(jittered >= 50, '散らばり: 過半数のピースに「ぶちまけた」位置ずらしが入っている (' + jittered + '/100)');
+  ok(s1.every(c => Math.abs(c.gx - Math.round(c.gx)) <= 0.4 + 1e-9 && Math.abs(c.gy - Math.round(c.gy)) <= 0.4 + 1e-9), '散らばり: ずらしは±0.4セル以内');
   const n = 10;
-  ok(s1.every(c => c.gx >= -3 && c.gx < n + 3 && c.gy >= -1 && c.gy < n + 3), '散らばり: 机ビューの範囲内に収まる');
+  ok(s1.every(c => c.gx >= -3 && c.gx <= n + 2 && c.gy >= -1 && c.gy < n + 3), '散らばり: 机ビューの範囲内に収まる (画面外に出ない)');
+  const idsInOrder = s1.map(c => c.pieces[0]);
+  ok(!eq(idsInOrder, idsInOrder.slice().sort((a, b) => a - b)), '散らばり: 重なり順 (z-order) がシャッフルされている');
   ok(!eq(s1, L.initialScatter('2026-11-08', 100)), '散らばり: 日付が変わると配置も変わる');
   ok(!eq(s1, L.initialScatter('2026-11-07', 225)), '散らばり: 難易度が変わると配置も変わる');
   const sBig = L.initialScatter('2026-11-07', 2025);
-  ok(sBig.length === 2025 && new Set(sBig.map(c => c.gx + ',' + c.gy)).size === 2025, '散らばり: 2025ピースでも重ならず全ピース出る');
+  ok(sBig.length === 2025 && new Set(sBig.map(c => Math.round(c.gx) + ',' + Math.round(c.gy))).size === 2025, '散らばり: 2025ピースでもベースセルは重ならず全ピース出る');
 }
 
 /* 8. 箱の包装柄の決定性 (同じ日付なら誰でも同じ柄・完成写真は載せない前提の柄選択) */
@@ -235,7 +240,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.isComplete(moved, n) === false, '36ピース: 1つずらすと完成判定 = 偽');
   // 散らばり (n=6)
   const s36 = L.initialScatter('2026-11-07', 36);
-  ok(s36.length === 36 && new Set(s36.map(c => c.gx + ',' + c.gy)).size === 36, '36ピース: 散らばりは全ピース重ならず机に出る');
+  ok(s36.length === 36 && new Set(s36.map(c => Math.round(c.gx) + ',' + Math.round(c.gy))).size === 36, '36ピース: 散らばりはベースセルが重ならず全ピース机に出る');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

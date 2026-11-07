@@ -258,9 +258,12 @@ function absorbMerges(others, moving, n) {
   return { clusters: pool.concat([cur]), cluster: cur, merged: merged };
 }
 
-/* 初期散らばり: 全ピースを机のグリッド上に1つずつ散らばせる。
- * 日付×難易度のシードで決定的 (同じ条件なら誰でも同じ配置)。
- * 机ビュー (横 n+6 セル × 縦 n+4 セル、原点 -3,-1) の内側に収める。 */
+/* 初期散らばり: 全ピースを机にぶちまけた状態にする。
+ * 土台はマス目 (1ピース1セル、セル自体は重ならない) で、日付×難易度のシードで決定的。
+ * 各ピースに ±0.4 セルの決定的な位置ずらしと、重なり順 (配列順 = z-order) の
+ * シャッフルを加え、隣と少し重なったり隙間がバラつく自然な散らばりにする。
+ * 回転は入れない。ずらしは机ビュー (横 n+6 セル × 縦 n+4 セル、原点 -3,-1) の
+ * 範囲内にクランプするので、画面外に飛ぶピースはできない。 */
 function initialScatter(dateStr, pieces) {
   var n = Math.round(Math.sqrt(pieces));
   var cols = n + 6;
@@ -272,22 +275,31 @@ function initialScatter(dateStr, pieces) {
     var j = Math.floor(rng() * (k + 1));
     var tmp = cells[k]; cells[k] = cells[j]; cells[j] = tmp;
   }
+  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
   var clusters = [];
   for (var id = 0; id < pieces; id++) {
     var cell = cells[id];
-    clusters.push({ pieces: [id], surface: 'desk', gx: (cell % cols) - 3, gy: Math.floor(cell / cols) - 1 });
+    var baseX = (cell % cols) - 3, baseY = Math.floor(cell / cols) - 1;
+    var gx = clamp(baseX + (rng() * 2 - 1) * 0.4, -3, n + 2);
+    var gy = clamp(baseY + (rng() * 2 - 1) * 0.4, -1, rows - 2);
+    clusters.push({ pieces: [id], surface: 'desk', gx: gx, gy: gy });
+  }
+  // 重なり順もシャッフルする (後ろの要素ほど手前に描かれ、ヒットテストも優先される)
+  for (var m = clusters.length - 1; m > 0; m--) {
+    var s = Math.floor(rng() * (m + 1));
+    var t2 = clusters[m]; clusters[m] = clusters[s]; clusters[s] = t2;
   }
   return clusters;
 }
 
 /* スタート画面の箱の包装柄 (完成写真は載せない)。日付シードで決定的にローテーション */
 var BOX_PATTERNS = [
-  { id: 'dots-red', name: 'ドット（赤）' },
-  { id: 'stripes-mint', name: 'ストライプ（ミント）' },
-  { id: 'stars-navy', name: '星空（紺）' },
-  { id: 'gingham-pink', name: 'ギンガム（ピンク）' },
-  { id: 'confetti', name: 'コンフェッティ' },
-  { id: 'floral-retro', name: 'レトロ花柄' }
+  { id: 'dots-red', name: '生成りに細ドット' },
+  { id: 'stripes-mint', name: '細ストライプ' },
+  { id: 'stars-navy', name: '紺に小星' },
+  { id: 'gingham-pink', name: '細ギンガム' },
+  { id: 'confetti', name: '小紋' },
+  { id: 'floral-retro', name: '小花' }
 ];
 function boxPatternIndex(dateStr) {
   var days = daysBetween(dateStr, BASE_DATE_FALLBACK);
@@ -346,11 +358,74 @@ function loadStore() {
     var raw = localStorage.getItem(STORE_KEY);
     if (raw) { var s = JSON.parse(raw); if (s && s.progress && s.records) return s; }
   } catch (e) { /* ignore */ }
-  return { records: [], progress: {}, lastDifficulty: 36 };
+  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut' };
 }
 var store = loadStore();
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 容量超過などは無視 */ }
+}
+
+/* ---------- テーマ (A ウォルナット / B 北欧ペーパー / C ダーク・アトリエ) ----------
+ * UI の配色は CSS 変数 (style.css の [data-theme] ) で切り替える。
+ * ここでは Canvas 側 (机の木目・マット色・紙吹雪) と箱の包装紙の色を持つ。
+ * 選択は store.uiTheme に保存する (旧保存データに無ければ 'walnut')。 */
+var THEME_NAMES = ['walnut', 'nordic', 'atelier'];
+var THEMES = {
+  walnut: {
+    mat: '#33523f',
+    wood: { stops: ['#7a5636', '#64452a', '#7a5636'], grain: [70, 105, 45, 68, 18, 30], seamDark: 'rgba(43,26,10,0.40)', seamLight: 'rgba(255,238,200,0.10)', knot: '60,38,16', fallback: '#6b4a2a', vigLight: 'rgba(255,240,210,0.06)', vigDark: 'rgba(30,17,4,0.22)' },
+    confetti: ['#33523f', '#c9a227', '#f5efe4', '#7a3b3a', '#8a6d3b'],
+    box: {
+      'dots-red': { bg: '#efe6d0', fg: '#33523f', fg2: '#c9a227' },
+      'stripes-mint': { bg: '#33523f', fg: '#efe6d0', fg2: '#c9a227' },
+      'stars-navy': { bg: '#2c3a55', fg: '#c9a227', fg2: '#e8ddc8' },
+      'gingham-pink': { bg: '#e9d5cf', fg: '#a05a52', fg2: '#a05a52' },
+      'confetti': { bg: '#f2ead6', fg: '#8a6d3b', fg2: '#33523f' },
+      'floral-retro': { bg: '#a9603f', fg: '#f3e3c2', fg2: '#33523f' }
+    }
+  },
+  nordic: {
+    mat: '#9db89a',
+    wood: { stops: ['#dec294', '#d2af7e', '#dec294'], grain: [150, 182, 114, 140, 68, 96], seamDark: 'rgba(146,110,58,0.32)', seamLight: 'rgba(255,255,255,0.22)', knot: '150,112,62', fallback: '#d9b98c', vigLight: 'rgba(255,255,255,0.10)', vigDark: 'rgba(120,84,32,0.12)' },
+    confetti: ['#cf6f4f', '#9db89a', '#fbfaf7', '#d9a441', '#7d9bb3'],
+    box: {
+      'dots-red': { bg: '#fbfaf7', fg: '#9db89a', fg2: '#cf6f4f' },
+      'stripes-mint': { bg: '#9db89a', fg: '#fbfaf7', fg2: '#cf6f4f' },
+      'stars-navy': { bg: '#aebfd0', fg: '#fbfaf7', fg2: '#cf6f4f' },
+      'gingham-pink': { bg: '#f7e8e4', fg: '#e0a89c', fg2: '#e0a89c' },
+      'confetti': { bg: '#fdfaf2', fg: '#cf6f4f', fg2: '#9db89a' },
+      'floral-retro': { bg: '#dfa184', fg: '#fdf6ec', fg2: '#9db89a' }
+    }
+  },
+  atelier: {
+    mat: '#5e2f35',
+    wood: { stops: ['#413125', '#352820', '#413125'], grain: [10, 26, 7, 18, 4, 12], seamDark: 'rgba(0,0,0,0.50)', seamLight: 'rgba(232,221,200,0.07)', knot: '10,7,4', fallback: '#3a2c22', vigLight: 'rgba(232,221,200,0.04)', vigDark: 'rgba(0,0,0,0.35)' },
+    confetti: ['#b08d4f', '#5e2f35', '#e8ddc8', '#33523f', '#8a6d3b'],
+    box: {
+      'dots-red': { bg: '#2e2620', fg: '#b08d4f', fg2: '#5e2f35' },
+      'stripes-mint': { bg: '#5e2f35', fg: '#e8ddc8', fg2: '#b08d4f' },
+      'stars-navy': { bg: '#232c42', fg: '#b08d4f', fg2: '#e8ddc8' },
+      'gingham-pink': { bg: '#4a3230', fg: '#8a5a52', fg2: '#8a5a52' },
+      'confetti': { bg: '#33291f', fg: '#b08d4f', fg2: '#5e2f35' },
+      'floral-retro': { bg: '#5e2f35', fg: '#d9b98c', fg2: '#b08d4f' }
+    }
+  }
+};
+var uiTheme = THEME_NAMES.indexOf(store.uiTheme) >= 0 ? store.uiTheme : 'walnut';
+document.documentElement.setAttribute('data-theme', uiTheme);
+function applyTheme() {
+  document.documentElement.setAttribute('data-theme', uiTheme);
+  document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-theme-opt') === uiTheme);
+  });
+  if (state) { renderStartScreen(); draw(); } // 箱の色と Canvas (木目/マット) を新テーマで描き直す
+}
+function setUiTheme(name) {
+  if (THEME_NAMES.indexOf(name) < 0) return;
+  uiTheme = name;
+  store.uiTheme = name;
+  saveStore();
+  applyTheme();
 }
 function progressFor(date, pieces) {
   if (!store.progress[date]) store.progress[date] = {};
@@ -544,20 +619,23 @@ function screenToWorld(sx, sy) { var v = view(); return { x: (sx - v.tx) / v.sca
 /* ---------- 机の木目テクスチャ ----------
  * 木目タイルを一度だけオフスクリーンに描き、ワールド座標に固定して敷く
  * (パン/ズームに追随するので「机の上を動いている」感触になる)。 */
-var woodPattern = null;
+var woodPatterns = {}; // テーマごとに生成してキャッシュ (模様の配置は全テーマ共通シード)
 function getWoodPattern() {
-  if (woodPattern) return woodPattern;
+  var key = uiTheme;
+  if (woodPatterns[key]) return woodPatterns[key];
+  var pal = THEMES[key].wood;
   var cv = document.createElement('canvas');
   cv.width = 512; cv.height = 512;
   var c = cv.getContext('2d');
   var rng = rngFromString('woodgrain-v1');
   var grad = c.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0, '#b0824f');
-  grad.addColorStop(0.5, '#a87c48');
-  grad.addColorStop(1, '#b0824f');
+  grad.addColorStop(0, pal.stops[0]);
+  grad.addColorStop(0.5, pal.stops[1]);
+  grad.addColorStop(1, pal.stops[2]);
   c.fillStyle = grad;
   c.fillRect(0, 0, 512, 512);
   // 木目: 横方向に流れる波状の線
+  var gr = pal.grain;
   for (var i = 0; i < 80; i++) {
     var y0 = rng() * 512, amp = 1 + rng() * 3, per = 120 + rng() * 220, ph = rng() * 6.28;
     c.beginPath();
@@ -565,14 +643,14 @@ function getWoodPattern() {
       var y = y0 + Math.sin(x / per * 6.28 + ph) * amp;
       if (x === 0) c.moveTo(x, y); else c.lineTo(x, y);
     }
-    c.strokeStyle = 'rgba(' + (88 + (rng() * 40) | 0) + ',' + (56 + (rng() * 26) | 0) + ',20,' + (0.05 + rng() * 0.13).toFixed(3) + ')';
+    c.strokeStyle = 'rgba(' + (gr[0] + (rng() * (gr[1] - gr[0])) | 0) + ',' + (gr[2] + (rng() * (gr[3] - gr[2])) | 0) + ',' + (gr[4] + (rng() * (gr[5] - gr[4])) | 0) + ',' + (0.05 + rng() * 0.13).toFixed(3) + ')';
     c.lineWidth = 0.6 + rng() * 2.2;
     c.stroke();
   }
   // 板の継ぎ目
   [0, 170, 341].forEach(function (y) {
-    c.fillStyle = 'rgba(70,44,18,0.35)'; c.fillRect(0, y, 512, 2);
-    c.fillStyle = 'rgba(255,230,180,0.10)'; c.fillRect(0, y + 2, 512, 1);
+    c.fillStyle = pal.seamDark; c.fillRect(0, y, 512, 2);
+    c.fillStyle = pal.seamLight; c.fillRect(0, y + 2, 512, 1);
   });
   // 節 (ふし)
   for (var k = 0; k < 3; k++) {
@@ -580,15 +658,16 @@ function getWoodPattern() {
     for (var r = 9; r > 1; r -= 2) {
       c.beginPath();
       c.ellipse(kx, ky, r * 1.5, r, 0.3, 0, 6.29);
-      c.strokeStyle = 'rgba(80,50,20,' + (0.10 + (9 - r) * 0.02).toFixed(3) + ')';
+      c.strokeStyle = 'rgba(' + pal.knot + ',' + (0.10 + (9 - r) * 0.02).toFixed(3) + ')';
       c.lineWidth = 1.4;
       c.stroke();
     }
   }
-  woodPattern = sctx.createPattern(cv, 'repeat');
-  return woodPattern;
+  woodPatterns[key] = sctx.createPattern(cv, 'repeat');
+  return woodPatterns[key];
 }
 function drawDeskBackground(v) {
+  var pal = THEMES[uiTheme].wood;
   var pat = null;
   try { pat = getWoodPattern(); } catch (e) { pat = null; }
   if (pat) {
@@ -597,13 +676,13 @@ function drawDeskBackground(v) {
     }
     sctx.fillStyle = pat;
   } else {
-    sctx.fillStyle = '#a87f4e';
+    sctx.fillStyle = pal.fallback;
   }
   sctx.fillRect(0, 0, stageW, stageH);
-  // 机全体にゆるい陰影をつけて天板らしくする
+  // 机全体にゆるい陰影 (ビネット) をつけて天板らしくする
   var vg = sctx.createRadialGradient(stageW / 2, stageH / 2, Math.min(stageW, stageH) * 0.35, stageW / 2, stageH / 2, Math.max(stageW, stageH) * 0.75);
-  vg.addColorStop(0, 'rgba(255,240,210,0.07)');
-  vg.addColorStop(1, 'rgba(40,22,4,0.16)');
+  vg.addColorStop(0, pal.vigLight);
+  vg.addColorStop(1, pal.vigDark);
   sctx.fillStyle = vg;
   sctx.fillRect(0, 0, stageW, stageH);
 }
@@ -614,7 +693,7 @@ function draw() {
   var isMat = state.surface === 'mat';
   var v = view(), n = state.n;
   if (isMat) {
-    sctx.fillStyle = '#46685a';
+    sctx.fillStyle = THEMES[uiTheme].mat;
     sctx.fillRect(0, 0, stageW, stageH);
   } else {
     drawDeskBackground(v);
@@ -756,13 +835,16 @@ stage.addEventListener('pointerdown', function (ev) {
   var p = stagePos(ev);
   pointers.set(ev.pointerId, p);
   if (pointers.size === 2) {
+    // ピンチ開始: 掴んでいた塊はその場で確定 (吸着/合体/保存) させてからピンチへ切り替える。
+    // (旧実装は drag を捨てていたため、塊が浮いたまま未保存になることがあった)
+    if (drag) { settleDrag(); showDropZone(false); zoneHot = false; }
+    panStart = null;
     var pts = Array.from(pointers.values());
     pinch = {
       d0: Math.max(10, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)),
       cx: (pts[0].x + pts[1].x) / 2, cy: (pts[0].y + pts[1].y) / 2,
       scale0: view().scale, tx0: view().tx, ty0: view().ty
     };
-    drag = null; panStart = null;
     return;
   }
   var hit = state.cleared ? null : hitCluster(p.x, p.y);
@@ -792,9 +874,12 @@ stage.addEventListener('pointermove', function (ev) {
     var cx = (pts[0].x + pts[1].x) / 2, cy = (pts[0].y + pts[1].y) / 2;
     var v = view();
     var ns = clampZoom(pinch.scale0 * d / pinch.d0);
+    // ピンチ開始時に2本指の中心の下にあったワールド点を、現在の中心の下に保つ。
+    // 拡縮と移動 (中心のパン) がこの1式で同時に効く (旧実装は中心移動分を二重に
+    // 加算していたため、ピンチ中に視点が流れて「怪しい」挙動になっていた)。
     var wx = (pinch.cx - pinch.tx0) / pinch.scale0, wy = (pinch.cy - pinch.ty0) / pinch.scale0;
     v.scale = ns;
-    v.tx = cx - wx * ns + (cx - pinch.cx); v.ty = cy - wy * ns + (cy - pinch.cy);
+    v.tx = cx - wx * ns; v.ty = cy - wy * ns;
     updateZoomLabel();
     draw();
     return;
@@ -824,8 +909,14 @@ stage.addEventListener('pointermove', function (ev) {
 function endPointer(ev) {
   pointers.delete(ev.pointerId);
   if (pointers.size < 2) pinch = null;
+  if (pointers.size === 1 && !drag && state && state.views[state.surface]) {
+    // ピンチから1本指に戻る: 残った指の現在位置でパンの基準を取り直し、
+    // そのままパンへ移行する (基準が古いままだと視点が跳ねる)
+    var rest = Array.from(pointers.values())[0];
+    panStart = { sx: rest.x, sy: rest.y, tx: view().tx, ty: view().ty };
+  }
   if (pointers.size === 0) {
-    if (drag) finishDrag(ev);
+    if (drag) settleDrag();
     panStart = null;
     showDropZone(false);
     zoneHot = false;
@@ -834,7 +925,8 @@ function endPointer(ev) {
 stage.addEventListener('pointerup', endPointer);
 stage.addEventListener('pointercancel', endPointer);
 
-function finishDrag(ev) {
+/* ドラッグの確定処理 (離したとき & ピンチへ切り替えるとき共通) */
+function settleDrag() {
   var cl = drag.cluster;
   var wasMoved = drag.moved;
   drag = null;
@@ -881,7 +973,10 @@ function updateSurfaceUI() {
 }
 function clampZoom(s) {
   var v = view();
-  return Math.max(v.fit, Math.min(v.fit * 4, s));
+  // 下限は「机全体が画面に収まる倍率 (fit = 表示100%)」の 0.5 倍まで下げる。
+  // 100% 未満にも引けるので、机全体＋余白を見渡せる。上限は fit の4倍。
+  // ズーム±ボタン / ホイール / ピンチすべてこの共通クランプを通る。
+  return Math.max(v.fit * 0.5, Math.min(v.fit * 4, s));
 }
 function zoomBy(factor) {
   var v = view();
@@ -963,7 +1058,7 @@ function runConfetti() {
   cv.width = window.innerWidth; cv.height = window.innerHeight;
   wrap.hidden = false;
   var parts = [];
-  var colors = ['#0f766e', '#f59e0b', '#dc2626', '#2563eb', '#7c3aed', '#16a34a'];
+  var colors = THEMES[uiTheme].confetti;
   for (var i = 0; i < 160; i++) {
     parts.push({ x: Math.random() * cv.width, y: -20 - Math.random() * cv.height * 0.4, w: 6 + Math.random() * 6, h: 8 + Math.random() * 8, vy: 1.6 + Math.random() * 2.6, vx: -1 + Math.random() * 2, rot: Math.random() * Math.PI, vr: -0.1 + Math.random() * 0.2, color: colors[i % colors.length] });
   }
@@ -1132,6 +1227,9 @@ function wireControls() {
   $('zoomInBtn').addEventListener('click', function () { zoomBy(1.3); });
   $('zoomOutBtn').addEventListener('click', function () { zoomBy(1 / 1.3); });
   $('settingsBtn').addEventListener('click', openSettings);
+  document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
+    b.addEventListener('click', function () { setUiTheme(b.getAttribute('data-theme-opt')); });
+  });
   document.querySelectorAll('[data-settings-close]').forEach(function (el) {
     el.addEventListener('click', closeSettings);
   });
@@ -1209,45 +1307,50 @@ function wireControls() {
  * 蓋・本体の多角形は頂点を共有してズレないようにし、陰影は
  * 蓋上面 (最も明るい) → 蓋の前縁 → 正面 → 蓋の右縁 → 右側面 (最も暗い) で一貫させる。
  * 包装柄は全面に貼り、面ごとに陰影だけを変える。文字・ラベル・完成図は入れない。 */
-function giftFlowerSvg(cx, cy, s) {
+function giftFlowerSvg(cx, cy, s, petal, center) {
   var out = '<g transform="translate(' + cx + ',' + cy + ') scale(' + s + ')">';
   for (var i = 0; i < 5; i++) {
     var a = Math.PI * 2 * i / 5 - Math.PI / 2;
-    out += '<circle cx="' + (Math.cos(a) * 5.4).toFixed(1) + '" cy="' + (Math.sin(a) * 5.4).toFixed(1) + '" r="4" fill="#ffd9a0"/>';
+    out += '<circle cx="' + (Math.cos(a) * 4.6).toFixed(1) + '" cy="' + (Math.sin(a) * 4.6).toFixed(1) + '" r="3.4" fill="' + petal + '"/>';
   }
-  return out + '<circle r="2.6" fill="#fff3d6"/></g>';
+  return out + '<circle r="2.2" fill="' + center + '"/></g>';
 }
+/* 包装柄はテーマごとの色 (THEMES[uiTheme].box) で描く。柄の種類と日付ローテーションは不変。
+ * 原色の大きな柄は廃止し、彩度を落とした細かい柄に統一している。 */
 function giftPatternDef(patternId) {
+  var pal = THEMES[uiTheme].box[patternId] || THEMES[uiTheme].box['dots-red'];
   var body;
   switch (patternId) {
-    case 'dots-red':
-      body = '<rect width="36" height="36" fill="#cf3a3a"/><circle cx="9" cy="9" r="5" fill="#ffe9d6"/><circle cx="27" cy="27" r="5" fill="#ffe9d6"/>';
-      return '<pattern id="giftPat" width="36" height="36" patternUnits="userSpaceOnUse">' + body + '</pattern>';
-    case 'stripes-mint':
-      body = '<rect width="28" height="28" fill="#9fd8bd"/><rect width="11" height="28" fill="#eafff3"/>';
-      return '<pattern id="giftPat" width="28" height="28" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' + body + '</pattern>';
-    case 'stars-navy':
-      body = '<rect width="44" height="44" fill="#24365e"/>' +
-        '<polygon points="0,-5 1.5,-1.6 5,-1.6 2.2,1.2 3.2,4.8 0,2.8 -3.2,4.8 -2.2,1.2 -5,-1.6 -1.5,-1.6" transform="translate(12,13)" fill="#ffe9a8"/>' +
-        '<polygon points="0,-3.4 1,-1.1 3.4,-1.1 1.5,0.8 2.2,3.3 0,1.9 -2.2,3.3 -1.5,0.8 -3.4,-1.1 -1,-1.1" transform="translate(33,33)" fill="#cfe0ff"/>' +
-        '<circle cx="33" cy="10" r="1.6" fill="#ffffff"/><circle cx="8" cy="36" r="1.6" fill="#ffffff"/>';
-      return '<pattern id="giftPat" width="44" height="44" patternUnits="userSpaceOnUse">' + body + '</pattern>';
-    case 'gingham-pink':
-      body = '<rect width="30" height="30" fill="#f9dce6"/><rect width="30" height="15" fill="#f2a7c3" opacity="0.55"/><rect width="15" height="30" fill="#f2a7c3" opacity="0.55"/>';
+    case 'dots-red': // 細ドット
+      body = '<rect width="30" height="30" fill="' + pal.bg + '"/>' +
+        '<circle cx="8" cy="8" r="2.4" fill="' + pal.fg + '"/><circle cx="23" cy="23" r="2.4" fill="' + pal.fg + '"/>' +
+        '<circle cx="23" cy="8" r="1.3" fill="' + pal.fg2 + '"/><circle cx="8" cy="23" r="1.3" fill="' + pal.fg2 + '"/>';
       return '<pattern id="giftPat" width="30" height="30" patternUnits="userSpaceOnUse">' + body + '</pattern>';
-    case 'confetti':
-      body = '<rect width="46" height="46" fill="#fdf3d8"/>' +
-        '<rect x="6" y="8" width="8" height="3.4" fill="#e4572e" transform="rotate(30 10 10)"/>' +
-        '<circle cx="32" cy="12" r="3.2" fill="#2a9d8f"/>' +
-        '<rect x="20" y="24" width="3.4" height="9" fill="#4361ee" transform="rotate(-18 22 28)"/>' +
-        '<circle cx="38" cy="36" r="2.6" fill="#f4b942"/>' +
-        '<rect x="7" y="35" width="7" height="3" fill="#8338ec" transform="rotate(12 10 36)"/>' +
-        '<circle cx="14" cy="22" r="2.2" fill="#ef476f"/>';
-      return '<pattern id="giftPat" width="46" height="46" patternUnits="userSpaceOnUse">' + body + '</pattern>';
-    default: // floral-retro
-      body = '<rect width="48" height="48" fill="#d96f4e"/>' + giftFlowerSvg(13, 13, 1) + giftFlowerSvg(36, 36, 0.72) +
-        '<circle cx="37" cy="11" r="2" fill="#ffe3b3"/><circle cx="10" cy="38" r="2" fill="#ffe3b3"/>';
-      return '<pattern id="giftPat" width="48" height="48" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'stripes-mint': // 細ストライプ
+      body = '<rect width="22" height="22" fill="' + pal.bg + '"/><rect width="5" height="22" fill="' + pal.fg + '"/>';
+      return '<pattern id="giftPat" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' + body + '</pattern>';
+    case 'stars-navy': // 小さな星
+      body = '<rect width="40" height="40" fill="' + pal.bg + '"/>' +
+        '<polygon points="0,-3.6 1.1,-1.2 3.6,-1.2 1.6,0.9 2.3,3.5 0,2 -2.3,3.5 -1.6,0.9 -3.6,-1.2 -1.1,-1.2" transform="translate(11,12)" fill="' + pal.fg + '"/>' +
+        '<polygon points="0,-2.4 0.7,-0.8 2.4,-0.8 1.1,0.6 1.6,2.3 0,1.3 -1.6,2.3 -1.1,0.6 -2.4,-0.8 -0.7,-0.8" transform="translate(30,30)" fill="' + pal.fg2 + '"/>' +
+        '<circle cx="31" cy="9" r="1.1" fill="' + pal.fg2 + '"/><circle cx="7" cy="33" r="1.1" fill="' + pal.fg + '"/>';
+      return '<pattern id="giftPat" width="40" height="40" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'gingham-pink': // 細ギンガム
+      body = '<rect width="24" height="24" fill="' + pal.bg + '"/><rect width="24" height="12" fill="' + pal.fg + '" opacity="0.45"/><rect width="12" height="24" fill="' + pal.fg + '" opacity="0.45"/>';
+      return '<pattern id="giftPat" width="24" height="24" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'confetti': // 小紋 (小さな粒と線)
+      body = '<rect width="34" height="34" fill="' + pal.bg + '"/>' +
+        '<rect x="5" y="7" width="5" height="1.8" fill="' + pal.fg + '" transform="rotate(30 7 8)"/>' +
+        '<circle cx="24" cy="9" r="1.7" fill="' + pal.fg2 + '"/>' +
+        '<rect x="15" y="18" width="1.8" height="5" fill="' + pal.fg2 + '" transform="rotate(-18 16 20)"/>' +
+        '<circle cx="28" cy="27" r="1.4" fill="' + pal.fg + '"/>' +
+        '<rect x="6" y="26" width="4.4" height="1.6" fill="' + pal.fg2 + '" transform="rotate(12 8 27)"/>' +
+        '<circle cx="11" cy="16" r="1.2" fill="' + pal.fg + '"/>';
+      return '<pattern id="giftPat" width="34" height="34" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    default: // floral-retro: 小花
+      body = '<rect width="42" height="42" fill="' + pal.bg + '"/>' + giftFlowerSvg(12, 12, 0.8, pal.fg, pal.fg2) + giftFlowerSvg(32, 32, 0.55, pal.fg, pal.fg2) +
+        '<circle cx="33" cy="10" r="1.4" fill="' + pal.fg2 + '"/><circle cx="9" cy="34" r="1.4" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="giftPat" width="42" height="42" patternUnits="userSpaceOnUse">' + body + '</pattern>';
   }
 }
 function giftBoxSvg(patternId) {
@@ -1348,6 +1451,7 @@ fetch('data/images.json')
   .then(function (r) { if (!r.ok) throw new Error('images.json'); return r.json(); })
   .then(function (pool) {
     wireControls();
+    applyTheme();
     startGame(pool);
     resizeStage();
   })

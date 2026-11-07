@@ -33,8 +33,8 @@
       <span id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</span>
     </p>
 
-    <div id="giftBox" role="button" tabindex="0" aria-label="箱をタップして開封"></div>
-    <p id="startHint" class="start-hint">タップして開封</p>
+    <div id="giftBox" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div>
+    <p id="startHint" class="start-hint">箱をタップ</p>
 
     <div id="resumePanel" hidden>
       <p id="resumeInfo" class="resume-info"></p>
@@ -101,6 +101,14 @@
           <button id="settingsDatePrev" class="btn" type="button">← 前日</button>
           <button id="settingsDateToday" class="btn" type="button">今日</button>
           <button id="settingsDateNext" class="btn" type="button">翌日 →</button>
+        </div>
+      </div>
+      <div class="settings-theme">
+        <span class="settings-date-label">テーマ</span>
+        <div class="settings-theme-btns">
+          <button class="btn theme-btn" type="button" data-theme-opt="walnut">ウォルナット</button>
+          <button class="btn theme-btn" type="button" data-theme-opt="nordic">北欧ペーパー</button>
+          <button class="btn theme-btn" type="button" data-theme-opt="atelier">ダーク・アトリエ</button>
         </div>
       </div>
       <button id="settingsRestartBtn" class="btn settings-item danger" type="button">やりなおす</button>
