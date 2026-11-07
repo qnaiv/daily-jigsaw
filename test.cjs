@@ -459,5 +459,33 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.50001, tx: 120.31, ty: -56.81 }) === k, '背景キー: 丸め未満のカメラ差は同一キー');
 }
 
+/* 18. ピースの立体感 (pieceRelief)
+ * 厚みはセル比 約2.5% が目安で、小セルでは最小限・大セルでも厚くしすぎない。
+ * ベベルも 1px〜6px の範囲に収まる。見た目だけの量で、判定には使わない。 */
+{
+  ok(eq(L.pieceRelief(0), { thickness: 0, bevel: 0 }), '立体感: cellPx=0 では無効');
+  ok(eq(L.pieceRelief(-10), { thickness: 0, bevel: 0 }), '立体感: 負の cellPx では無効');
+  ok(eq(L.pieceRelief(NaN), { thickness: 0, bevel: 0 }), '立体感: NaN では無効');
+  const r36 = L.pieceRelief(180); // 36ピース: boardPx 1080 / 6セル
+  ok(Math.abs(r36.thickness - 4.5) < 1e-9, '立体感: 大セル (180px) の厚みはセル比2.5% = 4.5px');
+  const cell2025 = 2048 / 45; // 2025ピースの実セルサイズ
+  const r2025 = L.pieceRelief(cell2025);
+  ok(r2025.thickness >= 1 && r2025.thickness <= cell2025 * 0.03, '立体感: 小セル (2025ピース) でも 1px 以上・セル比3%以下');
+  const rSmall = L.pieceRelief(20);
+  ok(rSmall.thickness > 0 && rSmall.thickness <= 20 * 0.04, '立体感: 極小セルではセル比4%以下に抑える');
+  const rHuge = L.pieceRelief(1000);
+  ok(rHuge.thickness <= 5 && rHuge.bevel <= 6, '立体感: 巨大セルでも厚み5px・ベベル6pxまでに制限');
+  // 実在する難易度のセルサイズ全部で、ベベルが 1px 以上・セル比5%以下
+  const cells = L.DIFFICULTIES.map(function (d) { return L.imageSizeFor(d) / Math.round(Math.sqrt(d)); });
+  ok(cells.every(function (c) { const r = L.pieceRelief(c); return r.bevel >= 1 && r.bevel <= c * 0.05; }), '立体感: ベベルは全難易度で 1px 以上・セル比5%以下');
+  // セルが小さいほど厚みも単調に小さくなる (難易度を上げて厚みが増える逆転なし)
+  const sorted = cells.slice().sort(function (a, b) { return a - b; });
+  let mono = true;
+  for (let i = 1; i < sorted.length; i++) {
+    if (L.pieceRelief(sorted[i]).thickness < L.pieceRelief(sorted[i - 1]).thickness) mono = false;
+  }
+  ok(mono, '立体感: 厚みはセルサイズに対して単調');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

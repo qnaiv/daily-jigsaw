@@ -459,6 +459,22 @@ function minimapLayout(rect, maxW, maxH) {
   return { scale: scale, w: w, h: h, ox: (maxW - w) / 2, oy: (maxH - h) / 2 };
 }
 
+/* ピースの立体感 (bitmap px): 「わずかな厚み」と縁のベベル幅をセルサイズから決める。
+ * 厚みはセル比 約2.5% が目安。最低でも 1px 程度は見えるようにするが、セルが
+ * 小さい難易度 (2025ピース等) では比率が膨らんで汚く見えないよう最小限に抑え、
+ * 大セルでも厚くしすぎない (最大 5px)。ベベルも同方針 (1px〜6px)。
+ * 返り値: { thickness: 側面の押し出し量 (下方向), bevel: 縁の陰影の幅 } */
+function pieceRelief(cellPx) {
+  if (!(cellPx > 0)) return { thickness: 0, bevel: 0 };
+  var thickness = cellPx * 0.025;
+  if (thickness < 1) thickness = Math.min(1, cellPx * 0.04); // 小セルでは最小限 (セル比4%まで)
+  if (thickness > 5) thickness = 5;
+  var bevel = cellPx * 0.035;
+  if (bevel < 1) bevel = 1;
+  if (bevel > 6) bevel = 6;
+  return { thickness: thickness, bevel: bevel };
+}
+
 /* 保存済み進捗が「開始済み」かどうか。
  * 旧バージョンの保存 (started フラグなし) でも、塊が残っていれば開始済みとして扱う。 */
 function progressIsStarted(prog) {
@@ -504,7 +520,8 @@ var PureLogic = {
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
-  woodTileOrigin: woodTileOrigin, deskBgKey: deskBgKey, isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout
+  woodTileOrigin: woodTileOrigin, deskBgKey: deskBgKey, isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout,
+  pieceRelief: pieceRelief
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
 
@@ -709,6 +726,47 @@ function fetchCredit() {
 }
 
 /* ---------- ピース画像の事前描画 (オフスクリーン) ---------- */
+/* ピース側面の色: そのピースの写真 (ホーム範囲) の平均色を暗くしたもの。
+ * 厚紙の側面らしく上面より一段暗くする。ピクセルを読み取れない環境
+ * (CORS で汚染されたキャンバス等) では濃い茶色に落とす。
+ * bitmap 生成時に一度だけ呼ばれる。 */
+function pieceSideColor(id, cellPx) {
+  var fallback = 'rgb(58,45,33)';
+  try {
+    var n = state.n, home = pieceHome(id, n);
+    var srcCtx = state.srcCanvas.getContext('2d');
+    var sw = Math.max(1, Math.round(cellPx));
+    var data = srcCtx.getImageData(Math.round(home.col * cellPx), Math.round(home.row * cellPx), sw, sw).data;
+    var step = Math.max(1, Math.floor(sw / 24)) * 4; // 間引いて平均を取る
+    var r = 0, g = 0, b = 0, cnt = 0;
+    for (var i = 0; i + 2 < data.length; i += step) { r += data[i]; g += data[i + 1]; b += data[i + 2]; cnt++; }
+    if (!cnt) return fallback;
+    var f = 0.42; // 側面は上面より暗く
+    return 'rgb(' + Math.round(r / cnt * f) + ',' + Math.round(g / cnt * f) + ',' + Math.round(b / cnt * f) + ')';
+  } catch (e) { return fallback; }
+}
+/* 縁のベベル: 光は左上から (机の接影の向きとも揃える)。輪郭でクリップした
+ * 内側に、輪郭をずらして太く描くことで反対側の縁にだけ帯を残す古典的な方法で、
+ * 上・左の縁に薄いハイライト、下・右の縁に薄い影を入れる。幅は pieceRelief の bevel。 */
+function strokePieceBevel(ctx, path, bevel) {
+  if (!(bevel > 0)) return;
+  ctx.save();
+  ctx.clip(path);
+  ctx.lineWidth = bevel * 2;
+  // ハイライト: 輪郭を下・右へずらして描く → 上・左の縁の内側に帯が残る
+  ctx.save();
+  ctx.translate(bevel * 0.75, bevel * 0.75);
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.stroke(path);
+  ctx.restore();
+  // 影: 輪郭を上・左へずらして描く → 下・右の縁の内側に帯が残る
+  ctx.save();
+  ctx.translate(-bevel * 0.75, -bevel * 0.75);
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+  ctx.stroke(path);
+  ctx.restore();
+  ctx.restore();
+}
 function pieceBitmap(id) {
   if (state.bitmaps.has(id)) return state.bitmaps.get(id);
   var n = state.n, home = pieceHome(id, n);
@@ -719,10 +777,26 @@ function pieceBitmap(id) {
   cv.width = sizePx; cv.height = sizePx;
   var ctx = cv.getContext('2d');
   var path = buildPiecePath(id, cellPx, marginPx);
+  var relief = pieceRelief(cellPx);
+  // 側面: 輪郭シルエットを下へ少しずらして写真面より先に塗り、「わずかな厚み」を出す。
+  // 1px 刻みで重ね塗りして、斜めの縁でも段差や透けが出ないようにする。
+  // 押し出しは bitmap のマージン内に収まる (ノブの張り出し + 厚み < マージン)。
+  if (relief.thickness > 0) {
+    ctx.fillStyle = pieceSideColor(id, cellPx);
+    for (var yy = relief.thickness; yy > 0; yy -= 1) {
+      ctx.save();
+      ctx.translate(0, yy);
+      ctx.fill(path);
+      ctx.restore();
+    }
+  }
+  // 写真面
   ctx.save();
   ctx.clip(path);
   ctx.drawImage(state.srcCanvas, marginPx - home.col * cellPx, marginPx - home.row * cellPx, state.boardPx, state.boardPx);
   ctx.restore();
+  // 縁のベベル (上・左に光、下・右に影)。既存の輪郭線はこの上に引いて締める
+  strokePieceBevel(ctx, path, relief.bevel);
   ctx.strokeStyle = 'rgba(30,30,30,0.35)';
   ctx.lineWidth = Math.max(1, cellPx * 0.02);
   ctx.stroke(path);
@@ -1754,6 +1828,7 @@ function paintDetailBoard(cv, r, src) {
     ctx.clip(path);
     ctx.drawImage(src, layout.ox, layout.oy, layout.boardPx, layout.boardPx);
     ctx.restore();
+    strokePieceBevel(ctx, path, pieceRelief(layout.cellPx).bevel); // プレイ画面と揃える
     ctx.strokeStyle = 'rgba(30,30,30,0.35)';
     ctx.lineWidth = Math.max(1, layout.cellPx * 0.02);
     ctx.stroke(path);
