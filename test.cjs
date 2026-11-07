@@ -420,5 +420,26 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(allFit, 'ミニマップ: 全難易度の散らばり領域が収まる');
 }
 
+/* 16. 起動フロー: スタート画面のパネル判定と「はじめから」確認の要否
+ * (ページを開き直したら必ずスタート画面。進行中は つづきから/はじめから を選べる) */
+{
+  // progressIsStarted: started フラグ or 塊の残存で開始済み (旧保存互換)
+  ok(L.progressIsStarted(null) === false, '開始判定: 進捗なしは未開始');
+  ok(L.progressIsStarted({ started: false, clusters: [] }) === false, '開始判定: 空の進捗は未開始');
+  ok(L.progressIsStarted({ started: true, clusters: [] }) === true, '開始判定: started フラグで開始済み');
+  ok(L.progressIsStarted({ clusters: [{ pieces: [0] }] }) === true, '開始判定: started なしの旧保存でも塊が残れば開始済み');
+  // startPanelMode: 未開始=箱 / 進行中=resume / クリア済み=cleared
+  ok(L.startPanelMode(null) === 'box', 'パネル判定: 進捗なしは箱');
+  ok(L.startPanelMode({ started: false, cleared: false, clusters: [] }) === 'box', 'パネル判定: 未開始は箱');
+  ok(L.startPanelMode({ started: true, cleared: false, clusters: [{ pieces: [0] }] }) === 'resume', 'パネル判定: 進行中は つづきから/はじめから');
+  ok(L.startPanelMode({ started: true, cleared: true, clusters: [{ pieces: [0] }] }) === 'cleared', 'パネル判定: クリア済みはベストタイム表示が優先');
+  ok(L.startPanelMode({ cleared: true, clusters: [] }) === 'cleared', 'パネル判定: クリア済みは塊が無くても cleared');
+  // freshStartNeedsConfirm: 消える進捗があるときだけ確認モーダルを出す
+  ok(L.freshStartNeedsConfirm(null) === false, '確認要否: 進捗なしは確認不要');
+  ok(L.freshStartNeedsConfirm({ started: false, clusters: [] }) === false, '確認要否: 未開始は確認不要');
+  ok(L.freshStartNeedsConfirm({ started: true, clusters: [] }) === true, '確認要否: 進行中は確認が必要');
+  ok(L.freshStartNeedsConfirm({ cleared: true, clusters: [] }) === true, '確認要否: クリア済みの再プレイも確認が必要');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

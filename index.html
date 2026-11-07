@@ -12,7 +12,8 @@
 </head>
 <body>
 
-<!-- スタート画面: 難易度を選ぶのはここだけ。開始済みの難易度は「つづきから」になる。
+<!-- スタート画面: 難易度を選ぶのはここだけ。ページを開き直したら必ずここから。
+     開始済みの難易度は「つづきから / はじめから (確認あり)」が選べる。
      デザインは「紙 + タイポグラフィ、枠少なめ」。難易度だけ重なったカード (案D)。 -->
 <section id="startView">
   <div class="start-inner">
@@ -36,6 +37,7 @@
     <div id="resumePanel" hidden>
       <p id="resumeInfo" class="resume-info"></p>
       <button id="resumePlayBtn" class="resume-link" type="button">つづきから遊ぶ <span class="resume-arrow" aria-hidden="true">→</span></button>
+      <button id="freshStartBtn" class="fresh-link" type="button">はじめから遊ぶ</button>
     </div>
 
     <div class="start-difficulty">
@@ -128,6 +130,18 @@
     <div class="result-actions">
       <button id="confirmYesBtn" class="btn danger-btn" type="button">やりなおす</button>
       <button id="confirmNoBtn" class="btn" type="button">やめる</button>
+    </div>
+  </div>
+</div>
+
+<!-- スタート画面の「はじめから」専用の確認 (設定シート側の confirmModal とは別) -->
+<div id="freshConfirmModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body result-body">
+    <p id="freshConfirmText">進捗は消えます。はじめから遊びますか？</p>
+    <div class="result-actions">
+      <button id="freshConfirmYesBtn" class="btn danger-btn" type="button">はじめから</button>
+      <button id="freshConfirmNoBtn" class="btn" type="button">キャンセル</button>
     </div>
   </div>
 </div>

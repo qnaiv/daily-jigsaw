@@ -225,6 +225,15 @@ button { font: inherit; cursor: pointer; }
 }
 .resume-link:active { opacity: .6; }
 .resume-arrow { color: var(--brass); text-decoration: none; }
+/* 「はじめから」は誤タップを誘わないよう、つづきからより控えめな小さな下線リンク */
+.fresh-link {
+  background: none; border: 0; width: 100%; min-height: 44px; padding: 8px 6px;
+  font-size: 13.5px; font-weight: 700; letter-spacing: .08em; color: var(--paper-dim);
+  text-decoration: underline; text-decoration-color: var(--line);
+  text-decoration-thickness: 1.5px; text-underline-offset: 6px;
+  -webkit-tap-highlight-color: transparent;
+}
+.fresh-link:active { opacity: .6; }
 
 .start-difficulty { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 8px; width: 100%; }
 .start-difficulty-label { color: var(--paper-dim); font-weight: 700; font-size: 11px; letter-spacing: .3em; }

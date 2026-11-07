@@ -449,6 +449,27 @@ function minimapLayout(rect, maxW, maxH) {
   return { scale: scale, w: w, h: h, ox: (maxW - w) / 2, oy: (maxH - h) / 2 };
 }
 
+/* 保存済み進捗が「開始済み」かどうか。
+ * 旧バージョンの保存 (started フラグなし) でも、塊が残っていれば開始済みとして扱う。 */
+function progressIsStarted(prog) {
+  return !!prog && (!!prog.started || !!(prog.clusters && prog.clusters.length > 0));
+}
+
+/* スタート画面でその難易度について出すパネルの種類。
+ * 'box' = 未開始 (包装された箱) / 'resume' = 進行中 (つづきから・はじめから) /
+ * 'cleared' = クリア済み (ベストタイム表示)。起動時は進捗があっても必ず
+ * スタート画面から始めるので、机への自動復帰はせずこの判定で出し分ける。 */
+function startPanelMode(prog) {
+  if (!prog) return 'box';
+  if (prog.cleared) return 'cleared';
+  return progressIsStarted(prog) ? 'resume' : 'box';
+}
+
+/* 「はじめから」を押したときに進捗リセットの確認が要るか (未開始なら確認不要)。 */
+function freshStartNeedsConfirm(prog) {
+  return startPanelMode(prog) !== 'box';
+}
+
 function formatTime(sec) {
   sec = Math.max(0, Math.floor(sec));
   var m = Math.floor(sec / 60), s = sec % 60, hh = Math.floor(m / 60);
@@ -471,6 +492,7 @@ var PureLogic = {
   scatterRect: scatterRect, initialScatter: initialScatter,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime,
+  progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
   woodTileOrigin: woodTileOrigin, isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout
 };
@@ -590,8 +612,7 @@ var state = null; // ゲーム開始時に構築
 
 function newGameState(pool) {
   var prog = progressFor(playDate, difficulty);
-  // 旧バージョンの保存 (started なし) でも、塊が残っていれば開始済みとして扱う
-  var gameStarted = !!prog.started || prog.clusters.length > 0;
+  var gameStarted = progressIsStarted(prog);
   return {
     pool: pool,
     imageId: pickImageId(playDate, pool),
@@ -1546,7 +1567,7 @@ function runConfetti() {
 var uiHome = true;
 var uiCollection = false;
 var collectionBackToHome = false; // クリア画面経由で開いたコレクションの「戻る」はプレイ画面でなくスタート画面へ
-var firstStart = true; // 初回だけ「未開封→スタート画面 / 開始済み→そのまま続きからプレイ」
+var firstStart = true; // 初回だけ true。起動時は進捗があっても必ずスタート画面から (机へ自動復帰しない)
 function applyVisibility() {
   $('startView').hidden = !uiHome || uiCollection;
   $('playView').hidden = uiHome || uiCollection;
@@ -1851,6 +1872,19 @@ function wireControls() {
     updateProgressUI();
     draw();
   });
+  /* スタート画面の「はじめから」: 誤タップ防止のため必ず確認モーダルを挟む。
+   * 確定したら進捗を消して未開封の箱に戻り、通常の開始フロー (箱→机) に入る。
+   * 設定シート側の確認モーダル (confirmModal) とは別にし、挙動を混ぜない。 */
+  $('freshStartBtn').addEventListener('click', function () {
+    if (!freshStartNeedsConfirm({ started: state && state.gameStarted, cleared: state && state.cleared, clusters: state ? state.clusters : [] })) return;
+    $('freshConfirmText').textContent = difficulty + 'ピースの進捗は消えます。はじめから遊びますか？';
+    $('freshConfirmModal').hidden = false;
+  });
+  $('freshConfirmNoBtn').addEventListener('click', function () { $('freshConfirmModal').hidden = true; });
+  $('freshConfirmYesBtn').addEventListener('click', function () {
+    $('freshConfirmModal').hidden = true;
+    restartPuzzle();
+  });
   $('giftBox').addEventListener('click', openBox);
   $('giftBox').addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openBox(); }
@@ -1999,17 +2033,19 @@ function openBox() {
   }, 580);
 }
 
-/* スタート画面の表示内容: 未開封なら箱、開始済みなら「つづきから」パネル */
+/* スタート画面の表示内容: 未開封なら箱、開始済みなら「つづきから / はじめから」パネル。
+ * 起動時は進捗があっても必ずここから始め、続きはユーザーが選ぶ。 */
 function renderStartScreen() {
   if (!state) return;
-  var startedAlready = state.gameStarted;
+  var mode = startPanelMode({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters });
+  var startedAlready = mode !== 'box';
   $('giftBox').classList.remove('opening');
   $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate).id);
   $('giftBox').hidden = startedAlready;
   $('startHint').hidden = startedAlready;
   $('resumePanel').hidden = !startedAlready;
   if (startedAlready) {
-    if (state.cleared) {
+    if (mode === 'cleared') {
       // クリア済みの日付×難易度は進捗サマリーの代わりにクリア表示にする
       var rec = findRecord(playDate, difficulty);
       var best = rec ? rec.bestTimeSec : currentElapsed();
@@ -2029,7 +2065,7 @@ function startGame(pool) {
   selection.clear(); // 塊が作り直されるので選択は引き継がない
   cancelPressAndRect();
   buildDifficultySeg();
-  if (firstStart) { uiHome = state.phase === 'box'; firstStart = false; }
+  if (firstStart) { uiHome = true; firstStart = false; } // ページを開き直したら必ずスタート画面から
   // スタート画面: 未開封なら包装された箱 (柄は日付で決定的)、開始済みなら続きからパネル
   renderStartScreen();
   $('fadeVeil').classList.remove('on');
