@@ -6,7 +6,7 @@
 /* ================= 純粋ロジック ================= */
 
 var BASE_DATE_FALLBACK = '2026-11-07';
-var DIFFICULTIES = [36, 100, 225, 400, 784, 1225, 2025];
+var DIFFICULTIES = [16, 36, 100, 225, 400, 784, 1225]; // 2025 は廃止し 16 (4x4) を追加 (2026-11-08)
 var TABSIZE = 0.2;      // デコの高さ = 一辺の約20%
 var JITTER = 0.045;     // 制御点ジッター (辺長比)
 var SNAP_DIST = 0.35;   // 相対スナップの許容距離 (セル単位)
@@ -49,12 +49,59 @@ function jstTodayString(now) {
 /* 日付移動は廃止 (ユーザー指定): アプリは常に今日 (JST) のお題だけを開く。
  * ?date= パラメータにも対応しない。過去の記録はコレクションで見るだけ。 */
 
-/* ---- お題決定: (対象日 - 基準日) mod プール ---- */
-function pickImageId(dateStr, pool) {
-  var ids = pool.ids;
+/* ---- お題決定: (対象日 - 基準日) mod プール ----
+ * プール (data/images.json) はエントリ配列形式:
+ *   { type:'picsum', id } — Lorem Picsum の写真
+ *   { type:'url', key, title, source, thumbUrl, fullUrl, license, attribution }
+ *     — 厳選した外部オープンコレクション (Wikimedia / Met / Cleveland)。
+ *     key は curation/round2.json のインデックスで、安定キーは 'u' + key。
+ * 旧形式 { ids:[...] } も poolEntries が picsum エントリとして読む。 */
+function poolEntries(pool) {
+  if (!pool) return [];
+  if (Array.isArray(pool.entries)) return pool.entries;
+  if (Array.isArray(pool.ids)) return pool.ids.map(function (id) { return { type: 'picsum', id: id }; });
+  return [];
+}
+function pickPoolEntry(dateStr, pool) {
+  var entries = poolEntries(pool);
+  if (!entries.length) return null;
   var days = daysBetween(dateStr, pool.baseDate || BASE_DATE_FALLBACK);
-  var idx = ((days % ids.length) + ids.length) % ids.length;
-  return ids[idx];
+  var idx = ((days % entries.length) + entries.length) % entries.length;
+  return entries[idx];
+}
+/* 旧 API 互換: picsum エントリのときだけ ID を返す (URL エントリは null) */
+function pickImageId(dateStr, pool) {
+  var e = pickPoolEntry(dateStr, pool);
+  return e && e.type === 'picsum' ? e.id : null;
+}
+/* エントリの安定キー: picsum は 'p' + id、URL は 'u' + key */
+function poolEntryKey(entry) {
+  if (!entry) return null;
+  return entry.type === 'picsum' ? 'p' + entry.id : 'u' + entry.key;
+}
+function poolEntryByKey(pool, key) {
+  var entries = poolEntries(pool);
+  for (var i = 0; i < entries.length; i++) if (poolEntryKey(entries[i]) === key) return entries[i];
+  return null;
+}
+/* コレクション記録 → 安定キー。旧記録 (数値 imageId のみ) は 'p'+id として読む */
+function recordImageKey(rec) {
+  if (!rec) return null;
+  if (typeof rec.imageKey === 'string' && rec.imageKey) return rec.imageKey;
+  if (typeof rec.imageId === 'number') return 'p' + rec.imageId;
+  return null;
+}
+/* プレイ用 (正方形・難易度サイズ) の画像 URL。URL エントリは fullUrl 固定 */
+function entryPhotoUrl(entry, size) {
+  if (!entry) return null;
+  if (entry.type === 'picsum') return 'https://picsum.photos/id/' + entry.id + '/' + size + '/' + size;
+  return entry.fullUrl || entry.thumbUrl || null;
+}
+/* サムネイル (コレクション/写真立て用・正方形 400px 級) の URL */
+function entryThumbUrl(entry) {
+  if (!entry) return null;
+  if (entry.type === 'picsum') return 'https://picsum.photos/id/' + entry.id + '/400/400';
+  return entry.thumbUrl || entry.fullUrl || null;
 }
 function imageSizeFor(pieces) {
   if (pieces <= 225) return 1080;
@@ -694,33 +741,229 @@ function boxTapAction(prog) {
 }
 
 /* ---- クリア報酬インテリア (純粋ロジック) ----
- * 設計 (設計案アーティファクト「クリア報酬システム設計案」が正):
- * - その日の初回クリアで 1 回だけ、未所持から 3 択を提示して 1 つ獲得する。
- *   選ばなかった候補は消えず、次回の候補に戻る (pending に choices を固定保存)。
- * - 写真立て (累計 3 回) と額縁 (累計 10 回) は 3 択を経由しない直接付与。
- * - 季節アイテム (その月のもの) とレア (400 ピース以上の日のティーポット) は
- *   条件を満たす日の 3 択に必ず 1 枠入る。初回クリアでは観葉植物を必ず含める。
- * - デスクライトは 100 ピース以上の日だけ、猫の置物はプレビューを見ずに
- *   クリアした日だけ候補に入る。
+ * 仕様 (2026-11-08 改定。設計案アーティファクト＋ユーザー指示):
+ * - その日の初回クリアで 1 日 1 個、未所持から「ランダム抽選」で直接付与する
+ *   (旧・3 択方式は廃止。旧セーブの pending は settleLegacyPending で精算)。
+ * - 抽選はレア度 (★1 コモン / ★2 レア / ★3 スーパーレア) の重み付き。
+ *   重みは RARITY_TABLE に集約する。季節アイテム (months を持つ) は
+ *   その月の間だけ抽選対象になる。
+ * - 生涯の初回クリアでは ミニ観葉植物 を確定付与 (チュートリアル報酬)。
+ * - 写真立て (累計 3 回) と額縁 (累計 10 回) は抽選を経由しない節目の直接付与。
  * - 配置は机 (散布領域) に対する比率座標 {x, y} と重なり順 z で保持する。
- *   kind: 'first' 初回確定枠 / 'normal' 通常 / 'upper' 上位 / 'special' 特別 /
- *         'rare' レア / 'seasonal' 季節 (month を持つ) / 'grant' 直接付与 (grantAt 回)
+ *   def が無いアイテムは defaultItemPos (カタログ順の黄金角レイアウト) で置く。
  * - photo: 中に直近のクリア写真をはめ込む枠物。photoRect は画像内の写真の
- *   矩形 (比率)。生成画像の透明部分から実測して決めた値。 */
+ *   矩形 (比率)。生成画像の透明部分から実測して決めた値。
+ * カタログは items-v2/catalog.json と同期 (200 点)。 */
+var RARITY_TABLE = {
+  1: { label: '★1', name: 'コモン', weight: 100 },
+  2: { label: '★2', name: 'レア', weight: 30 },
+  3: { label: '★3', name: 'スーパーレア', weight: 8 }
+};
+function rarityLabel(item) {
+  var r = item && RARITY_TABLE[item.rarity];
+  return r ? r.label : '';
+}
 var REWARD_ITEMS = [
-  { id: 'plant',  name: 'ミニ観葉植物', kind: 'first',    size: 1.1, def: { x: 0.16, y: 0.18 } },
-  { id: 'mug',    name: 'コーヒーマグ', kind: 'normal',   size: 0.8, def: { x: 0.82, y: 0.76 } },
-  { id: 'candle', name: 'キャンドル',   kind: 'normal',   size: 0.7, def: { x: 0.13, y: 0.44 } },
-  { id: 'books',  name: '本の束',       kind: 'normal',   size: 1.2, def: { x: 0.15, y: 0.80 } },
-  { id: 'clock',  name: '卓上時計',     kind: 'normal',   size: 0.9, def: { x: 0.84, y: 0.44 } },
-  { id: 'vase',   name: '一輪挿し',     kind: 'normal',   size: 0.8, def: { x: 0.85, y: 0.16 } },
-  { id: 'frame',  name: '写真立て',     kind: 'grant',    grantAt: 3, size: 1.3, def: { x: 0.62, y: 0.14 }, photo: true, photoRect: { x: 0.213, y: 0.121, w: 0.584, h: 0.777 } },
-  { id: 'lamp',   name: 'デスクライト', kind: 'upper',    minPieces: 100, size: 1.3, def: { x: 0.36, y: 0.13 } },
-  { id: 'cat',    name: '猫の置物',     kind: 'special',  size: 0.9, def: { x: 0.55, y: 0.86 } },
-  { id: 'teapot', name: 'ティーポットセット', kind: 'rare', minPieces: 400, size: 1.2, def: { x: 0.66, y: 0.82 } },
-  { id: 'maple',  name: '紅葉の枝',     kind: 'seasonal', month: 11, size: 1.1, def: { x: 0.14, y: 0.68 } },
-  { id: 'tree',   name: 'ミニツリー',   kind: 'seasonal', month: 12, size: 1.1, def: { x: 0.14, y: 0.68 } },
-  { id: 'gaku',   name: '額縁「今月の一枚」', kind: 'grant', grantAt: 10, size: 1.5, def: { x: 0.40, y: 0.84 }, photo: true, photoRect: { x: 0.170, y: 0.277, w: 0.676, h: 0.459 } }
+  { id: 'plant', name: 'ミニ観葉植物', cat: 'plant', kind: 'draw', rarity: 1, size: 1.1, def: { x: 0.16, y: 0.18 } },
+  { id: 'mug', name: 'コーヒーマグ', cat: 'food', kind: 'draw', rarity: 1, size: 0.8, def: { x: 0.82, y: 0.76 } },
+  { id: 'candle', name: 'キャンドル', cat: 'interior', kind: 'draw', rarity: 1, size: 0.7, def: { x: 0.13, y: 0.44 } },
+  { id: 'books', name: '本の束', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.2, def: { x: 0.15, y: 0.8 } },
+  { id: 'clock', name: '卓上時計', cat: 'interior', kind: 'draw', rarity: 1, size: 0.9, def: { x: 0.84, y: 0.44 } },
+  { id: 'vase', name: '一輪挿し', cat: 'interior', kind: 'draw', rarity: 1, size: 0.8, def: { x: 0.85, y: 0.16 } },
+  { id: 'frame', name: '写真立て', cat: 'interior', kind: 'grant', grantAt: 3, size: 1.3, photo: true, photoRect: { x: 0.213, y: 0.121, w: 0.584, h: 0.777, def: { x: 0.62, y: 0.14 } } },
+  { id: 'lamp', name: 'デスクライト', cat: 'interior', kind: 'draw', rarity: 2, size: 1.3, def: { x: 0.36, y: 0.13 } },
+  { id: 'cat', name: '猫の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.9, def: { x: 0.55, y: 0.86 } },
+  { id: 'teapot', name: 'ティーポットセット', cat: 'food', kind: 'draw', rarity: 3, size: 1.2, def: { x: 0.66, y: 0.82 } },
+  { id: 'maple', name: '紅葉の枝', cat: 'seasonal', kind: 'draw', rarity: 2, months: [11], size: 1.1, def: { x: 0.14, y: 0.68 } },
+  { id: 'tree', name: 'ミニツリー', cat: 'seasonal', kind: 'draw', rarity: 2, months: [12], size: 1.1, def: { x: 0.14, y: 0.68 } },
+  { id: 'gaku', name: '額縁「今月の一枚」', cat: 'interior', kind: 'grant', grantAt: 10, size: 1.5, photo: true, photoRect: { x: 0.17, y: 0.277, w: 0.676, h: 0.459, def: { x: 0.4, y: 0.84 } } },
+  { id: 'pl01', name: '多肉植物の寄せ植え', cat: 'plant', kind: 'draw', rarity: 1, size: 1.09 },
+  { id: 'pl02', name: 'サボテン', cat: 'plant', kind: 'draw', rarity: 1, size: 0.99 },
+  { id: 'pl03', name: 'ハーブポット（バジル）', cat: 'plant', kind: 'draw', rarity: 1, size: 1.0 },
+  { id: 'pl04', name: '苔玉', cat: 'plant', kind: 'draw', rarity: 2, size: 1.13 },
+  { id: 'pl05', name: 'エアプランツ', cat: 'plant', kind: 'draw', rarity: 1, size: 0.96 },
+  { id: 'pl06', name: '小さな盆栽（松）', cat: 'plant', kind: 'draw', rarity: 3, size: 1.2 },
+  { id: 'pl07', name: '蘭の鉢', cat: 'plant', kind: 'draw', rarity: 2, size: 0.99 },
+  { id: 'pl08', name: 'ひまわりの鉢', cat: 'plant', kind: 'draw', rarity: 1, months: [7,8], size: 1.01 },
+  { id: 'pl09', name: 'チューリップの鉢', cat: 'plant', kind: 'draw', rarity: 1, months: [3,4], size: 1.11 },
+  { id: 'pl10', name: 'あじさいの鉢', cat: 'plant', kind: 'draw', rarity: 2, months: [6], size: 1.05 },
+  { id: 'pl11', name: 'ポインセチア', cat: 'plant', kind: 'draw', rarity: 2, months: [12], size: 1.2 },
+  { id: 'pl12', name: 'ハンギングプランター', cat: 'plant', kind: 'draw', rarity: 2, size: 1.19 },
+  { id: 'pl13', name: 'オリーブの鉢', cat: 'plant', kind: 'draw', rarity: 2, size: 1.15 },
+  { id: 'pl14', name: 'モンステラの鉢', cat: 'plant', kind: 'draw', rarity: 2, size: 1.15 },
+  { id: 'pl15', name: 'ドライフラワーの束', cat: 'plant', kind: 'draw', rarity: 1, size: 1.18 },
+  { id: 'pl16', name: 'ラベンダーの鉢', cat: 'plant', kind: 'draw', rarity: 1, months: [5,6], size: 0.96 },
+  { id: 'pl17', name: 'クローバーの鉢', cat: 'plant', kind: 'draw', rarity: 1, size: 1.02 },
+  { id: 'pl18', name: '小さなヤシの鉢', cat: 'plant', kind: 'draw', rarity: 2, size: 1.03 },
+  { id: 'pl19', name: '竹の鉢植え', cat: 'plant', kind: 'draw', rarity: 1, size: 1.19 },
+  { id: 'pl20', name: '藤の鉢', cat: 'plant', kind: 'draw', rarity: 2, months: [4,5], size: 1.04 },
+  { id: 'pl21', name: '金木犀の鉢', cat: 'plant', kind: 'draw', rarity: 2, months: [10], size: 0.96 },
+  { id: 'pl22', name: '南天の鉢', cat: 'plant', kind: 'draw', rarity: 2, months: [12,1], size: 1.04 },
+  { id: 'pl23', name: '水耕栽培のガラス鉢', cat: 'plant', kind: 'draw', rarity: 1, size: 1.18 },
+  { id: 'pl24', name: 'テラリウム', cat: 'plant', kind: 'draw', rarity: 3, size: 1.2 },
+  { id: 'fd01', name: '湯呑み（緑茶）', cat: 'food', kind: 'draw', rarity: 1, size: 0.94 },
+  { id: 'fd02', name: 'アイスコーヒー', cat: 'food', kind: 'draw', rarity: 1, months: [6,7,8], size: 1.05 },
+  { id: 'fd03', name: 'ラテアートのカップ', cat: 'food', kind: 'draw', rarity: 2, size: 1.05 },
+  { id: 'fd04', name: 'ワイングラス', cat: 'food', kind: 'draw', rarity: 2, size: 0.92 },
+  { id: 'fd05', name: 'ビールジョッキ', cat: 'food', kind: 'draw', rarity: 1, months: [7,8], size: 0.97 },
+  { id: 'fd06', name: 'お猪口と徳利', cat: 'food', kind: 'draw', rarity: 2, size: 1.02 },
+  { id: 'fd07', name: 'フレンチプレス', cat: 'food', kind: 'draw', rarity: 2, size: 0.86 },
+  { id: 'fd08', name: 'マキネッタ', cat: 'food', kind: 'draw', rarity: 2, size: 0.97 },
+  { id: 'fd09', name: 'やかん', cat: 'food', kind: 'draw', rarity: 1, size: 1.1 },
+  { id: 'fd10', name: 'ティーカップ', cat: 'food', kind: 'draw', rarity: 1, size: 0.89 },
+  { id: 'fd11', name: 'ガラスのティーポット', cat: 'food', kind: 'draw', rarity: 3, size: 1.15 },
+  { id: 'fd12', name: 'ピッチャーとグラス', cat: 'food', kind: 'draw', rarity: 1, size: 1.08 },
+  { id: 'fd13', name: 'スープボウル', cat: 'food', kind: 'draw', rarity: 1, size: 0.95 },
+  { id: 'fd14', name: 'パスタの皿', cat: 'food', kind: 'draw', rarity: 2, size: 1.1 },
+  { id: 'fd15', name: 'サンドイッチの皿', cat: 'food', kind: 'draw', rarity: 1, size: 0.95 },
+  { id: 'fd16', name: 'ラーメンどんぶり', cat: 'food', kind: 'draw', rarity: 2, size: 0.85 },
+  { id: 'fd17', name: 'おにぎり皿', cat: 'food', kind: 'draw', rarity: 1, size: 0.86 },
+  { id: 'fd18', name: 'サラダボウル', cat: 'food', kind: 'draw', rarity: 1, size: 0.89 },
+  { id: 'fd19', name: '果物かご', cat: 'food', kind: 'draw', rarity: 2, size: 1.1 },
+  { id: 'fd20', name: 'チーズボード', cat: 'food', kind: 'draw', rarity: 3, size: 1.25 },
+  { id: 'fd21', name: 'トーストの朝食皿', cat: 'food', kind: 'draw', rarity: 1, size: 0.95 },
+  { id: 'fd22', name: 'カレーライスの皿', cat: 'food', kind: 'draw', rarity: 1, size: 0.85 },
+  { id: 'fd23', name: 'お弁当箱', cat: 'food', kind: 'draw', rarity: 2, size: 1.02 },
+  { id: 'fd24', name: 'チーズフォンデュ鍋', cat: 'food', kind: 'draw', rarity: 3, months: [12,1,2], size: 1.15 },
+  { id: 'st01', name: '万年筆', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.9 },
+  { id: 'st02', name: '鉛筆と消しゴム', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.92 },
+  { id: 'st03', name: 'ペン立て', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.87 },
+  { id: 'st04', name: 'ノートの束', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.82 },
+  { id: 'st05', name: '付箋', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.83 },
+  { id: 'st06', name: 'ハサミ', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.92 },
+  { id: 'st07', name: 'ホチキス', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.76 },
+  { id: 'st08', name: 'テープ台', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.74 },
+  { id: 'st09', name: '木の定規', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.84 },
+  { id: 'st10', name: 'インク瓶', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.78 },
+  { id: 'st11', name: '封筒の束', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.84 },
+  { id: 'st12', name: 'シーリングスタンプ', cat: 'stationery', kind: 'draw', rarity: 3, size: 0.85 },
+  { id: 'st13', name: '卓上カレンダー', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.79 },
+  { id: 'st14', name: 'クリップの小皿', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.86 },
+  { id: 'st15', name: 'マスキングテープ', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.72 },
+  { id: 'st16', name: '色鉛筆立て', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.89 },
+  { id: 'st17', name: 'スケッチブック', cat: 'stationery', kind: 'draw', rarity: 2, size: 1.1 },
+  { id: 'st18', name: 'そろばん', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.91 },
+  { id: 'st19', name: '虫めがね', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.77 },
+  { id: 'st20', name: '眼鏡', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.9 },
+  { id: 'st21', name: '筆と硯', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.73 },
+  { id: 'st22', name: '穴あけパンチ', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.89 },
+  { id: 'st23', name: '電卓', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.82 },
+  { id: 'st24', name: 'ガラスのペーパーウェイト', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.86 },
+  { id: 'hb01', name: 'アコースティックギター', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.6 },
+  { id: 'hb02', name: 'ウクレレ', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.3 },
+  { id: 'hb03', name: 'レコード', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.1 },
+  { id: 'hb04', name: 'ヘッドホン', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.21 },
+  { id: 'hb05', name: 'フィルムカメラ', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.0 },
+  { id: 'hb06', name: 'インスタントカメラ', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.01 },
+  { id: 'hb07', name: 'チェス盤', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.3 },
+  { id: 'hb08', name: '将棋盤', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.2 },
+  { id: 'hb09', name: '碁盤', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.3 },
+  { id: 'hb10', name: 'トランプ', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.11 },
+  { id: 'hb11', name: 'サイコロ', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.19 },
+  { id: 'hb12', name: 'パレットと絵筆', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.18 },
+  { id: 'hb13', name: '水彩絵の具セット', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.1 },
+  { id: 'hb14', name: '毛糸と編み棒', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.06 },
+  { id: 'hb15', name: '刺繍枠', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.11 },
+  { id: 'hb16', name: 'ハーモニカ', cat: 'hobby', kind: 'draw', rarity: 1, size: 0.99 },
+  { id: 'hb17', name: 'カリンバ', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.23 },
+  { id: 'hb18', name: '懐中時計', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.2 },
+  { id: 'hb19', name: '双眼鏡', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.26 },
+  { id: 'hb20', name: '小さな地球儀', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.1 },
+  { id: 'hb21', name: '砂時計', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.0 },
+  { id: 'hb22', name: 'ルービックキューブ', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.03 },
+  { id: 'hb23', name: 'けん玉', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.01 },
+  { id: 'an01', name: '柴犬の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.87 },
+  { id: 'an02', name: 'うさぎの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.88 },
+  { id: 'an03', name: 'ふくろうの置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.91 },
+  { id: 'an04', name: 'ペンギンの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 1.02 },
+  { id: 'an05', name: 'かえるの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.84 },
+  { id: 'an06', name: 'かめの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.97 },
+  { id: 'an07', name: 'きつねの置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.87 },
+  { id: 'an08', name: 'パンダの置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.97 },
+  { id: 'an09', name: 'ぞうの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 1.03 },
+  { id: 'an10', name: '馬の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.98 },
+  { id: 'an11', name: '鹿の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.86 },
+  { id: 'an12', name: 'くまの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.92 },
+  { id: 'an13', name: '金魚鉢', cat: 'animal', kind: 'draw', rarity: 2, months: [7,8], size: 1.0 },
+  { id: 'an14', name: '小鳥の置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.93 },
+  { id: 'an15', name: 'くじらの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 1.02 },
+  { id: 'an16', name: 'たこの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.83 },
+  { id: 'an17', name: 'カブトムシの置物', cat: 'animal', kind: 'draw', rarity: 2, months: [7,8], size: 0.9 },
+  { id: 'an18', name: '龍の置物', cat: 'animal', kind: 'draw', rarity: 3, size: 1.15 },
+  { id: 'an19', name: '招き猫', cat: 'animal', kind: 'draw', rarity: 3, size: 0.86 },
+  { id: 'an20', name: 'だるま', cat: 'animal', kind: 'draw', rarity: 2, size: 0.99 },
+  { id: 'an21', name: 'たぬきの置物', cat: 'animal', kind: 'draw', rarity: 2, size: 1.03 },
+  { id: 'an22', name: '鶴の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 1.02 },
+  { id: 'an23', name: '鯉の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.84 },
+  { id: 'an24', name: 'ハリネズミの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.95 },
+  { id: 'ss01', name: '桜の枝', cat: 'seasonal', kind: 'draw', rarity: 2, months: [3,4], size: 0.94 },
+  { id: 'ss02', name: '雛人形', cat: 'seasonal', kind: 'draw', rarity: 3, months: [3], size: 0.99 },
+  { id: 'ss03', name: 'ミニ鯉のぼり', cat: 'seasonal', kind: 'draw', rarity: 2, months: [5], size: 0.91 },
+  { id: 'ss04', name: '七夕飾り', cat: 'seasonal', kind: 'draw', rarity: 2, months: [7], size: 1.08 },
+  { id: 'ss05', name: 'すいか', cat: 'seasonal', kind: 'draw', rarity: 1, months: [7,8], size: 1.1 },
+  { id: 'ss06', name: '風鈴', cat: 'seasonal', kind: 'draw', rarity: 2, months: [7,8], size: 1.06 },
+  { id: 'ss07', name: '貝殻の小皿', cat: 'seasonal', kind: 'draw', rarity: 1, months: [7,8], size: 0.91 },
+  { id: 'ss08', name: 'うちわ', cat: 'seasonal', kind: 'draw', rarity: 1, months: [7,8], size: 1.15 },
+  { id: 'ss09', name: '月見団子', cat: 'seasonal', kind: 'draw', rarity: 2, months: [9], size: 1.1 },
+  { id: 'ss10', name: '栗の皿', cat: 'seasonal', kind: 'draw', rarity: 1, months: [9,10], size: 1.07 },
+  { id: 'ss11', name: 'ハロウィンかぼちゃ', cat: 'seasonal', kind: 'draw', rarity: 2, months: [10], size: 0.99 },
+  { id: 'ss12', name: '雪だるまの置物', cat: 'seasonal', kind: 'draw', rarity: 2, months: [12,1,2], size: 1.06 },
+  { id: 'ss13', name: 'クリスマスリース', cat: 'seasonal', kind: 'draw', rarity: 2, months: [12], size: 1.1 },
+  { id: 'ss14', name: '鏡餅', cat: 'seasonal', kind: 'draw', rarity: 2, months: [1], size: 1.14 },
+  { id: 'ss15', name: 'ミニ門松', cat: 'seasonal', kind: 'draw', rarity: 3, months: [1], size: 1.1 },
+  { id: 'ss16', name: 'ミニおせち', cat: 'seasonal', kind: 'draw', rarity: 3, months: [1], size: 1.1 },
+  { id: 'ss17', name: 'バレンタインチョコ', cat: 'seasonal', kind: 'draw', rarity: 2, months: [2], size: 1.01 },
+  { id: 'ss18', name: 'イースターエッグ', cat: 'seasonal', kind: 'draw', rarity: 1, months: [4], size: 1.08 },
+  { id: 'ss19', name: '菖蒲の花', cat: 'seasonal', kind: 'draw', rarity: 2, months: [5], size: 1.1 },
+  { id: 'ss20', name: 'てるてる坊主', cat: 'seasonal', kind: 'draw', rarity: 1, months: [6], size: 1.11 },
+  { id: 'ss21', name: '朝顔の鉢', cat: 'seasonal', kind: 'draw', rarity: 1, months: [7,8], size: 0.9 },
+  { id: 'ss22', name: '柿の枝', cat: 'seasonal', kind: 'draw', rarity: 1, months: [10,11], size: 1.14 },
+  { id: 'in01', name: 'アロマディフューザー', cat: 'interior', kind: 'draw', rarity: 2, size: 1.15 },
+  { id: 'in02', name: 'ミニ加湿器', cat: 'interior', kind: 'draw', rarity: 2, size: 1.01 },
+  { id: 'in03', name: '卓上ミラー', cat: 'interior', kind: 'draw', rarity: 1, size: 0.95 },
+  { id: 'in04', name: 'ジュエリーボックス', cat: 'interior', kind: 'draw', rarity: 2, size: 0.99 },
+  { id: 'in05', name: 'ティッシュケース', cat: 'interior', kind: 'draw', rarity: 1, size: 1.1 },
+  { id: 'in06', name: 'コースターの束', cat: 'interior', kind: 'draw', rarity: 1, size: 0.96 },
+  { id: 'in07', name: 'ブックエンド', cat: 'interior', kind: 'draw', rarity: 1, size: 1.11 },
+  { id: 'in08', name: '真鍮の燭台', cat: 'interior', kind: 'draw', rarity: 2, size: 0.97 },
+  { id: 'in09', name: 'お香立て', cat: 'interior', kind: 'draw', rarity: 2, size: 0.95 },
+  { id: 'in10', name: '小さな丸ラグ', cat: 'interior', kind: 'draw', rarity: 1, size: 1.2 },
+  { id: 'in11', name: 'アルバム', cat: 'interior', kind: 'draw', rarity: 1, size: 1.03 },
+  { id: 'in12', name: 'ソルトランプ', cat: 'interior', kind: 'draw', rarity: 2, size: 0.91 },
+  { id: 'in13', name: 'ドリームキャッチャー', cat: 'interior', kind: 'draw', rarity: 2, size: 1.1 },
+  { id: 'in14', name: '卓上噴水', cat: 'interior', kind: 'draw', rarity: 3, size: 1.15 },
+  { id: 'in15', name: 'ミニじょうろ', cat: 'interior', kind: 'draw', rarity: 1, size: 0.98 },
+  { id: 'in16', name: '丸座布団', cat: 'interior', kind: 'draw', rarity: 1, size: 1.2 },
+  { id: 'in17', name: '万華鏡', cat: 'interior', kind: 'draw', rarity: 2, size: 1.03 },
+  { id: 'in18', name: 'オルゴール', cat: 'interior', kind: 'draw', rarity: 3, size: 1.02 },
+  { id: 'in19', name: 'スノードーム', cat: 'interior', kind: 'draw', rarity: 2, months: [12], size: 1.02 },
+  { id: 'in20', name: '貯金箱', cat: 'interior', kind: 'draw', rarity: 1, size: 0.98 },
+  { id: 'in21', name: 'アロマストーン', cat: 'interior', kind: 'draw', rarity: 1, size: 1.14 },
+  { id: 'in22', name: 'ミニ本棚', cat: 'interior', kind: 'draw', rarity: 3, size: 1.4 },
+  { id: 'sw01', name: 'ショートケーキ', cat: 'sweets', kind: 'draw', rarity: 2, size: 1.01 },
+  { id: 'sw02', name: 'チョコレートケーキ', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.96 },
+  { id: 'sw03', name: 'チーズケーキ', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.03 },
+  { id: 'sw04', name: 'プリン', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.03 },
+  { id: 'sw05', name: 'パフェ', cat: 'sweets', kind: 'draw', rarity: 3, size: 1.03 },
+  { id: 'sw06', name: 'アイスクリームコーン', cat: 'sweets', kind: 'draw', rarity: 1, months: [7,8], size: 0.93 },
+  { id: 'sw07', name: 'マカロン', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.87 },
+  { id: 'sw08', name: 'クッキー皿', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.87 },
+  { id: 'sw09', name: 'ドーナツ皿', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.85 },
+  { id: 'sw10', name: 'パンケーキ', cat: 'sweets', kind: 'draw', rarity: 2, size: 1.1 },
+  { id: 'sw11', name: 'ワッフル', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.91 },
+  { id: 'sw12', name: 'ティラミス', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.86 },
+  { id: 'sw13', name: 'フルーツタルト', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.93 },
+  { id: 'sw14', name: 'シュークリーム', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.92 },
+  { id: 'sw15', name: 'どら焼き', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.92 },
+  { id: 'sw16', name: 'たい焼き', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.82 },
+  { id: 'sw17', name: '三色団子', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.03 },
+  { id: 'sw18', name: '抹茶ロールケーキ', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.88 },
+  { id: 'sw19', name: 'フルーツゼリー', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.98 },
+  { id: 'sw20', name: 'キャンディ瓶', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.98 },
+  { id: 'sw21', name: 'はちみつポット', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.03 },
+  { id: 'sw22', name: 'シナモンロール', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.92 },
+  { id: 'sw23', name: 'マドレーヌ', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.02 },
+  { id: 'sw24', name: 'モンブラン', cat: 'sweets', kind: 'draw', rarity: 2, months: [9,10,11], size: 1.0 }
 ];
 function rewardItemById(id) {
   for (var i = 0; i < REWARD_ITEMS.length; i++) if (REWARD_ITEMS[i].id === id) return REWARD_ITEMS[i];
@@ -763,47 +1006,57 @@ function milestoneGrants(rewards, totalClears) {
     return it.kind === 'grant' && totalClears >= it.grantAt && rewards.owned.indexOf(it.id) < 0;
   }).map(function (it) { return it.id; });
 }
-/* その日のクリア文脈で 3 択の候補に入れるか。
- * ctx: { pieces, noPreview, month } */
-function rewardChoiceEligible(item, ctx) {
-  if (!item || item.kind === 'grant') return false;
-  switch (item.kind) {
-    case 'upper': return ctx.pieces >= item.minPieces;
-    case 'rare': return ctx.pieces >= item.minPieces;
-    case 'special': return !!ctx.noPreview;
-    case 'seasonal': return ctx.month === item.month;
-    default: return true; // 'first' / 'normal'
-  }
+/* 抽選対象に入るか: 未所持の draw アイテムで、季節物はその月の間だけ */
+function rewardDrawEligible(item, rewards, month) {
+  if (!item || item.kind !== 'draw') return false;
+  if (rewards.owned.indexOf(item.id) >= 0) return false;
+  if (item.months && item.months.indexOf(month) < 0) return false;
+  return true;
 }
-/* 今日の 3 択を決める。確定枠 (季節 → レア → 初回) を先に埋め、残りを
- * 候補から rng で抽選する。戻り値はアイテム id の配列 (0〜3 件)。
- * ctx: { pieces, noPreview, month, firstEver } */
-function rewardChoices(rewards, ctx, rng) {
-  var owned = rewards.owned;
-  var eligible = REWARD_ITEMS.filter(function (it) {
-    return owned.indexOf(it.id) < 0 && rewardChoiceEligible(it, ctx);
+/* その日のごほうび抽選。生涯初回は ミニ観葉植物 を確定で返す。
+ * それ以外は未所持の対象を RARITY_TABLE の重みで 1 点抽選する。
+ * 対象が無ければ null。ctx: { month, firstEver } / rng: () => [0,1) */
+function drawRewardItem(rewards, ctx, rng) {
+  if (ctx.firstEver) {
+    var first = rewardItemById('plant');
+    if (first && rewards.owned.indexOf(first.id) < 0) return first.id;
+  }
+  var pool = REWARD_ITEMS.filter(function (it) { return rewardDrawEligible(it, rewards, ctx.month); });
+  if (!pool.length) return null;
+  var total = 0;
+  pool.forEach(function (it) { total += RARITY_TABLE[it.rarity].weight; });
+  var roll = rng() * total;
+  for (var i = 0; i < pool.length; i++) {
+    roll -= RARITY_TABLE[pool[i].rarity].weight;
+    if (roll < 0) return pool[i].id;
+  }
+  return pool[pool.length - 1].id; // 浮動小数点の端数保険
+}
+/* 旧 3 択方式の未選択 pending を精算する: 候補から 1 点を抽選で付与し、
+ * 履歴は pending の日付に付け、lastDate もその日まで進める (同日の二重付与防止)。
+ * 精算したら付与した id、無ければ null を返す。 */
+function settleLegacyPending(rewards, rng) {
+  if (!rewards.pending || !rewards.pending.choices.length) { rewards.pending = null; return null; }
+  var choices = rewards.pending.choices.filter(function (id) {
+    return rewardItemById(id) && rewards.owned.indexOf(id) < 0;
   });
-  var picks = [];
-  function force(kind) {
-    for (var i = 0; i < eligible.length; i++) {
-      if (eligible[i].kind === kind && picks.indexOf(eligible[i].id) < 0 && picks.length < 3) {
-        picks.push(eligible[i].id);
-        return;
-      }
-    }
-  }
-  force('seasonal');
-  if (ctx.pieces >= 400) force('rare');
-  if (ctx.firstEver) force('first');
-  var rest = eligible.filter(function (it) { return picks.indexOf(it.id) < 0; });
-  // Fisher-Yates (shuffledOrder と同じ流儀で rng を使う)
-  for (var j = rest.length - 1; j > 0; j--) {
-    var k = Math.floor(rng() * (j + 1));
-    if (k < 0) k = 0; if (k > j) k = j;
-    var t = rest[j]; rest[j] = rest[k]; rest[k] = t;
-  }
-  while (picks.length < 3 && rest.length) picks.push(rest.shift().id);
-  return picks;
+  var date = rewards.pending.date;
+  rewards.pending = null;
+  if (!choices.length) return null;
+  var id = choices[Math.min(choices.length - 1, Math.floor(rng() * choices.length))];
+  grantRewardItems(rewards, [id]);
+  recordRewardHistory(rewards, date, [id]);
+  if (!rewards.lastDate || date > rewards.lastDate) rewards.lastDate = date;
+  return id;
+}
+/* def を持たないアイテムの既定位置: カタログ順に黄金角で散らす決定的配置 */
+function defaultItemPos(item) {
+  var idx = REWARD_ITEMS.indexOf(item);
+  if (idx < 0) idx = 0;
+  var r = 0.10 + 0.34 * Math.sqrt((idx + 0.5) / REWARD_ITEMS.length);
+  var th = idx * 2.399963; // 黄金角
+  function cl(v) { return Math.min(0.94, Math.max(0.06, v)); }
+  return { x: cl(0.5 + r * Math.cos(th)), y: cl(0.5 + r * Math.sin(th)) };
 }
 /* アイテムを既定位置に置く (z は現在の最大 + 1) */
 function placeItemDefault(rewards, id) {
@@ -814,7 +1067,8 @@ function placeItemDefault(rewards, id) {
     var p = rewards.placed[k];
     if (p && typeof p.z === 'number' && p.z >= z) z = p.z + 1;
   });
-  rewards.placed[id] = { x: it.def.x, y: it.def.y, z: z };
+  var def = it.def || defaultItemPos(it);
+  rewards.placed[id] = { x: def.x, y: def.y, z: z };
 }
 /* アイテムを所持に加え、未配置なら既定位置に置く */
 function grantRewardItems(rewards, ids) {
@@ -830,15 +1084,6 @@ function recordRewardHistory(rewards, date, ids) {
   var cur = rewards.history[date] || [];
   ids.forEach(function (id) { if (cur.indexOf(id) < 0) cur.push(id); });
   rewards.history[date] = cur;
-}
-/* pending の 3 択から 1 つ選んで獲得する。成功したら true。
- * 履歴は「クリアした日」(pending.date) に付ける (コレクション詳細の表示用)。 */
-function applyRewardPick(rewards, itemId) {
-  if (!rewards.pending || rewards.pending.choices.indexOf(itemId) < 0) return false;
-  grantRewardItems(rewards, [itemId]);
-  recordRewardHistory(rewards, rewards.pending.date, [itemId]);
-  rewards.pending = null;
-  return true;
 }
 /* 机の端でクランプ: 小物の中心は机 (比率 0〜1) の内側に収める */
 function clampItemPos(x, y) {
@@ -860,6 +1105,9 @@ var PureLogic = {
   dateToMs: dateToMs, msToDateStr: msToDateStr, daysBetween: daysBetween, addDays: addDays,
   jstTodayString: jstTodayString,
   pickImageId: pickImageId, imageSizeFor: imageSizeFor,
+  poolEntries: poolEntries, pickPoolEntry: pickPoolEntry, poolEntryKey: poolEntryKey,
+  poolEntryByKey: poolEntryByKey, recordImageKey: recordImageKey,
+  entryPhotoUrl: entryPhotoUrl, entryThumbUrl: entryThumbUrl,
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
@@ -870,11 +1118,13 @@ var PureLogic = {
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   boxTapAction: boxTapAction,
-  REWARD_ITEMS: REWARD_ITEMS, rewardItemById: rewardItemById, emptyRewards: emptyRewards,
+  REWARD_ITEMS: REWARD_ITEMS, RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
+  rewardItemById: rewardItemById, emptyRewards: emptyRewards,
   normalizeRewards: normalizeRewards, milestoneGrants: milestoneGrants,
-  rewardChoiceEligible: rewardChoiceEligible, rewardChoices: rewardChoices,
+  rewardDrawEligible: rewardDrawEligible, drawRewardItem: drawRewardItem,
+  settleLegacyPending: settleLegacyPending, defaultItemPos: defaultItemPos,
   placeItemDefault: placeItemDefault, grantRewardItems: grantRewardItems,
-  recordRewardHistory: recordRewardHistory, applyRewardPick: applyRewardPick, clampItemPos: clampItemPos,
+  recordRewardHistory: recordRewardHistory, clampItemPos: clampItemPos,
   completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
   woodTileOrigin: woodTileOrigin, deskBgRegionCells: deskBgRegionCells, deskBgPlan: deskBgPlan, deskBgBlit: deskBgBlit,
   bitmapProbeOk: bitmapProbeOk, bitmapRetryPlan: bitmapRetryPlan,
@@ -903,6 +1153,8 @@ function loadStore() {
 }
 var store = loadStore();
 store.rewards = normalizeRewards(store.rewards); // クリア報酬 (旧データには無いので空で作る)
+if (settleLegacyPending(store.rewards, Math.random)) saveStoreDeferred(); // 旧 3 択の未選択分は抽選で精算
+function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 容量超過などは無視 */ }
 }
@@ -1459,9 +1711,12 @@ var state = null; // ゲーム開始時に構築
 function newGameState(pool) {
   var prog = progressFor(playDate, difficulty);
   var gameStarted = progressIsStarted(prog);
+  var entry = pickPoolEntry(playDate, pool);
   return {
     pool: pool,
-    imageId: pickImageId(playDate, pool),
+    entry: entry,
+    imageKey: poolEntryKey(entry),
+    imageId: entry && entry.type === 'picsum' ? entry.id : null,
     author: null, authorUrl: null,
     n: Math.round(Math.sqrt(difficulty)),
     edges: generateEdges(playDate, difficulty),
@@ -1523,18 +1778,49 @@ function makeFallbackCanvas(dateStr) {
   for (var j = 0; j < 8; j++) ctx.fillRect(rng() * size, rng() * size, 60 + rng() * 160, 26 + rng() * 60);
   return cv;
 }
-function loadSourceImage() {
-  return new Promise(function (resolve) {
-    var size = imageSizeFor(difficulty);
-    var url = 'https://picsum.photos/id/' + state.imageId + '/' + size + '/' + size;
+/* 画像読み込み: まず CORS (anonymous) で試し、失敗したら素の読み込みに
+ * 落とす。ホスト別の実測 (2026-11-08): picsum / thumb.wikimedia.org /
+ * images.metmuseum.org は Access-Control-Allow-Origin:* を返すが、
+ * openaccess-cdn.clevelandart.org は返さないため CORS モードでは読めない。
+ * 素読み込みだとキャンバスは汚染されるが、ピクセル読み取り系は全て
+ * try/catch + 代替色フォールバックで守ってある (pieceSideColor 等)。 */
+function loadImgCorsFallback(url) {
+  return new Promise(function (resolve, reject) {
     var img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = function () { resolve({ img: img, fallback: false }); };
-    img.onerror = function () { resolve({ img: makeFallbackCanvas(playDate), fallback: true }); };
+    img.onload = function () { resolve(img); };
+    img.onerror = function () {
+      var plain = new Image();
+      plain.onload = function () { resolve(plain); };
+      plain.onerror = function () { reject(new Error('image load failed')); };
+      plain.src = url;
+    };
     img.src = url;
   });
 }
+function loadSourceImage() {
+  var size = imageSizeFor(difficulty);
+  var url = entryPhotoUrl(state.entry, size);
+  if (!url) return Promise.resolve({ img: makeFallbackCanvas(playDate), fallback: true });
+  return loadImgCorsFallback(url).then(
+    function (img) { return { img: img, fallback: false }; },
+    function () { return { img: makeFallbackCanvas(playDate), fallback: true }; });
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 function fetchCredit() {
+  var e = state.entry;
+  if (e && e.type === 'url') {
+    // 外部コレクション: タイトルと出典 (CC BY は attribution 全文) を出す
+    var line = escapeHtml(e.title || '');
+    var credit = e.attribution ? escapeHtml(e.attribution)
+      : escapeHtml(e.source || '') + (e.license ? '（' + escapeHtml(e.license) + '）' : '');
+    if (credit) line += (line ? ' — ' : '') + credit;
+    $('themeCredit').textContent = line;
+    return;
+  }
+  if (!state.imageId) return;
   fetch('https://picsum.photos/id/' + state.imageId + '/info')
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (info) {
@@ -2662,7 +2948,7 @@ function onClear() {
   var elapsed = state.elapsedBase;
   var prev = findRecord(playDate, difficulty);
   var rec = {
-    date: playDate, imageId: state.imageId, pieces: difficulty,
+    date: playDate, imageId: state.imageId, imageKey: state.imageKey, pieces: difficulty,
     clearTimeSec: elapsed,
     bestTimeSec: prev ? Math.min(prev.bestTimeSec, elapsed) : elapsed,
     moves: state.moves,
@@ -2676,16 +2962,20 @@ function onClear() {
   runConfetti();
   $('resultText').textContent = playDate + ' ・ ' + difficulty + 'ピース ・ タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
-  // クリア報酬: その日の初回クリアなら直接付与と 3 択を用意する
+  // クリア報酬: その日の初回クリアで節目付与 + ランダム抽選 1 点
   var grants = processRewardsOnClear();
   if (grants.length) {
     $('resultRewardLine').textContent = '机の小物が届きました：' +
-      grants.map(function (id) { return rewardItemById(id).name; }).join('、');
+      grants.map(function (id) {
+        var it = rewardItemById(id);
+        var stars = it && it.kind === 'draw' ? ' ' + rarityLabel(it) : '';
+        return (it ? it.name : id) + stars;
+      }).join('、');
     $('resultRewardLine').hidden = false;
   } else {
     $('resultRewardLine').hidden = true;
   }
-  $('resultRewardBtn').hidden = !store.rewards.pending;
+  $('resultRewardBtn').hidden = true; // 3 択は廃止 (ランダム付与に変更)
   $('resultModal').hidden = false;
 }
 function runConfetti() {
@@ -2726,66 +3016,27 @@ REWARD_ITEMS.forEach(function (it) {
   itemImgs[it.id] = img;
 });
 /* クリア時に報酬を確定させる。その日の初回クリアだけが対象で、
- * 直接付与 (節目) → 3 択の作成の順に処理し、どちらも冪等にする。
- * 戻り値: 今回直接届いたアイテム id の配列 (結果画面の表示用) */
+ * 節目の直接付与 → ランダム抽選 1 点の順に処理し、冪等にする。
+ * 戻り値: 今回届いたアイテム id の配列 (結果画面の表示用) */
 function processRewardsOnClear() {
   var rw = store.rewards;
-  var grants = [];
-  if (rw.lastDate === playDate) return grants;
-  var totalClears = store.records.length;
-  grants = milestoneGrants(rw, totalClears);
+  var grants = milestoneGrants(rw, store.records.length);
   if (grants.length) {
     grantRewardItems(rw, grants);
     recordRewardHistory(rw, playDate, grants);
   }
-  if (!rw.pending) {
+  if (rw.lastDate !== playDate) {
     var month = parseInt(playDate.split('-')[1], 10);
-    var choices = rewardChoices(rw, {
-      pieces: difficulty, noPreview: !state.previewViewed,
-      month: month, firstEver: totalClears === 1
-    }, Math.random);
-    if (choices.length) rw.pending = { date: playDate, choices: choices };
+    var picked = drawRewardItem(rw, { month: month, firstEver: store.records.length === 1 }, Math.random);
+    if (picked) {
+      grantRewardItems(rw, [picked]);
+      recordRewardHistory(rw, playDate, [picked]);
+      grants.push(picked);
+    }
+    rw.lastDate = playDate;
   }
-  rw.lastDate = playDate;
-  saveStore();
+  if (grants.length) saveStore();
   return grants;
-}
-/* ---- 3 択モーダル ---- */
-function rewardChoiceNote(it) {
-  switch (it.kind) {
-    case 'first': return 'はじめての報酬';
-    case 'upper': return '100ピース以上の日の候補';
-    case 'special': return '完成図を見ずにクリアした日の候補';
-    case 'rare': return 'レア（400ピース以上の日の枠）';
-    case 'seasonal': return '今月だけの季節アイテム';
-    default: return '机の好きな位置に置けます';
-  }
-}
-function openRewardModal() {
-  var rw = store.rewards;
-  if (!rw.pending) return;
-  var wrap = $('rewardChoices');
-  wrap.innerHTML = '';
-  rw.pending.choices.forEach(function (id) {
-    var it = rewardItemById(id);
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'reward-card';
-    b.innerHTML = '<img src="items/' + id + '.webp" alt="">' +
-      '<span class="reward-name">' + it.name + '</span>' +
-      '<span class="reward-note">' + rewardChoiceNote(it) + '</span>';
-    b.addEventListener('click', function () {
-      if (!applyRewardPick(store.rewards, id)) return;
-      saveStore();
-      seReward();
-      $('rewardModal').hidden = true;
-      $('resultRewardBtn').hidden = true;
-      $('resultRewardLine').hidden = true;
-      renderStartScreen();
-    });
-    wrap.appendChild(b);
-  });
-  $('rewardModal').hidden = false;
 }
 /* ---- 写真立て/額縁にはめ込む「直近のクリア写真」 ---- */
 function latestClearRecord() {
@@ -2795,18 +3046,26 @@ function latestClearRecord() {
   });
   return best;
 }
+/* 記録 → エントリ解決 (写真立て・コレクション共通)。picsum はキーから
+ * 直接作れ、URL エントリは現在のプールから引く。 */
+function entryForRecord(rec) {
+  var key = recordImageKey(rec);
+  if (!key) return null;
+  if (key.charAt(0) === 'p') return { type: 'picsum', id: parseInt(key.slice(1), 10) };
+  return state && state.pool ? poolEntryByKey(state.pool, key) : null;
+}
 var framePhoto = { key: null, img: null };
 function framePhotoImage() {
   var rec = latestClearRecord();
   if (!rec) return null;
-  var key = rec.date + ':' + rec.imageId;
+  var key = rec.date + ':' + recordImageKey(rec);
   if (framePhoto.key !== key) {
     framePhoto.key = key;
-    var img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = function () { draw(); };
-    img.src = 'https://picsum.photos/id/' + rec.imageId + '/400/400';
-    framePhoto.img = img;
+    framePhoto.img = null;
+    var url = entryThumbUrl(entryForRecord(rec));
+    if (url) loadImgCorsFallback(url).then(function (img) {
+      if (framePhoto.key === key) { framePhoto.img = img; draw(); }
+    }, function () { /* 読めなければ枠だけ表示 */ });
   }
   var im = framePhoto.img;
   return (im && im.complete && im.naturalWidth > 0) ? im : null;
@@ -2932,8 +3191,10 @@ function renderDecorTray() {
     var b = document.createElement('button');
     b.type = 'button';
     b.className = 'decor-chip' + (rw.placed[it.id] ? ' placed' : '') + (decorSelected === it.id ? ' sel' : '');
+    var stars = it.kind === 'draw' ? rarityLabel(it) : '';
     b.innerHTML = '<img src="items/' + it.id + '.webp" alt="">' +
       '<span class="decor-chip-name">' + it.name + '</span>' +
+      (stars ? '<span class="decor-chip-rarity">' + stars + '</span>' : '') +
       '<span class="decor-chip-state">' + (rw.placed[it.id] ? '配置中' : '未配置') + '</span>';
     b.addEventListener('click', function () {
       var rw2 = store.rewards;
@@ -3006,7 +3267,7 @@ function updateStartDeskRow() {
   var rw = store.rewards;
   if (!rw) return;
   $('deskItemsInfo').textContent = '机の小物 ' + rw.owned.length + ' / ' + REWARD_ITEMS.length;
-  $('rewardBtn').hidden = !rw.pending;
+  $('rewardBtn').hidden = true; // 3 択は廃止: 付与はクリア時に自動 (ランダム抽選)
 }
 
 /* ---------- 画面遷移 ----------
@@ -3061,8 +3322,12 @@ function renderCollection() {
     card.type = 'button';
     var badges = '<span class="badge">' + r.pieces + 'ピース</span>' +
       (r.previewViewed ? '<span class="badge">完成図: 見た</span>' : '<span class="badge praise">完成図を見ずにクリア！</span>');
-    card.innerHTML = '<img loading="lazy" src="https://picsum.photos/id/' + r.imageId + '/400/400" alt="">' +
-      '<span class="card-body"><span class="card-date">' + r.date + '</span>' +
+    var entry = entryForRecord(r);
+    var thumb = entryThumbUrl(entry);
+    var titleLine = entry && entry.type === 'url' && entry.title
+      ? '<span class="card-title">' + escapeHtml(entry.title) + '</span>' : '';
+    card.innerHTML = (thumb ? '<img loading="lazy" src="' + thumb + '" alt="">' : '') +
+      '<span class="card-body"><span class="card-date">' + r.date + '</span>' + titleLine +
       '<span>クリアタイム ' + formatTime(r.bestTimeSec) + '</span>' + badges + '</span>';
     card.addEventListener('click', function () { openDetail(r); });
     grid.appendChild(card);
@@ -3091,6 +3356,14 @@ function openDetail(r) {
     '<br>完成図: ' + (r.previewViewed ? '見た（' + r.previewCount + '回）' : '見ずにクリア') +
     (rewardNames.length ? '<br>この日に手に入れた小物: ' + rewardNames.join('、') : '') +
     (r.author ? '<br>作者: ' + r.author : '');
+  var dEntry = entryForRecord(r);
+  if (dEntry && dEntry.type === 'url') {
+    var credit = dEntry.attribution ? escapeHtml(dEntry.attribution)
+      : escapeHtml(dEntry.source || '') + (dEntry.license ? '（' + escapeHtml(dEntry.license) + '）' : '');
+    $('detailText').innerHTML +=
+      (dEntry.title ? '<br>作品: ' + escapeHtml(dEntry.title) : '') +
+      (credit ? '<br>出典: ' + credit : '');
+  }
   // 過去日をプレイしに行く導線は作らない (コレクションは閲覧のみ)
   $('detailModal').hidden = false;
   renderDetailPuzzle(r);
@@ -3099,20 +3372,16 @@ function openDetail(r) {
 /* 詳細用の写真を正方形キャンバスで用意する。読み込み失敗時はゲーム本体と
  * 同じ抽象画フォールバック (そのレコードの日付シード生成) をソースにする。 */
 function loadDetailSource(r) {
-  return new Promise(function (resolve) {
-    var size = Math.min(1080, imageSizeFor(r.pieces));
-    var img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = function () {
-      var side = Math.min(img.naturalWidth, img.naturalHeight);
-      var cv = document.createElement('canvas');
-      cv.width = size; cv.height = size;
-      cv.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
-      resolve(cv);
-    };
-    img.onerror = function () { resolve(makeFallbackCanvas(r.date)); };
-    img.src = 'https://picsum.photos/id/' + r.imageId + '/' + size + '/' + size;
-  });
+  var size = Math.min(1080, imageSizeFor(r.pieces));
+  var url = entryPhotoUrl(entryForRecord(r), size);
+  if (!url) return Promise.resolve(makeFallbackCanvas(r.date));
+  return loadImgCorsFallback(url).then(function (img) {
+    var side = Math.min(img.naturalWidth, img.naturalHeight);
+    var cv = document.createElement('canvas');
+    cv.width = size; cv.height = size;
+    cv.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+    return cv;
+  }, function () { return makeFallbackCanvas(r.date); });
 }
 /* 完成盤面用のピース輪郭パス (盤面座標)。buildPiecePath と同じ組み立てだが、
  * ゲームの state ではなく引数の edges / レイアウトから作る。 */
@@ -3181,8 +3450,8 @@ function renderDetailPuzzle(r) {
 /* ---------- コントロール配線 ---------- */
 /* 難易度セレクタ (案D: 重なったカード)。傾きはカード位置で決定的に決める。
  * 選択中カードの想定時間はカード列の下に1行だけ出す。 */
-var DIFF_TIME_LABELS = { 36: '3〜8分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 784: '半日〜1日', 1225: '1〜2日', 2025: '数日がかり' };
-var DIFF_SUB_LABELS = { 36: 'かんたん', 2025: 'おに' };
+var DIFF_TIME_LABELS = { 16: '1〜3分', 36: '3〜8分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 784: '半日〜1日', 1225: '1〜2日' };
+var DIFF_SUB_LABELS = { 16: 'かんたん', 1225: 'おに' };
 var DIFF_TILTS = [-3, -1.2, 2.2, -2, 1.4, -0.6, 2.5];
 function buildDifficultySeg() {
   var seg = $('difficultySeg');
@@ -3243,7 +3512,7 @@ function openPreview() {
     $('previewImg').src = state.srcCanvas.toDataURL();
   } else {
     var size = Math.min(1080, imageSizeFor(difficulty));
-    $('previewImg').src = 'https://picsum.photos/id/' + state.imageId + '/' + size + '/' + size;
+    $('previewImg').src = entryPhotoUrl(state.entry, size) || '';
   }
   $('previewModal').hidden = false;
 }
@@ -3381,8 +3650,6 @@ function wireControls() {
     setTimeout(function () { $('resultCopyBtn').textContent = '結果をコピー'; }, 1500);
   });
   /* クリア報酬: ごほうびの 3 択と、机をかざる (配置編集) の導線 */
-  $('resultRewardBtn').addEventListener('click', function () { openRewardModal(); });
-  $('rewardBtn').addEventListener('click', function () { openRewardModal(); });
   $('rewardLaterBtn').addEventListener('click', function () { $('rewardModal').hidden = true; });
   $('decorBtn').addEventListener('click', function () { enterDecor('home'); });
   $('settingsDecorBtn').addEventListener('click', function () {
@@ -3568,6 +3835,10 @@ function startGame(pool) {
   var d = new Date(dateToMs(playDate));
   $('themeDateLabel').textContent = d.getUTCFullYear() + '年' + (d.getUTCMonth() + 1) + '月' + d.getUTCDate() + '日のお題';
   $('themeCredit').textContent = '';
+  $('photoCredits').innerHTML = poolEntries(pool)
+    .filter(function (e) { return e.type === 'url' && e.attribution; })
+    .map(function (e) { return '<li>' + escapeHtml(e.title || '') + ' — ' + escapeHtml(e.attribution) + '</li>'; })
+    .join('');
   $('streakNum').textContent = computeStreak();
   $('loadingOverlay').style.display = 'flex';
   $('resumeBanner').hidden = !state.resumed;

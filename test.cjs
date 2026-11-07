@@ -106,16 +106,41 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.isComplete(merged, n) === true, '塊にまとまっていても完成判定 = 真');
 }
 
-/* 5. 日付 → 画像ID が決定的 */
+/* 5. 日付 → お題エントリが決定的 (厳選プール: picsum + URL エントリ混在) */
 {
   const pool = JSON.parse(require('fs').readFileSync(__dirname + '/data/images.json', 'utf8'));
-  ok(pool.baseDate === '2026-11-07' && Array.isArray(pool.ids) && pool.ids.length > 900, 'images.json: 基準日と ' + pool.ids.length + ' 件のID');
-  ok(L.pickImageId('2026-11-07', pool) === pool.ids[0], '基準日 → ids[0]');
-  ok(L.pickImageId('2026-11-08', pool) === pool.ids[1], '基準日+1 → ids[1]');
-  ok(L.pickImageId('2026-11-07', pool) === L.pickImageId('2026-11-07', pool), '同じ日付では常に同じID');
-  const wrap = L.addDays('2026-11-07', pool.ids.length);
-  ok(L.pickImageId(wrap, pool) === pool.ids[0], 'プール一周で ids[0] に戻る');
-  ok(L.pickImageId('2026-11-06', pool) === pool.ids[pool.ids.length - 1], '基準日前日 → ids[末尾]');
+  const entries = L.poolEntries(pool);
+  ok(pool.baseDate === '2026-11-07' && entries.length === 422, 'images.json: 基準日と 422 件のエントリ (picsum 365 + URL 57)');
+  ok(entries.filter(e => e.type === 'picsum').length === 365, 'プール: picsum エントリ 365 件');
+  const urls = entries.filter(e => e.type === 'url');
+  ok(urls.length === 57 && urls.every(e => e.fullUrl && e.thumbUrl && e.source && e.license), 'プール: URL エントリ 57 件に URL/出典/ライセンスがある');
+  ok(urls.filter(e => e.license.indexOf('CC BY') === 0).length === 21 && urls.filter(e => e.license.indexOf('CC BY') === 0).every(e => e.attribution), 'プール: CC BY 21 件は全て attribution 付き');
+  ok(L.pickPoolEntry('2026-11-07', pool) === entries[0], '基準日 → entries[0]');
+  ok(L.pickPoolEntry('2026-11-08', pool) === entries[1], '基準日+1 → entries[1]');
+  ok(L.pickPoolEntry('2026-11-07', pool) === L.pickPoolEntry('2026-11-07', pool), '同じ日付では常に同じエントリ');
+  const wrap = L.addDays('2026-11-07', entries.length);
+  ok(L.pickPoolEntry(wrap, pool) === entries[0], 'プール一周で entries[0] に戻る');
+  ok(L.pickPoolEntry('2026-11-06', pool) === entries[entries.length - 1], '基準日前日 → entries[末尾]');
+  // 安定キーと往復解決
+  ok(L.poolEntryKey({ type: 'picsum', id: 42 }) === 'p42' && L.poolEntryKey(urls[0]) === 'u' + urls[0].key, '安定キー: picsum=p{id} / URL=u{key}');
+  ok(L.poolEntryByKey(pool, L.poolEntryKey(urls[0])) === urls[0], 'キーから URL エントリを引ける');
+  ok(L.poolEntryByKey(pool, 'p' + entries.find(e => e.type === 'picsum').id).type === 'picsum', 'キーから picsum エントリを引ける');
+  ok(L.poolEntryByKey(pool, 'u99999') === null && L.poolEntryByKey(pool, null) === null, '未知のキーは null');
+  // URL 解決規則
+  ok(L.entryPhotoUrl({ type: 'picsum', id: 7 }, 640) === 'https://picsum.photos/id/7/640/640', 'picsum はサイズ別 URL');
+  ok(L.entryPhotoUrl(urls[0], 1080) === urls[0].fullUrl && L.entryThumbUrl(urls[0]) === urls[0].thumbUrl, 'URL エントリは fullUrl / thumbUrl を使う');
+  ok(L.entryThumbUrl({ type: 'picsum', id: 7 }) === 'https://picsum.photos/id/7/400/400', 'picsum サムネイルは 400px');
+  // 記録キーの互換: 旧・数値 imageId のみの記録も 'p{id}' として読める
+  ok(L.recordImageKey({ imageId: 123 }) === 'p123', '旧記録: 数値 imageId → p123');
+  ok(L.recordImageKey({ imageId: 123, imageKey: 'u28' }) === 'u28', '新記録: imageKey が優先');
+  ok(L.recordImageKey({}) === null && L.recordImageKey(null) === null, 'キーなし記録は null');
+  // 旧形式 { ids } のプールも読める (互換)
+  const legacy = { baseDate: '2026-11-07', ids: [10, 20, 30] };
+  ok(L.pickImageId('2026-11-08', legacy) === 20 && L.pickPoolEntry('2026-11-07', legacy).id === 10, '旧形式プールも互換読みできる');
+  ok(L.pickImageId('2026-11-07', pool) === (entries[0].type === 'picsum' ? entries[0].id : null), 'pickImageId は picsum のときだけ ID を返す');
+  // 過去の 2025 ピース記録も形状生成・詳細描画が落ちない (難易度リスト外でも動く)
+  const e2025 = L.generateEdges('2026-11-07', 2025);
+  ok(e2025 && L.detailRenderPlan(2025).sizePx > 0, '互換: 2025ピースの記録も辺生成・詳細プランが動く');
   // 日付移動は廃止 (常に今日のお題だけ開く): ?date= 解決用の関数は存在しない
   ok(L.resolvePlayDate === undefined, '日付移動は廃止: resolvePlayDate は存在しない');
   ok(/^\d{4}-\d{2}-\d{2}$/.test(L.jstTodayString(new Date('2026-11-07T03:00:00Z'))), '今日 (JST) の文字列が取れる');
@@ -250,7 +275,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
 /* 10. 最低難易度 36ピース (6×6) */
 {
-  ok(L.DIFFICULTIES.length === 7 && L.DIFFICULTIES[0] === 36 && L.DIFFICULTIES[6] === 2025, '難易度は7段階で最低が36ピース');
+  ok(L.DIFFICULTIES.length === 7 && L.DIFFICULTIES[0] === 16 && L.DIFFICULTIES[1] === 36 && L.DIFFICULTIES[6] === 1225 && !L.DIFFICULTIES.includes(2025), '難易度は7段階: 16追加・2025廃止・デフォルト36');
   const e1 = L.generateEdges('2026-11-07', 36);
   const e2 = L.generateEdges('2026-11-07', 36);
   ok(e1.n === 6, '36ピースは 6×6 グリッド');
@@ -805,16 +830,20 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.boxTapAction({ started: true, cleared: true, clusters: [{ pieces: [0] }] }) === 'resume', '箱タップ: クリア済みも箱から盤面へ入る');
 }
 
-/* 25. クリア報酬インテリアの純粋ロジック */
+/* 25. クリア報酬インテリアの純粋ロジック (ランダム付与 + レア度) */
 {
   // カタログの健全性
   const ids = L.REWARD_ITEMS.map(it => it.id);
-  ok(L.REWARD_ITEMS.length === 13, '報酬: カタログは 13 点 (季節物を 11月/12月 で分けた)');
+  ok(L.REWARD_ITEMS.length === 200, '報酬: カタログは 200 点');
   ok(new Set(ids).size === ids.length, '報酬: アイテム id は一意');
-  ok(L.REWARD_ITEMS.every(it => it.name && it.size > 0 && it.def.x >= 0 && it.def.x <= 1 && it.def.y >= 0 && it.def.y <= 1), '報酬: 全点に名前・サイズ・既定位置 (比率) がある');
-  ok(L.REWARD_ITEMS.filter(it => it.kind === 'grant').every(it => it.grantAt > 0), '報酬: 直接付与アイテムには節目の回数がある');
+  ok(L.REWARD_ITEMS.every(it => it.name && it.size > 0), '報酬: 全点に名前・サイズがある');
+  ok(L.REWARD_ITEMS.every(it => { const p = it.def || L.defaultItemPos(it); return p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1; }), '報酬: 全点の既定位置 (def または算出) が比率内に収まる');
+  ok(L.REWARD_ITEMS.filter(it => it.kind === 'grant').length === 2 && L.REWARD_ITEMS.filter(it => it.kind === 'grant').every(it => it.grantAt > 0), '報酬: 直接付与は写真立て/額縁の 2 点で節目回数がある');
+  ok(L.REWARD_ITEMS.filter(it => it.kind === 'draw').every(it => it.rarity === 1 || it.rarity === 2 || it.rarity === 3), '報酬: 抽選アイテムは全点レア度 1..3');
   ok(L.REWARD_ITEMS.filter(it => it.photo).every(it => it.photoRect && it.photoRect.w > 0 && it.photoRect.h > 0 && it.photoRect.x + it.photoRect.w <= 1.001 && it.photoRect.y + it.photoRect.h <= 1.001), '報酬: 写真アイテムの写真窓は画像内に収まる');
   ok(L.rewardItemById('plant').name === 'ミニ観葉植物' && L.rewardItemById('nope') === null, '報酬: id 引きができる');
+  ok(L.RARITY_TABLE[1].weight > L.RARITY_TABLE[2].weight && L.RARITY_TABLE[2].weight > L.RARITY_TABLE[3].weight && L.RARITY_TABLE[3].weight > 0, 'レア度: 重みは ★1 > ★2 > ★3 の単調減少');
+  ok(L.rarityLabel(L.rewardItemById('teapot')) === '★3' && L.rarityLabel(L.rewardItemById('mug')) === '★1' && L.rarityLabel(L.rewardItemById('frame')) === '', 'レア度: ラベル表示 (節目枠は無表示)');
 
   // 節目の直接付与
   const empty = L.emptyRewards();
@@ -824,41 +853,55 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(eq(L.milestoneGrants(empty, 10), ['frame', 'gaku']), '報酬付与: 累計10回で額縁も届く');
   ok(eq(L.milestoneGrants({ owned: ['frame'], placed: {}, pending: null, lastDate: null, history: {} }, 10), ['gaku']), '報酬付与: 所持済みは再付与しない');
 
-  // 3 択の抽選規則
-  const rng0 = () => 0;
-  const first = L.rewardChoices(L.emptyRewards(), { pieces: 36, noPreview: false, month: 6, firstEver: true }, rng0);
-  ok(first.includes('plant'), '報酬3択: 生涯初クリアにはミニ観葉植物が必ず入る');
-  ok(first.length === 3, '報酬3択: 候補が足りれば 3 件になる');
-  const nov = L.rewardChoices(L.emptyRewards(), { pieces: 36, noPreview: false, month: 11, firstEver: false }, rng0);
-  ok(nov.includes('maple') && !nov.includes('tree'), '報酬3択: 11月は紅葉の枝が確定枠、ツリーは入らない');
-  const dec = L.rewardChoices(L.emptyRewards(), { pieces: 36, noPreview: false, month: 12, firstEver: false }, rng0);
-  ok(dec.includes('tree') && !dec.includes('maple'), '報酬3択: 12月はミニツリーが確定枠');
-  const big = L.rewardChoices(L.emptyRewards(), { pieces: 400, noPreview: false, month: 6, firstEver: false }, rng0);
-  ok(big.includes('teapot'), '報酬3択: 400ピース以上の日はティーポットがレア確定枠');
-  const small = L.rewardChoices(L.emptyRewards(), { pieces: 36, noPreview: false, month: 6, firstEver: false }, rng0);
-  ok(!small.includes('lamp') && !small.includes('teapot'), '報酬3択: 36ピースでは上位/レア枠は入らない');
-  const mid = L.rewardChoices(L.emptyRewards(), { pieces: 100, noPreview: false, month: 6, firstEver: false }, rng0);
-  ok(!mid.includes('cat'), '報酬3択: 完成図を見た日は猫の置物は入らない');
-  const noPrev = L.rewardChoices(L.emptyRewards(), { pieces: 100, noPreview: true, month: 6, firstEver: false }, () => 0.42);
-  ok(noPrev.every(id => id !== 'frame' && id !== 'gaku'), '報酬3択: 直接付与アイテムは 3 択に出ない');
-  const almost = L.emptyRewards();
-  almost.owned = ids.filter(id => id !== 'mug');
-  ok(eq(L.rewardChoices(almost, { pieces: 36, noPreview: false, month: 6, firstEver: false }, rng0), ['mug']), '報酬3択: 未所持が 1 点だけならその 1 件だけ');
-  const allOwned = L.emptyRewards();
-  allOwned.owned = ids.slice();
-  ok(eq(L.rewardChoices(allOwned, { pieces: 2025, noPreview: true, month: 11, firstEver: true }, rng0), []), '報酬3択: 全所持なら空');
+  // ランダム抽選: 生涯初回は観葉植物が確定
+  ok(L.drawRewardItem(L.emptyRewards(), { month: 6, firstEver: true }, () => 0.99) === 'plant', '抽選: 生涯初回はミニ観葉植物が確定');
+  // 季節: 季節物はその月だけ対象 (rng を全域スイープして到達可能性を検証)
+  const seasonalIds = L.REWARD_ITEMS.filter(it => it.months).map(it => it.id);
+  ok(seasonalIds.length >= 20, '抽選: 季節アイテムが複数ある (' + seasonalIds.length + ' 点)');
+  const seenByMonth = { 1: new Set(), 6: new Set(), 12: new Set() };
+  for (const m of [1, 6, 12]) {
+    for (let i = 0; i < 400; i++) {
+      const id = L.drawRewardItem(L.emptyRewards(), { month: m, firstEver: false }, () => i / 400);
+      if (id) seenByMonth[m].add(id);
+    }
+  }
+  ok([...seenByMonth[12]].some(id => { const it = L.rewardItemById(id); return it.months && it.months.includes(12); }), '抽選: 12月は 12月季節物に届く');
+  ok([...seenByMonth[6]].every(id => { const it = L.rewardItemById(id); return !it.months || it.months.includes(6); }), '抽選: 6月は季節外アイテムが絶対に出ない');
+  ok([...seenByMonth[1]].every(id => { const it = L.rewardItemById(id); return !it.months || it.months.includes(1); }), '抽選: 1月も季節外は出ない');
+  // レア度の偏り: 決定的スイープで ★3 の出現率は ★1 より十分小さい
+  let c1 = 0, c3 = 0, N = 2000;
+  for (let i = 0; i < N; i++) {
+    const id = L.drawRewardItem(L.emptyRewards(), { month: 6, firstEver: false }, () => i / N);
+    const r = L.rewardItemById(id).rarity;
+    if (r === 1) c1++; else if (r === 3) c3++;
+  }
+  ok(c3 > 0 && c3 < c1 / 5, '抽選: ★3 は出るが ★1 の 1/5 未満の頻度 (実測 ★3=' + c3 + ' ★1=' + c1 + ')');
+  // 所持済みは二度と出ない / 全所持なら null
+  const one = L.emptyRewards(); one.owned = ['mug'];
+  ok(L.drawRewardItem(one, { month: 6, firstEver: false }, () => 0) !== 'mug', '抽選: 所持済みは出ない');
+  const allOwned = L.emptyRewards(); allOwned.owned = ids.slice();
+  ok(L.drawRewardItem(allOwned, { month: 12, firstEver: false }, () => 0.5) === null, '抽選: 全所持なら null');
+  ok(L.rewardDrawEligible(L.rewardItemById('frame'), L.emptyRewards(), 6) === false, '抽選: 節目枠は抽選対象外');
 
-  // 選択の適用: 所持 + 既定配置 + その日の履歴 + pending 解消
+  // 付与の適用: 所持 + 既定配置 + 履歴
   const rw = L.emptyRewards();
-  rw.pending = { date: '2026-11-08', choices: ['plant', 'mug', 'books'] };
-  ok(L.applyRewardPick(rw, 'lamp') === false, '報酬選択: 候補にないものは選べない');
-  ok(L.applyRewardPick(rw, 'mug') === true, '報酬選択: 候補から選べる');
-  ok(rw.owned.includes('mug') && rw.pending === null, '報酬選択: 所持に入り pending が消える');
-  ok(rw.placed.mug && rw.placed.mug.x === L.rewardItemById('mug').def.x && rw.placed.mug.y === L.rewardItemById('mug').def.y && rw.placed.mug.z >= 0, '報酬選択: 既定位置に自動配置される');
-  ok(eq(rw.history['2026-11-08'], ['mug']), '報酬選択: 獲得日の履歴に残る (pending の日付で記録)');
-  L.grantRewardItems(rw, ['frame']);
-  ok(rw.owned.includes('frame') && !!rw.placed.frame, '報酬付与: 直接付与も既定位置に置かれる');
-  ok(L.applyRewardPick(rw, 'mug') === false, '報酬選択: pending が無ければ選べない');
+  L.grantRewardItems(rw, ['mug', 'frame']);
+  ok(rw.owned.includes('mug') && rw.placed.mug.x === L.rewardItemById('mug').def.x, '報酬付与: 既定位置に自動配置される');
+  ok(rw.placed.frame && rw.placed.frame.z >= 0, '報酬付与: 直接付与も配置される');
+  const rwNew = L.emptyRewards();
+  L.grantRewardItems(rwNew, ['pl01']);
+  ok(rwNew.placed.pl01.x >= 0 && rwNew.placed.pl01.x <= 1 && rwNew.placed.pl01.y >= 0 && rwNew.placed.pl01.y <= 1, '報酬付与: def 無しアイテムも算出位置に置かれる');
+
+  // 旧 3 択 pending の精算: 候補から 1 点が付与され、履歴は pending の日付
+  const leg = L.emptyRewards();
+  leg.pending = { date: '2026-11-05', choices: ['mug', 'books', 'candle'] };
+  const settled = L.settleLegacyPending(leg, () => 0);
+  ok(settled === 'mug' && leg.pending === null && leg.owned.includes('mug'), '旧 pending 精算: 候補の先頭 (rng=0) が付与され pending が消える');
+  ok(eq(leg.history['2026-11-05'], ['mug']) && leg.lastDate === '2026-11-05', '旧 pending 精算: 履歴と lastDate が pending の日付になる');
+  ok(L.settleLegacyPending(L.emptyRewards(), () => 0) === null, '旧 pending 精算: pending が無ければ null');
+  const legOwned = L.emptyRewards();
+  legOwned.owned = ['mug']; legOwned.pending = { date: '2026-11-05', choices: ['mug'] };
+  ok(L.settleLegacyPending(legOwned, () => 0) === null && legOwned.pending === null, '旧 pending 精算: 候補が全て所持済みなら付与なしで解消');
 
   // 保存形式の正規化 (壊れた/未知のデータを読んでも落ちない・既存フィールドは保持)
   const norm = L.normalizeRewards({ owned: ['mug', 'unknown-x'], placed: { mug: { x: 0.5, y: 0.5, z: 2 }, 'unknown-x': { x: 0, y: 0, z: 1 } }, pending: { date: '2026-11-08', choices: ['mug', 'unknown-x'] }, lastDate: '2026-11-08', history: { '2026-11-08': ['mug', 'unknown-x'] } });
