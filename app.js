@@ -647,6 +647,24 @@ function nextShuffleOrder(count, rng, lastPlayed) {
   return order;
 }
 
+/* ---- BGM クロスフェード (純粋ロジック) ----
+ * 曲の切り替わりでは、前曲をフェードアウトしながら次曲をフェードインする。
+ * ゲイン曲線は等パワー (cos / sin) で、重なっている間の合計パワーが
+ * 一定になるようにする (線形だと中間で音が痩せて聞こえる)。
+ * フェード時間は最長 BGM_FADE_SEC 秒。曲が短い場合は曲長の 1/4 までに
+ * 縮め、0.5 秒未満になるような曲ではフェードしない (0 を返す)。 */
+var BGM_FADE_SEC = 3;
+function crossfadeCurve(t) {
+  t = Math.min(1, Math.max(0, typeof t === 'number' && isFinite(t) ? t : 0));
+  var a = t * Math.PI / 2;
+  return { out: Math.cos(a), in: Math.sin(a) };
+}
+function crossfadeDuration(durationSec) {
+  if (typeof durationSec !== 'number' || !isFinite(durationSec) || durationSec <= 0) return 0;
+  var d = Math.min(BGM_FADE_SEC, durationSec / 4);
+  return d >= 0.5 ? d : 0;
+}
+
 /* 保存済み進捗が「開始済み」かどうか。
  * 旧バージョンの保存 (started フラグなし) でも、塊が残っていれば開始済みとして扱う。 */
 function progressIsStarted(prog) {
@@ -666,6 +684,166 @@ function startPanelMode(prog) {
 /* 「はじめから」を押したときに進捗リセットの確認が要るか (未開始なら確認不要)。 */
 function freshStartNeedsConfirm(prog) {
   return startPanelMode(prog) !== 'box';
+}
+
+/* スタート画面の箱をタップしたときの動作。箱は進行の有無にかかわらず
+ * 常に表示し、未開始なら新規に開封 ('open')、進行中・クリア済みなら
+ * そのまま机へ入る ('resume')。散らばし直しは 'open' のときだけ行う。 */
+function boxTapAction(prog) {
+  return startPanelMode(prog) === 'box' ? 'open' : 'resume';
+}
+
+/* ---- クリア報酬インテリア (純粋ロジック) ----
+ * 設計 (設計案アーティファクト「クリア報酬システム設計案」が正):
+ * - その日の初回クリアで 1 回だけ、未所持から 3 択を提示して 1 つ獲得する。
+ *   選ばなかった候補は消えず、次回の候補に戻る (pending に choices を固定保存)。
+ * - 写真立て (累計 3 回) と額縁 (累計 10 回) は 3 択を経由しない直接付与。
+ * - 季節アイテム (その月のもの) とレア (400 ピース以上の日のティーポット) は
+ *   条件を満たす日の 3 択に必ず 1 枠入る。初回クリアでは観葉植物を必ず含める。
+ * - デスクライトは 100 ピース以上の日だけ、猫の置物はプレビューを見ずに
+ *   クリアした日だけ候補に入る。
+ * - 配置は机 (散布領域) に対する比率座標 {x, y} と重なり順 z で保持する。
+ *   kind: 'first' 初回確定枠 / 'normal' 通常 / 'upper' 上位 / 'special' 特別 /
+ *         'rare' レア / 'seasonal' 季節 (month を持つ) / 'grant' 直接付与 (grantAt 回)
+ * - photo: 中に直近のクリア写真をはめ込む枠物。photoRect は画像内の写真の
+ *   矩形 (比率)。生成画像の透明部分から実測して決めた値。 */
+var REWARD_ITEMS = [
+  { id: 'plant',  name: 'ミニ観葉植物', kind: 'first',    size: 1.1, def: { x: 0.16, y: 0.18 } },
+  { id: 'mug',    name: 'コーヒーマグ', kind: 'normal',   size: 0.8, def: { x: 0.82, y: 0.76 } },
+  { id: 'candle', name: 'キャンドル',   kind: 'normal',   size: 0.7, def: { x: 0.13, y: 0.44 } },
+  { id: 'books',  name: '本の束',       kind: 'normal',   size: 1.2, def: { x: 0.15, y: 0.80 } },
+  { id: 'clock',  name: '卓上時計',     kind: 'normal',   size: 0.9, def: { x: 0.84, y: 0.44 } },
+  { id: 'vase',   name: '一輪挿し',     kind: 'normal',   size: 0.8, def: { x: 0.85, y: 0.16 } },
+  { id: 'frame',  name: '写真立て',     kind: 'grant',    grantAt: 3, size: 1.3, def: { x: 0.62, y: 0.14 }, photo: true, photoRect: { x: 0.213, y: 0.121, w: 0.584, h: 0.777 } },
+  { id: 'lamp',   name: 'デスクライト', kind: 'upper',    minPieces: 100, size: 1.3, def: { x: 0.36, y: 0.13 } },
+  { id: 'cat',    name: '猫の置物',     kind: 'special',  size: 0.9, def: { x: 0.55, y: 0.86 } },
+  { id: 'teapot', name: 'ティーポットセット', kind: 'rare', minPieces: 400, size: 1.2, def: { x: 0.66, y: 0.82 } },
+  { id: 'maple',  name: '紅葉の枝',     kind: 'seasonal', month: 11, size: 1.1, def: { x: 0.14, y: 0.68 } },
+  { id: 'tree',   name: 'ミニツリー',   kind: 'seasonal', month: 12, size: 1.1, def: { x: 0.14, y: 0.68 } },
+  { id: 'gaku',   name: '額縁「今月の一枚」', kind: 'grant', grantAt: 10, size: 1.5, def: { x: 0.40, y: 0.84 }, photo: true, photoRect: { x: 0.170, y: 0.277, w: 0.676, h: 0.459 } }
+];
+function rewardItemById(id) {
+  for (var i = 0; i < REWARD_ITEMS.length; i++) if (REWARD_ITEMS[i].id === id) return REWARD_ITEMS[i];
+  return null;
+}
+function emptyRewards() {
+  return { owned: [], placed: {}, pending: null, lastDate: null, history: {} };
+}
+/* 保存データの形が崩れていても使える形に寄せる (旧データには rewards 自体がない) */
+function normalizeRewards(rw) {
+  var out = emptyRewards();
+  if (!rw || typeof rw !== 'object') return out;
+  if (Array.isArray(rw.owned)) out.owned = rw.owned.filter(function (id) { return !!rewardItemById(id); });
+  if (rw.placed && typeof rw.placed === 'object') {
+    Object.keys(rw.placed).forEach(function (id) {
+      var p = rw.placed[id];
+      if (rewardItemById(id) && p && typeof p.x === 'number' && typeof p.y === 'number') {
+        out.placed[id] = { x: p.x, y: p.y, z: typeof p.z === 'number' ? p.z : 0 };
+      }
+    });
+  }
+  if (rw.pending && Array.isArray(rw.pending.choices) && typeof rw.pending.date === 'string') {
+    out.pending = {
+      date: rw.pending.date,
+      choices: rw.pending.choices.filter(function (id) { return !!rewardItemById(id); }).slice(0, 3)
+    };
+    if (!out.pending.choices.length) out.pending = null;
+  }
+  if (typeof rw.lastDate === 'string') out.lastDate = rw.lastDate;
+  if (rw.history && typeof rw.history === 'object') {
+    Object.keys(rw.history).forEach(function (d) {
+      if (Array.isArray(rw.history[d])) out.history[d] = rw.history[d].filter(function (id) { return !!rewardItemById(id); });
+    });
+  }
+  return out;
+}
+/* 累計クリア回数に到達して直接届くアイテム (未所持のものだけ) */
+function milestoneGrants(rewards, totalClears) {
+  return REWARD_ITEMS.filter(function (it) {
+    return it.kind === 'grant' && totalClears >= it.grantAt && rewards.owned.indexOf(it.id) < 0;
+  }).map(function (it) { return it.id; });
+}
+/* その日のクリア文脈で 3 択の候補に入れるか。
+ * ctx: { pieces, noPreview, month } */
+function rewardChoiceEligible(item, ctx) {
+  if (!item || item.kind === 'grant') return false;
+  switch (item.kind) {
+    case 'upper': return ctx.pieces >= item.minPieces;
+    case 'rare': return ctx.pieces >= item.minPieces;
+    case 'special': return !!ctx.noPreview;
+    case 'seasonal': return ctx.month === item.month;
+    default: return true; // 'first' / 'normal'
+  }
+}
+/* 今日の 3 択を決める。確定枠 (季節 → レア → 初回) を先に埋め、残りを
+ * 候補から rng で抽選する。戻り値はアイテム id の配列 (0〜3 件)。
+ * ctx: { pieces, noPreview, month, firstEver } */
+function rewardChoices(rewards, ctx, rng) {
+  var owned = rewards.owned;
+  var eligible = REWARD_ITEMS.filter(function (it) {
+    return owned.indexOf(it.id) < 0 && rewardChoiceEligible(it, ctx);
+  });
+  var picks = [];
+  function force(kind) {
+    for (var i = 0; i < eligible.length; i++) {
+      if (eligible[i].kind === kind && picks.indexOf(eligible[i].id) < 0 && picks.length < 3) {
+        picks.push(eligible[i].id);
+        return;
+      }
+    }
+  }
+  force('seasonal');
+  if (ctx.pieces >= 400) force('rare');
+  if (ctx.firstEver) force('first');
+  var rest = eligible.filter(function (it) { return picks.indexOf(it.id) < 0; });
+  // Fisher-Yates (shuffledOrder と同じ流儀で rng を使う)
+  for (var j = rest.length - 1; j > 0; j--) {
+    var k = Math.floor(rng() * (j + 1));
+    if (k < 0) k = 0; if (k > j) k = j;
+    var t = rest[j]; rest[j] = rest[k]; rest[k] = t;
+  }
+  while (picks.length < 3 && rest.length) picks.push(rest.shift().id);
+  return picks;
+}
+/* アイテムを既定位置に置く (z は現在の最大 + 1) */
+function placeItemDefault(rewards, id) {
+  var it = rewardItemById(id);
+  if (!it) return;
+  var z = 0;
+  Object.keys(rewards.placed).forEach(function (k) {
+    var p = rewards.placed[k];
+    if (p && typeof p.z === 'number' && p.z >= z) z = p.z + 1;
+  });
+  rewards.placed[id] = { x: it.def.x, y: it.def.y, z: z };
+}
+/* アイテムを所持に加え、未配置なら既定位置に置く */
+function grantRewardItems(rewards, ids) {
+  ids.forEach(function (id) {
+    if (!rewardItemById(id) || rewards.owned.indexOf(id) >= 0) return;
+    rewards.owned.push(id);
+    if (!rewards.placed[id]) placeItemDefault(rewards, id);
+  });
+  return rewards;
+}
+function recordRewardHistory(rewards, date, ids) {
+  if (!ids.length) return;
+  var cur = rewards.history[date] || [];
+  ids.forEach(function (id) { if (cur.indexOf(id) < 0) cur.push(id); });
+  rewards.history[date] = cur;
+}
+/* pending の 3 択から 1 つ選んで獲得する。成功したら true。
+ * 履歴は「クリアした日」(pending.date) に付ける (コレクション詳細の表示用)。 */
+function applyRewardPick(rewards, itemId) {
+  if (!rewards.pending || rewards.pending.choices.indexOf(itemId) < 0) return false;
+  grantRewardItems(rewards, [itemId]);
+  recordRewardHistory(rewards, rewards.pending.date, [itemId]);
+  rewards.pending = null;
+  return true;
+}
+/* 机の端でクランプ: 小物の中心は机 (比率 0〜1) の内側に収める */
+function clampItemPos(x, y) {
+  function c(v) { return typeof v === 'number' && isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5; }
+  return { x: c(x), y: c(y) };
 }
 
 function formatTime(sec) {
@@ -691,13 +869,20 @@ var PureLogic = {
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
+  boxTapAction: boxTapAction,
+  REWARD_ITEMS: REWARD_ITEMS, rewardItemById: rewardItemById, emptyRewards: emptyRewards,
+  normalizeRewards: normalizeRewards, milestoneGrants: milestoneGrants,
+  rewardChoiceEligible: rewardChoiceEligible, rewardChoices: rewardChoices,
+  placeItemDefault: placeItemDefault, grantRewardItems: grantRewardItems,
+  recordRewardHistory: recordRewardHistory, applyRewardPick: applyRewardPick, clampItemPos: clampItemPos,
   completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
   woodTileOrigin: woodTileOrigin, deskBgRegionCells: deskBgRegionCells, deskBgPlan: deskBgPlan, deskBgBlit: deskBgBlit,
   bitmapProbeOk: bitmapProbeOk, bitmapRetryPlan: bitmapRetryPlan,
   isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout,
   pieceRelief: pieceRelief,
   BGM_SHORT_TRACK_SEC: BGM_SHORT_TRACK_SEC, isShortTrack: isShortTrack, trackPlays: trackPlays,
-  shuffledOrder: shuffledOrder, nextShuffleOrder: nextShuffleOrder
+  shuffledOrder: shuffledOrder, nextShuffleOrder: nextShuffleOrder,
+  BGM_FADE_SEC: BGM_FADE_SEC, crossfadeCurve: crossfadeCurve, crossfadeDuration: crossfadeDuration
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
 
@@ -717,6 +902,7 @@ function loadStore() {
   return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true };
 }
 var store = loadStore();
+store.rewards = normalizeRewards(store.rewards); // クリア報酬 (旧データには無いので空で作る)
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 容量超過などは無視 */ }
 }
@@ -835,10 +1021,14 @@ function onSeToggleChanged(checked) {
  * プレイリスト 13 曲 (合計 40:56)。選曲 UI は持たず、シャッフルで
  * 全曲一巡するまで重複なく再生する (順列の規則は PureLogic)。
  * 短い曲 (90 秒未満) は 2 回続けて再生してから次へ進む。
- * 再生開始は最初のユーザー操作のあと (自動再生ポリシー)。最初の play() が
- * 端末に受け付けられなかった場合に備え、ユーザー操作のたびに再試行する
- * (bgmTryPlay)。曲名と作者は、その曲が再生されている間ずっと右下へ
- * 小さく出しっぱなしにする (クレジット表示を兼ねる)。 */
+ * 曲の切り替わりはクロスフェード (id 18): Audio 要素を 2 つ (デッキ)
+ * 持ち回し、終わり際の数秒で前曲をフェードアウトしながら次曲を
+ * フェードインする。ゲイン曲線と時間の計算は PureLogic。
+ * 再生は机に入ってから (id 19): タイトル画面 (スタート画面) では
+ * 開始せず、戻ってきたら止める。最初の play() が端末に受け付けられ
+ * なかった場合に備え、ユーザー操作のたびに再試行する (bgmTryPlay)。
+ * 曲名と作者は、その曲が再生されている間ずっと右下へ小さく
+ * 出しっぱなしにする (クレジット表示を兼ねる)。 */
 var BGM_TRACKS = [
   { file: 'meditation-impromptu-01.mp3', title: 'Meditation Impromptu 01', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
   { file: 'meditation-impromptu-02.mp3', title: 'Meditation Impromptu 02', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
@@ -855,43 +1045,63 @@ var BGM_TRACKS = [
   { file: 'in-that-mood.mp3', title: 'In That Mood', artist: 'OtoLogic', license: 'CC BY 4.0' }
 ];
 var bgm = {
-  audio: null, order: [], pos: 0, current: -1, playsLeft: 1,
-  started: false, hiddenPaused: false, errorStreak: 0, dead: false
+  decks: [null, null], active: 0,
+  order: [], pos: 0, current: -1,
+  started: false, hiddenPaused: false, errorStreak: 0, dead: false,
+  fading: null, fadeTimer: null, watchTimer: null
 };
-function bgmEnsure() {
-  if (bgm.audio) return bgm.audio;
+/* Audio 要素は2つ (デッキ) を持ち回し、曲の切り替わりはクロスフェードにする。
+ * デッキ: { audio, track (曲 index・未ロードは -1), playsLeft (短い曲の残り再生回数) } */
+function bgmDeck(i) {
+  if (bgm.decks[i]) return bgm.decks[i];
   var a = new Audio();
   a.preload = 'auto';
-  a.volume = bgmVolume;
+  a.volume = 0;
+  var deck = { audio: a, track: -1, playsLeft: 1 };
   a.addEventListener('loadedmetadata', function () {
-    bgm.playsLeft = trackPlays(a.duration); // 短い曲は 2 回 (長さ確定後に決める)
+    deck.playsLeft = trackPlays(a.duration); // 短い曲は 2 回 (長さ確定後に決める)
   });
   a.addEventListener('ended', function () {
-    bgm.playsLeft--;
-    if (bgm.playsLeft > 0) { // 短い曲の 2 回目: 同じ曲をもう一度
+    // 終端での切替は「フェード監視が間に合わなかった場合」の保険。
+    // フェード中・裏デッキの終了では何もしない。
+    if (bgm.fading || deck !== bgm.decks[bgm.active]) return;
+    deck.playsLeft--;
+    if (deck.playsLeft > 0) { // 短い曲の 2 回目: 同じ曲をもう一度
       a.currentTime = 0;
       bgmPlayPromise(a.play());
     } else {
-      bgmNext();
+      bgmAdvanceNow();
     }
   });
   a.addEventListener('playing', function () {
     bgm.errorStreak = 0;
     bgm.dead = false;
-    bgmShowNowPlaying(); // 再生が実際に始まったら曲名クレジットを出す
+    if (deck.track === bgm.current) bgmShowNowPlaying(); // 再生が実際に始まったら曲名クレジットを出す
   });
-  a.addEventListener('pause', function () { bgmHideNowPlaying(); }); // 止まっている間は隠す
+  a.addEventListener('pause', function () {
+    // フェード中の停止 (旧デッキの幕引き等) ではクレジットを消さない
+    if (!bgm.fading && deck.track === bgm.current) bgmHideNowPlaying();
+  });
   a.addEventListener('error', function () {
     // 読めない曲で止まらないよう次へ進む。ただし全曲読めない場合は
     // 一巡ぶん試したところで諦める (次へ進み続ける無限ループにしない)
-    if (!bgm.started) return;
+    if (!bgm.started || deck.track < 0) return;
     bgm.errorStreak++;
-    if (bgm.errorStreak < BGM_TRACKS.length) { bgmNext(); return; }
-    bgm.dead = true; // 全曲失敗: 操作のたびの再試行で叩き続けないようにする
-    bgmHideNowPlaying();
+    if (bgm.errorStreak >= BGM_TRACKS.length) {
+      bgm.dead = true; // 全曲失敗: 操作のたびの再試行で叩き続けないようにする
+      bgmStopAll();
+      bgmHideNowPlaying();
+      return;
+    }
+    if (bgm.fading && deck === bgm.decks[bgm.fading.into]) {
+      bgmCancelFade(); // フェード先が読めない: フェードをやめて即座に次へ
+      bgmAdvanceNow();
+    } else if (deck === bgm.decks[bgm.active]) {
+      bgmAdvanceNow();
+    }
   });
-  bgm.audio = a;
-  return a;
+  bgm.decks[i] = deck;
+  return deck;
 }
 function bgmPlayPromise(p) {
   if (p && p.catch) p.catch(function () { /* 自動再生拒否などは黙って無視 */ });
@@ -899,7 +1109,9 @@ function bgmPlayPromise(p) {
 /* 曲名クレジット: その曲が再生されている間、右下に出しっぱなしにする。
  * 表示は Audio の playing イベント、非表示は pause イベントに連動させる
  * ので、オフにしたとき・タブを隠して一時停止したとき・全曲失敗のときは
- * 消える。テキストだけ先に差し替えるのは bgmPlayTrack (曲の切替時)。 */
+ * 消える。テキストだけ先に差し替えるのは bgmPlayTrack / bgmStartFade
+ * (曲の切替時)。クロスフェードでは新しい曲が主役になるフェード開始時点で
+ * 切り替える。 */
 function bgmSetNowPlayingText() {
   var el = $('bgmToast');
   if (!el || bgm.current < 0) return;
@@ -915,73 +1127,179 @@ function bgmHideNowPlaying() {
   var el = $('bgmToast');
   if (el) el.classList.remove('show');
 }
-function bgmPlayTrack(idx) {
-  var a = bgmEnsure();
-  bgm.current = idx;
-  bgm.playsLeft = 1; // loadedmetadata で短い曲なら 2 に更新される
-  a.src = 'audio/' + BGM_TRACKS[idx].file;
-  a.volume = bgmVolume; // 再生直前に必ず現在の音量を要素へ適用する
-  bgmSetNowPlayingText();
-  bgmPlayPromise(a.play());
+function bgmLoadDeck(deck, idx) {
+  deck.track = idx;
+  deck.playsLeft = 1; // loadedmetadata で短い曲なら 2 に更新される
+  deck.audio.src = 'audio/' + BGM_TRACKS[idx].file;
 }
-function bgmNext() {
+/* 指定デッキで曲を単独再生する (開始時・即時切替時)。音量は現在の設定値 */
+function bgmPlayTrack(idx) {
+  bgmCancelFade();
+  var deck = bgmDeck(bgm.active);
+  var other = bgm.decks[1 - bgm.active];
+  if (other) other.audio.pause();
+  bgmLoadDeck(deck, idx);
+  bgm.current = idx;
+  deck.audio.volume = bgmVolume;
+  bgmSetNowPlayingText();
+  bgmPlayPromise(deck.audio.play());
+}
+/* シャッフル順の次の曲 index を返す (一巡したら直前と重ならない次の順列を作る) */
+function bgmNextIndex() {
   bgm.pos++;
   if (bgm.pos >= bgm.order.length) {
     bgm.order = nextShuffleOrder(BGM_TRACKS.length, Math.random, bgm.current);
     bgm.pos = 0;
   }
-  bgmPlayTrack(bgm.order[bgm.pos]);
+  return bgm.order[bgm.pos];
 }
-/* 最初のユーザー操作から呼ばれる。以後の曲送りは 'ended' が駆動する */
+/* フェードなしの即時切替 (終端の保険・エラースキップ用) */
+function bgmAdvanceNow() {
+  var idx = bgmNextIndex();
+  var out = bgm.decks[bgm.active];
+  if (out) out.audio.pause();
+  bgm.active = 1 - bgm.active;
+  bgmPlayTrack(idx);
+}
+/* ---- クロスフェード ----
+ * 監視タイマ (250ms) が「その曲の最後の再生 (短い曲の 2 回目含む) の
+ * 終わり際」を検知してフェードを始める。フェード中は 50ms ごとに
+ * 等パワー曲線 (crossfadeCurve) で両デッキの音量を書き換える。
+ * 音量の基準は常に現在の bgmVolume なので、フェード中の音量変更も
+ * 次のティックから自然に反映される。 */
+function bgmWatchTick() {
+  if (!bgm.started || bgm.fading || bgm.dead || !bgmOn || document.hidden || bgmOnTitle()) return;
+  var deck = bgm.decks[bgm.active];
+  if (!deck || deck.audio.paused || deck.playsLeft > 1) return;
+  var fade = crossfadeDuration(deck.audio.duration);
+  if (fade <= 0) return; // フェードできない長さの曲は 'ended' の即時切替に任せる
+  if (deck.audio.duration - deck.audio.currentTime <= fade) bgmStartFade(fade);
+}
+function bgmStartFade(fadeSec) {
+  var inIdx = 1 - bgm.active;
+  var inDeck = bgmDeck(inIdx);
+  var idx = bgmNextIndex();
+  bgmLoadDeck(inDeck, idx);
+  bgm.current = idx; // クレジットはフェード開始 (新曲が主役になる時点) で切り替える
+  bgmSetNowPlayingText();
+  inDeck.audio.volume = 0;
+  bgmPlayPromise(inDeck.audio.play());
+  bgm.fading = { from: bgm.active, into: inIdx, t0: performance.now(), dur: fadeSec * 1000 };
+  if (bgm.fadeTimer) clearInterval(bgm.fadeTimer);
+  bgm.fadeTimer = setInterval(bgmFadeTick, 50);
+  bgmFadeTick();
+}
+function bgmFadeTick() {
+  var f = bgm.fading;
+  if (!f) return;
+  var g = crossfadeCurve((performance.now() - f.t0) / f.dur);
+  bgm.decks[f.from].audio.volume = bgmVolume * g.out;
+  bgm.decks[f.into].audio.volume = bgmVolume * g.in;
+  if (g.in >= 1) bgmFinishFade();
+}
+function bgmFinishFade() {
+  var f = bgm.fading;
+  if (!f) return;
+  bgm.fading = null;
+  if (bgm.fadeTimer) { clearInterval(bgm.fadeTimer); bgm.fadeTimer = null; }
+  var out = bgm.decks[f.from];
+  out.audio.pause();
+  try { out.audio.currentTime = 0; } catch (e) { /* 未ロード時は無視 */ }
+  bgm.active = f.into;
+  bgm.decks[f.into].audio.volume = bgmVolume;
+}
+function bgmCancelFade() {
+  if (!bgm.fading) return;
+  if (bgm.fadeTimer) { clearInterval(bgm.fadeTimer); bgm.fadeTimer = null; }
+  var inDeck = bgm.decks[bgm.fading.into];
+  inDeck.audio.pause();
+  inDeck.track = -1;
+  bgm.fading = null;
+  var act = bgm.decks[bgm.active];
+  if (act) act.audio.volume = bgmVolume;
+}
+function bgmStopAll() {
+  if (bgm.fadeTimer) { clearInterval(bgm.fadeTimer); bgm.fadeTimer = null; }
+  bgm.fading = null;
+  bgm.decks.forEach(function (d) { if (d) d.audio.pause(); });
+}
+/* タイトル画面 (スタート画面) にいる間は音を出さない (id 19)。
+ * uiHome は同じクロージャ内で後から宣言される var (参照は実行時のみ)。 */
+function bgmOnTitle() { return uiHome; }
+/* 最初の再生開始。呼ばれるのは机に入った時点 (openBox 完了・つづき再開) と、
+ * ジェスチャごとの再試行 (bgmTryPlay) から。タイトル画面では開始しない */
 function bgmStart() {
-  if (bgm.started || !bgmOn) return;
+  if (bgm.started || !bgmOn || bgmOnTitle()) return;
   bgm.started = true;
   bgm.order = nextShuffleOrder(BGM_TRACKS.length, Math.random, -1);
   bgm.pos = 0;
+  if (!bgm.watchTimer) bgm.watchTimer = setInterval(bgmWatchTick, 250);
   bgmPlayTrack(bgm.order[0]);
 }
 /* ユーザー操作を合図に「鳴るべきなら鳴らす」。未開始なら開始し、開始済み
  * でも止まっていたら音量を適用し直して play() を再試行する。
- * 以前は started が立った後の再試行経路が設定シート (bgmApplySettings)
- * しかなく、最初の play() が端末に受け付けられなかった場合に、音量
- * スライダーを触るまで無音のままだった (実機で確認された不具合)。
- * これで箱タップやピースを掴む操作でも必ず鳴り始める。
- * オフのとき・全曲読めなかった (dead) とき・タブが隠れているときは何もしない */
+ * タイトル画面にいる間は何もしない (id 19: タイトルでは音を出さない)。
+ * オフのとき・全曲読めなかった (dead) とき・タブが隠れているときも同様 */
 function bgmTryPlay() {
-  if (!bgmOn || bgm.dead) return;
+  if (!bgmOn || bgm.dead || bgmOnTitle()) return;
   if (!bgm.started) { bgmStart(); return; }
-  var a = bgm.audio;
-  if (!a || document.hidden || !a.paused) return;
-  a.volume = bgmVolume;
-  bgmPlayPromise(a.play());
+  if (bgm.fading) return;
+  var deck = bgm.decks[bgm.active];
+  if (!deck || document.hidden || !deck.audio.paused) return;
+  deck.audio.volume = bgmVolume;
+  bgmPlayPromise(deck.audio.play());
 }
 function bgmApplySettings() {
-  var a = bgmEnsure();
-  a.volume = bgmVolume;
   syncAudioControls();
   if (!bgmOn) {
-    a.pause();
+    bgmStopAll();
     bgmHideNowPlaying(); // 再生が始まっていないと pause イベントが来ないので明示的に隠す
-  } else if (bgm.dead) {
+    return;
+  }
+  if (!bgm.fading) { // 音量の即時反映 (フェード中はティックが毎回書き直す)
+    var deck = bgm.decks[bgm.active];
+    if (deck) deck.audio.volume = bgmVolume;
+  }
+  if (bgm.dead) {
     // 全曲読めなかった状態からの明示的な再試行 (オンに戻す操作自体を合図にする)
     bgm.dead = false;
     bgm.errorStreak = 0;
-    bgmPlayTrack(bgm.current >= 0 ? bgm.current : 0);
+    if (!bgmOnTitle()) bgmPlayTrack(bgm.current >= 0 ? bgm.current : 0);
   } else if (!bgm.started) {
-    bgmStart(); // 設定の操作自体がユーザー操作なので開始してよい
-  } else if (a.paused && !document.hidden) {
-    bgmPlayPromise(a.play()); // オフ→オンに戻したら再開する
+    bgmStart(); // 設定の操作自体がユーザー操作。ただしタイトル画面では bgmStart 側で止まる
+  } else if (!bgm.fading) {
+    var d2 = bgm.decks[bgm.active];
+    if (d2 && d2.audio.paused && !document.hidden && !bgmOnTitle()) {
+      bgmPlayPromise(d2.audio.play()); // オフ→オンに戻したら再開する
+    }
   }
 }
-/* タブが隠れたら一時停止し、戻ったら再開する (設定でオフのときは再開しない) */
+/* タイトル画面に戻るとき: 再生中なら止める。フェード中なら先に確定させて
+ * から止める (次に机へ入ったときは bgmTryPlay がアクティブデッキを再開する) */
+function bgmEnterTitle() {
+  if (!bgm.started) return;
+  if (bgm.fading) bgmFinishFade();
+  var deck = bgm.decks[bgm.active];
+  if (deck) deck.audio.pause();
+  bgmHideNowPlaying();
+}
+/* タブが隠れたら一時停止し、戻ったら再開する (設定でオフのとき・タイトル
+ * 画面にいるときは再開しない) */
 document.addEventListener('visibilitychange', function () {
-  var a = bgm.audio;
-  if (!a || !bgm.started) return;
+  if (!bgm.started) return;
   if (document.hidden) {
-    if (!a.paused) { a.pause(); bgm.hiddenPaused = true; }
+    var anyPlaying = bgm.decks.some(function (d) { return d && !d.audio.paused; });
+    if (anyPlaying) {
+      if (bgm.fading) bgmFinishFade();
+      bgm.decks.forEach(function (d) { if (d) d.audio.pause(); });
+      bgm.hiddenPaused = true;
+    }
   } else if (bgm.hiddenPaused) {
     bgm.hiddenPaused = false;
-    if (bgmOn) bgmPlayPromise(a.play());
+    if (bgmOn && !bgmOnTitle()) {
+      var deck = bgm.decks[bgm.active];
+      if (deck) bgmPlayPromise(deck.audio.play());
+    }
   }
 });
 /* タブが隠れている間はブラウザがオフスクリーン canvas の実体を落とす
@@ -1061,23 +1379,27 @@ function seTone(freq, dur, peak, type, delay) {
   o.start(t0); o.stop(t0 + dur + 0.05);
 }
 function seReady() { return seOn && !!seCtx; }
+/* タイトル画面 (スタート画面) では音を出さない (id 19)。ゲーム内 SE は
+ * スタート画面にいる間は鳴らさない。蓋の音 (seLid) だけは「箱を開ける
+ * タップ以降はゲーム開始の一部」として、このゲートの対象外にする */
+function seInGame() { return seReady() && !uiHome; }
 function seGrab() { // 紙の「サッ」: ノイズのバンドパスを 1200→2400Hz へ上げる
-  if (!seReady()) return;
+  if (!seInGame()) return;
   seNoise(0.1, 'bandpass', [1200, 2400], 0.5);
 }
 function seDrop() { // 木の「トッ」: サインのピッチドロップ + ローパスの木の当たり
-  if (!seReady()) return;
+  if (!seInGame()) return;
   seTone([180, 70], 0.12, 0.6);
   seNoise(0.05, 'lowpass', [900, 500], 0.22);
 }
 function seMerge() { // クリック + G5→C6 の 2 音チャイム
-  if (!seReady()) return;
+  if (!seInGame()) return;
   seNoise(0.03, 'highpass', [3000, 3000], 0.3);
   seTone(784, 0.22, 0.22);
   seTone(1046.5, 0.3, 0.22, 'sine', 0.07);
 }
 function seClear() { // オルゴール風アルペジオ C5-E5-G5-C6 (倍音を薄く重ねる)
-  if (!seReady()) return;
+  if (!seInGame()) return;
   [523.25, 659.25, 783.99, 1046.5].forEach(function (fq, i) {
     seTone(fq, 0.55, 0.26, 'sine', i * 0.13);
     seTone(fq * 2, 0.3, 0.06, 'sine', i * 0.13);
@@ -1087,6 +1409,17 @@ function seLid() { // 紙の擦れ (バンドパス 400→1400Hz, 0.25s) + 小�
   if (!seReady()) return;
   seNoise(0.25, 'bandpass', [400, 1400], 0.4);
   seTone([220, 90], 0.07, 0.28, 'sine', 0.22);
+}
+function seReward() { // 報酬が届く/選ぶ: キラキラした2音 + 柔らかい決定音
+  if (!seInGame()) return;
+  seTone(1318.5, 0.25, 0.15);
+  seTone(1760, 0.35, 0.13, 'sine', 0.08);
+  seTone(659.25, 0.2, 0.09, 'sine', 0.05);
+}
+function sePlace() { // インテリアを机に置く: 陶器の「コトン」
+  if (!seInGame()) return;
+  seTone([320, 140], 0.09, 0.32);
+  seNoise(0.04, 'lowpass', [700, 400], 0.14);
 }
 /* ユーザー操作のたびにキャプチャ段階で受ける (ステージ側の pointerdown
  * ハンドラより先に AudioContext の生成と BGM の開始/再試行が走る)。
@@ -1672,6 +2005,7 @@ function draw() {
     drawMatBackdrop(); // 盤の外側: 机が薄いベール越しにぼんやり見える
   } else {
     drawDeskBackground(v);
+    drawDeskItems(v); // クリア報酬の小物 (装飾レイヤー: ピースより奥)
     // 机でカメラが動いたらミニマップを出す (初回は現在値で初期化だけする)
     var camKey = v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
     if (lastCamKey === '') lastCamKey = camKey;
@@ -2004,6 +2338,7 @@ function stagePos(ev) {
   return { x: ev.clientX - r.left, y: ev.clientY - r.top };
 }
 stage.addEventListener('pointerdown', function (ev) {
+  if (decorMode) { decorPointerDown(ev); return; } // かざる編集中は小物のドラッグ専用
   if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
   stage.setPointerCapture(ev.pointerId);
   var p = stagePos(ev);
@@ -2066,6 +2401,7 @@ stage.addEventListener('pointerdown', function (ev) {
   }
 });
 stage.addEventListener('pointermove', function (ev) {
+  if (decorMode) { decorPointerMove(ev); return; }
   if (!pointers.has(ev.pointerId)) return;
   var p = stagePos(ev);
   pointers.set(ev.pointerId, p);
@@ -2132,6 +2468,7 @@ stage.addEventListener('pointermove', function (ev) {
   }
 });
 function endPointer(ev) {
+  if (decorMode) { decorPointerUp(); return; }
   var cancelled = ev.type === 'pointercancel';
   // 範囲選択まわりの終了処理 (この指が担当していた場合のみ)
   if (pressPending && pressPending.id === ev.pointerId) {
@@ -2249,7 +2586,7 @@ function switchSurfaceDuringDrag() {
   draw();
 }
 function switchSurface() {
-  if (!state || state.phase !== 'play' || uiHome) return;
+  if (!state || state.phase !== 'play' || uiHome || decorMode) return;
   state.surface = state.surface === 'desk' ? 'mat' : 'desk';
   selection.clear(); // 画面切替では選択は保持しない
   invalidateDeskBackdrop();
@@ -2339,6 +2676,16 @@ function onClear() {
   runConfetti();
   $('resultText').textContent = playDate + ' ・ ' + difficulty + 'ピース ・ タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
+  // クリア報酬: その日の初回クリアなら直接付与と 3 択を用意する
+  var grants = processRewardsOnClear();
+  if (grants.length) {
+    $('resultRewardLine').textContent = '机の小物が届きました：' +
+      grants.map(function (id) { return rewardItemById(id).name; }).join('、');
+    $('resultRewardLine').hidden = false;
+  } else {
+    $('resultRewardLine').hidden = true;
+  }
+  $('resultRewardBtn').hidden = !store.rewards.pending;
   $('resultModal').hidden = false;
 }
 function runConfetti() {
@@ -2363,6 +2710,303 @@ function runConfetti() {
     if (t < 3200) requestAnimationFrame(frame);
     else { wrap.hidden = true; ctx.clearRect(0, 0, cv.width, cv.height); }
   })();
+}
+
+/* ---------- クリア報酬インテリア (UI) ----------
+ * 保存は store.rewards (PureLogic の normalizeRewards で形を保証)。
+ * 机の上ではピースより奥の装飾レイヤーとして描き、プレイ中のタップ判定は
+ * 一切持たない。動かせるのは「かざる」編集モードだけ (decorMode)。
+ * 小物の画像は items/<id>.webp (真上からのフラットレイ写真・切り抜き済み)。
+ * 写真立て/額縁は中に直近のクリア写真をはめ込んで描く。 */
+var itemImgs = {};
+REWARD_ITEMS.forEach(function (it) {
+  var img = new Image();
+  img.onload = function () { if (state && !uiHome && !uiCollection) draw(); };
+  img.src = 'items/' + it.id + '.webp';
+  itemImgs[it.id] = img;
+});
+/* クリア時に報酬を確定させる。その日の初回クリアだけが対象で、
+ * 直接付与 (節目) → 3 択の作成の順に処理し、どちらも冪等にする。
+ * 戻り値: 今回直接届いたアイテム id の配列 (結果画面の表示用) */
+function processRewardsOnClear() {
+  var rw = store.rewards;
+  var grants = [];
+  if (rw.lastDate === playDate) return grants;
+  var totalClears = store.records.length;
+  grants = milestoneGrants(rw, totalClears);
+  if (grants.length) {
+    grantRewardItems(rw, grants);
+    recordRewardHistory(rw, playDate, grants);
+  }
+  if (!rw.pending) {
+    var month = parseInt(playDate.split('-')[1], 10);
+    var choices = rewardChoices(rw, {
+      pieces: difficulty, noPreview: !state.previewViewed,
+      month: month, firstEver: totalClears === 1
+    }, Math.random);
+    if (choices.length) rw.pending = { date: playDate, choices: choices };
+  }
+  rw.lastDate = playDate;
+  saveStore();
+  return grants;
+}
+/* ---- 3 択モーダル ---- */
+function rewardChoiceNote(it) {
+  switch (it.kind) {
+    case 'first': return 'はじめての報酬';
+    case 'upper': return '100ピース以上の日の候補';
+    case 'special': return '完成図を見ずにクリアした日の候補';
+    case 'rare': return 'レア（400ピース以上の日の枠）';
+    case 'seasonal': return '今月だけの季節アイテム';
+    default: return '机の好きな位置に置けます';
+  }
+}
+function openRewardModal() {
+  var rw = store.rewards;
+  if (!rw.pending) return;
+  var wrap = $('rewardChoices');
+  wrap.innerHTML = '';
+  rw.pending.choices.forEach(function (id) {
+    var it = rewardItemById(id);
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'reward-card';
+    b.innerHTML = '<img src="items/' + id + '.webp" alt="">' +
+      '<span class="reward-name">' + it.name + '</span>' +
+      '<span class="reward-note">' + rewardChoiceNote(it) + '</span>';
+    b.addEventListener('click', function () {
+      if (!applyRewardPick(store.rewards, id)) return;
+      saveStore();
+      seReward();
+      $('rewardModal').hidden = true;
+      $('resultRewardBtn').hidden = true;
+      $('resultRewardLine').hidden = true;
+      renderStartScreen();
+    });
+    wrap.appendChild(b);
+  });
+  $('rewardModal').hidden = false;
+}
+/* ---- 写真立て/額縁にはめ込む「直近のクリア写真」 ---- */
+function latestClearRecord() {
+  var best = null;
+  store.records.forEach(function (r) {
+    if (!best || (r.clearedAt || r.date) > (best.clearedAt || best.date)) best = r;
+  });
+  return best;
+}
+var framePhoto = { key: null, img: null };
+function framePhotoImage() {
+  var rec = latestClearRecord();
+  if (!rec) return null;
+  var key = rec.date + ':' + rec.imageId;
+  if (framePhoto.key !== key) {
+    framePhoto.key = key;
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = function () { draw(); };
+    img.src = 'https://picsum.photos/id/' + rec.imageId + '/400/400';
+    framePhoto.img = img;
+  }
+  var im = framePhoto.img;
+  return (im && im.complete && im.naturalWidth > 0) ? im : null;
+}
+/* ---- 机への描画 (装飾レイヤー: 背景の直後・ピースより奥) ---- */
+function drawDeskItems(v) {
+  var rw = store.rewards;
+  if (!rw || !rw.owned.length) return;
+  var rect = scatterRect(difficulty);
+  var ids = rw.owned.filter(function (id) { return rw.placed[id]; })
+    .sort(function (a, b) { return rw.placed[a].z - rw.placed[b].z; });
+  ids.forEach(function (id) {
+    var it = rewardItemById(id);
+    var p = rw.placed[id];
+    var c = worldToScreen(p.x * rect.w * CELL, p.y * rect.h * CELL);
+    var size = it.size * CELL * v.scale;
+    if (c.x < -size || c.x > stageW + size || c.y < -size || c.y > stageH + size) return;
+    // 接地影: 光は左上から (ピースの立体感と同方向) なので影は右下へ少し
+    sctx.fillStyle = 'rgba(30,18,6,0.20)';
+    sctx.beginPath();
+    sctx.ellipse(c.x + size * 0.05, c.y + size * 0.38, size * 0.36, size * 0.11, 0, 0, Math.PI * 2);
+    sctx.fill();
+    var x0 = c.x - size / 2, y0 = c.y - size / 2;
+    if (it.photo) {
+      var pr = it.photoRect;
+      var photo = framePhotoImage();
+      if (photo) { // 写真は cover で内側の矩形へはめ込み、枠を上から描く
+        var iw = size * pr.w, ih = size * pr.h;
+        var sc = Math.max(iw / photo.naturalWidth, ih / photo.naturalHeight);
+        var dw = photo.naturalWidth * sc, dh = photo.naturalHeight * sc;
+        sctx.save();
+        sctx.beginPath();
+        sctx.rect(x0 + size * pr.x, y0 + size * pr.y, iw, ih);
+        sctx.clip();
+        sctx.drawImage(photo, x0 + size * pr.x + (iw - dw) / 2, y0 + size * pr.y + (ih - dh) / 2, dw, dh);
+        sctx.restore();
+      } else {
+        sctx.fillStyle = 'rgba(245,240,228,0.85)';
+        sctx.fillRect(x0 + size * pr.x, y0 + size * pr.y, size * pr.w, size * pr.h);
+      }
+    }
+    var img = itemImgs[id];
+    if (img && img.complete && img.naturalWidth > 0) {
+      sctx.drawImage(img, x0, y0, size, size);
+    } else if (decorMode) {
+      // 画像が読めていないときの仮表示 (編集モードだけ: 名前を出す)
+      sctx.fillStyle = 'rgba(245,240,228,0.92)';
+      sctx.fillRect(x0, y0, size, size);
+      sctx.fillStyle = '#4a3826';
+      sctx.font = Math.max(10, Math.round(size * 0.11)) + 'px sans-serif';
+      sctx.textAlign = 'center';
+      sctx.fillText(it.name, c.x, c.y + 4);
+    }
+    if (decorMode && decorSelected === id) {
+      sctx.strokeStyle = THEMES[uiTheme].brass;
+      sctx.lineWidth = 2;
+      sctx.strokeRect(x0 - 3, y0 - 3, size + 6, size + 6);
+    }
+  });
+}
+/* ---- かざる (配置編集モード) ----
+ * 専用導線 (スタート画面 / 設定シート) からのみ入る。編集中はステージの
+ * ポインタ操作を小物のドラッグに付け替え、ピースとカメラは動かさない。 */
+var decorMode = false;
+var decorReturn = 'home'; // 'home' = スタート画面から / 'play' = プレイ中から
+var decorDrag = null;     // { id, offX, offY } (ワールド px)
+var decorSelected = null;
+function enterDecor(from) {
+  if (!state) return;
+  decorReturn = from;
+  if (state.surface !== 'desk') {
+    state.surface = 'desk';
+    invalidateDeskBackdrop();
+    updateSurfaceUI();
+  }
+  selection.clear();
+  decorMode = true;
+  decorSelected = null;
+  decorDrag = null;
+  uiHome = false;
+  uiCollection = false;
+  applyVisibility();
+  $('stageWrap').classList.add('decorating');
+  $('decorBar').hidden = false;
+  $('decorTray').hidden = false;
+  updateDecorBar();
+  renderDecorTray();
+  draw();
+}
+function exitDecor() {
+  if (!decorMode) return;
+  decorMode = false;
+  decorDrag = null;
+  decorSelected = null;
+  saveStore();
+  $('stageWrap').classList.remove('decorating');
+  $('decorBar').hidden = true;
+  $('decorTray').hidden = true;
+  if (decorReturn === 'home') goToStartScreen();
+  else { applyVisibility(); draw(); }
+}
+function updateDecorBar() {
+  $('decorUnplaceBtn').hidden = !decorSelected;
+}
+function bringItemToFront(id) {
+  var rw = store.rewards;
+  var p = rw.placed[id];
+  if (!p) return;
+  var z = p.z;
+  Object.keys(rw.placed).forEach(function (k) { if (rw.placed[k].z > z) z = rw.placed[k].z; });
+  p.z = z + 1;
+}
+function renderDecorTray() {
+  var rw = store.rewards;
+  var tray = $('decorTray');
+  tray.innerHTML = '';
+  if (!rw.owned.length) {
+    tray.innerHTML = '<span class="decor-empty">まだ小物がありません。今日のパズルをクリアすると届きます</span>';
+    return;
+  }
+  REWARD_ITEMS.forEach(function (it) {
+    if (rw.owned.indexOf(it.id) < 0) return;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'decor-chip' + (rw.placed[it.id] ? ' placed' : '') + (decorSelected === it.id ? ' sel' : '');
+    b.innerHTML = '<img src="items/' + it.id + '.webp" alt="">' +
+      '<span class="decor-chip-name">' + it.name + '</span>' +
+      '<span class="decor-chip-state">' + (rw.placed[it.id] ? '配置中' : '未配置') + '</span>';
+    b.addEventListener('click', function () {
+      var rw2 = store.rewards;
+      if (rw2.placed[it.id]) {
+        bringItemToFront(it.id);
+        decorSelected = it.id;
+      } else {
+        placeItemDefault(rw2, it.id);
+        decorSelected = it.id;
+        sePlace();
+      }
+      saveStore();
+      updateDecorBar();
+      renderDecorTray();
+      draw();
+    });
+    tray.appendChild(b);
+  });
+}
+/* ワールド座標 (px) にある最前面の小物 id (なければ null) */
+function decorItemAt(wx, wy) {
+  var rw = store.rewards;
+  var rect = scatterRect(difficulty);
+  var ids = rw.owned.filter(function (id) { return rw.placed[id]; })
+    .sort(function (a, b) { return rw.placed[b].z - rw.placed[a].z; });
+  for (var i = 0; i < ids.length; i++) {
+    var it = rewardItemById(ids[i]);
+    var p = rw.placed[ids[i]];
+    var half = it.size * CELL / 2;
+    if (Math.abs(wx - p.x * rect.w * CELL) <= half && Math.abs(wy - p.y * rect.h * CELL) <= half) return ids[i];
+  }
+  return null;
+}
+function decorPointerDown(ev) {
+  var p = stagePos(ev);
+  var w = screenToWorld(p.x, p.y);
+  var id = decorItemAt(w.x, w.y);
+  decorSelected = id;
+  if (id) {
+    bringItemToFront(id); // 最後に触ったものが最前面
+    var rect = scatterRect(difficulty);
+    var pos = store.rewards.placed[id];
+    decorDrag = { id: id, offX: w.x - pos.x * rect.w * CELL, offY: w.y - pos.y * rect.h * CELL };
+    saveStore();
+  }
+  updateDecorBar();
+  renderDecorTray();
+  draw();
+}
+function decorPointerMove(ev) {
+  if (!decorDrag) return;
+  var p = stagePos(ev);
+  var w = screenToWorld(p.x, p.y);
+  var rect = scatterRect(difficulty);
+  var pos = store.rewards.placed[decorDrag.id];
+  var clamped = clampItemPos((w.x - decorDrag.offX) / (rect.w * CELL), (w.y - decorDrag.offY) / (rect.h * CELL));
+  pos.x = clamped.x;
+  pos.y = clamped.y;
+  requestDraw();
+}
+function decorPointerUp() {
+  if (!decorDrag) return;
+  decorDrag = null;
+  saveStore();
+  sePlace();
+  draw();
+}
+/* スタート画面の「机の小物」行 (所持数と、未選択のごほうび通知) */
+function updateStartDeskRow() {
+  var rw = store.rewards;
+  if (!rw) return;
+  $('deskItemsInfo').textContent = '机の小物 ' + rw.owned.length + ' / ' + REWARD_ITEMS.length;
+  $('rewardBtn').hidden = !rw.pending;
 }
 
 /* ---------- 画面遷移 ----------
@@ -2390,6 +3034,7 @@ function showPlay() {
 /* スタート画面に戻る (設定の「スタート画面に戻る」と、クリア画面を閉じたときの共通動線) */
 function goToStartScreen() {
   if (state) persistProgress();
+  bgmEnterTitle(); // タイトル画面では音を出さない (id 19)
   uiHome = true;
   uiCollection = false;
   renderStartScreen();
@@ -2436,10 +3081,15 @@ var detailSeq = 0; // 非同期読み込みの競合ガード (開き直した�
 
 function openDetail(r) {
   detailRecord = r;
+  var rewardNames = (store.rewards.history[r.date] || []).map(function (id) {
+    var it = rewardItemById(id);
+    return it ? it.name : id;
+  });
   $('detailText').innerHTML =
     '日付: ' + r.date + '<br>難易度: ' + r.pieces + 'ピース<br>クリアタイム: ' + formatTime(r.bestTimeSec) +
     '<br>手数: ' + (r.moves != null ? r.moves : '-') +
     '<br>完成図: ' + (r.previewViewed ? '見た（' + r.previewCount + '回）' : '見ずにクリア') +
+    (rewardNames.length ? '<br>この日に手に入れた小物: ' + rewardNames.join('、') : '') +
     (r.author ? '<br>作者: ' + r.author : '');
   // 過去日をプレイしに行く導線は作らない (コレクションは閲覧のみ)
   $('detailModal').hidden = false;
@@ -2607,7 +3257,7 @@ function updateSettingsPauseBtn() {
   btn.textContent = state.paused ? '再開する' : '一時停止する';
 }
 function openSettings() {
-  if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
+  if (!state || state.phase !== 'play' || uiHome || uiCollection || decorMode) return;
   settingsAutoPaused = false;
   if (timerRunning()) { pauseTimer(); settingsAutoPaused = true; persistProgress(); }
   updateSettingsPauseBtn();
@@ -2626,6 +3276,7 @@ function closeSettings() {
 function restartPuzzle() {
   if (store.progress[playDate]) delete store.progress[playDate][difficulty];
   saveStore();
+  bgmEnterTitle(); // タイトル画面 (未開封の箱) に戻るので音は止める (id 19)
   uiHome = true;
   startGame(state.pool);
 }
@@ -2684,12 +3335,6 @@ function wireControls() {
     closeSettings();
     restartPuzzle();
   });
-  $('resumePlayBtn').addEventListener('click', function () {
-    uiHome = false;
-    applyVisibility();
-    updateProgressUI();
-    draw();
-  });
   /* スタート画面の「はじめから」: 誤タップ防止のため必ず確認モーダルを挟む。
    * 確定したら進捗を消して未開封の箱に戻り、通常の開始フロー (箱→机) に入る。
    * 設定シート側の確認モーダル (confirmModal) とは別にし、挙動を混ぜない。 */
@@ -2734,6 +3379,26 @@ function wireControls() {
     if (navigator.clipboard) navigator.clipboard.writeText(text);
     $('resultCopyBtn').textContent = 'コピーしました';
     setTimeout(function () { $('resultCopyBtn').textContent = '結果をコピー'; }, 1500);
+  });
+  /* クリア報酬: ごほうびの 3 択と、机をかざる (配置編集) の導線 */
+  $('resultRewardBtn').addEventListener('click', function () { openRewardModal(); });
+  $('rewardBtn').addEventListener('click', function () { openRewardModal(); });
+  $('rewardLaterBtn').addEventListener('click', function () { $('rewardModal').hidden = true; });
+  $('decorBtn').addEventListener('click', function () { enterDecor('home'); });
+  $('settingsDecorBtn').addEventListener('click', function () {
+    closeSettings();
+    enterDecor('play');
+  });
+  $('decorDoneBtn').addEventListener('click', function () { exitDecor(); });
+  $('decorUnplaceBtn').addEventListener('click', function () {
+    if (decorSelected && store.rewards.placed[decorSelected]) {
+      delete store.rewards.placed[decorSelected]; // 所持はそのまま、配置だけ外す (トレイから再配置できる)
+      decorSelected = null;
+      saveStore();
+      updateDecorBar();
+      renderDecorTray();
+      draw();
+    }
   });
   window.addEventListener('resize', resizeStage);
 }
@@ -2824,11 +3489,16 @@ function giftBoxSvg(patternId) {
     lid +
     '</svg>';
 }
-/* 箱タップ → 蓋がパカッと開く (約0.42s) → 暗転 → ぶちまけたあとの作業机から開始。
- * ピースが飛び散るアニメーションは作らない (蓋パカッ＋暗転だけ)。
- * 開封自体はタイマーを開始しない (タイマーは最初のピースを掴んだとき)。 */
+/* 箱タップ → 蓋がパカッと開く (約0.42s) → 暗転 → 作業机へ。
+ * 未開始なら開封してピースをぶちまけた机から、進行中・クリア済みなら
+ * 散らばし直さずそのまま続きの机へ入る (id 20: 箱は常に出し、タップで
+ * 続きから始める)。ピースが飛び散るアニメーションは作らない
+ * (蓋パカッ＋暗転だけ)。開封自体はタイマーを開始しない
+ * (タイマーは最初のピースを掴んだとき)。机へ入った時点で BGM を
+ * 開始/再開する (id 19)。 */
 function openBox() {
-  if (!state || state.phase !== 'box' || state.opening) return;
+  if (!state || state.opening || !uiHome) return;
+  var action = boxTapAction({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters });
   state.opening = true; // 開封アニメーション中の連打を無効化 (CSS 側でも pointer-events: none)
   seLid(); // 蓋が開く音 (紙の擦れ + ノック)
   var box = $('giftBox');
@@ -2837,22 +3507,27 @@ function openBox() {
   setTimeout(function () { veil.classList.add('on'); }, 270); // 蓋が開ききる頃から暗転を始める
   setTimeout(function () {
     if (!state) return;
-    state.clusters = initialScatter(playDate, difficulty);
-    selection.clear(); // 散らばった新しい塊に旧選択は引き継がない
-    state.gameStarted = true;
-    state.phase = 'play';
+    if (action === 'open') {
+      state.clusters = initialScatter(playDate, difficulty);
+      selection.clear(); // 散らばった新しい塊に旧選択は引き継がない
+      state.gameStarted = true;
+      state.phase = 'play';
+      persistProgress();
+    }
     uiHome = false;
-    persistProgress();
     applyVisibility();
     updateProgressUI();
     draw();
+    bgmTryPlay(); // 机に入ったので BGM を開始 (初回) / 再開する (id 19)
     veil.classList.remove('on');
     box.classList.remove('opening'); // 次に箱を出すとき (やりなおし後) は閉じた状態から
     state.opening = false;
   }, 580);
 }
 
-/* スタート画面の表示内容: 未開封なら箱、開始済みなら「つづきから / はじめから」パネル。
+/* スタート画面の表示内容: 箱は進行の有無にかかわらず常に出す (id 20)。
+ * 開始済みの難易度では、箱の下に進捗サマリーと「はじめから」の小さな
+ * 導線を出す (続きへ入るのは箱タップ。はじめからは確認モーダル経由)。
  * 起動時は進捗があっても必ずここから始め、続きはユーザーが選ぶ。 */
 function renderStartScreen() {
   if (!state) return;
@@ -2860,8 +3535,9 @@ function renderStartScreen() {
   var startedAlready = mode !== 'box';
   $('giftBox').classList.remove('opening');
   $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate).id);
-  $('giftBox').hidden = startedAlready;
-  $('startHint').hidden = startedAlready;
+  $('giftBox').hidden = false;
+  $('startHint').hidden = false;
+  $('startHint').textContent = mode === 'resume' ? '箱をタップしてつづきから' : '箱をタップ';
   $('resumePanel').hidden = !startedAlready;
   if (startedAlready) {
     if (mode === 'cleared') {
@@ -2876,6 +3552,7 @@ function renderStartScreen() {
       $('resumeInfo').textContent = difficulty + 'ピース ・ マットに置いたピース ' + onMat + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
     }
   }
+  updateStartDeskRow();
 }
 
 /* ---------- ゲーム開始 ---------- */

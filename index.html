@@ -13,7 +13,8 @@
 <body>
 
 <!-- スタート画面: 難易度を選ぶのはここだけ。ページを開き直したら必ずここから。
-     開始済みの難易度は「つづきから / はじめから (確認あり)」が選べる。
+     箱は進行の有無にかかわらず常に出し、タップで新規開封 or 続きから入る。
+     開始済みの難易度は箱の下に進捗と「はじめから (確認あり)」の小さな導線を出す。
      デザインは「紙 + タイポグラフィ、枠少なめ」。難易度だけ重なったカード (案D)。 -->
 <section id="startView">
   <div class="start-inner">
@@ -36,7 +37,6 @@
 
     <div id="resumePanel" hidden>
       <p id="resumeInfo" class="resume-info"></p>
-      <button id="resumePlayBtn" class="resume-link" type="button">つづきから遊ぶ <span class="resume-arrow" aria-hidden="true">→</span></button>
       <button id="freshStartBtn" class="fresh-link" type="button">はじめから遊ぶ</button>
     </div>
 
@@ -50,6 +50,13 @@
       <button id="collectionBtn" class="text-link" type="button">コレクション →</button>
     </nav>
 
+    <!-- クリア報酬の小物: 所持数とかざる導線。未選択のごほうびがある間だけ通知も出す -->
+    <div class="start-desk">
+      <span id="deskItemsInfo" class="desk-items-info">机の小物 0 / 13</span>
+      <button id="decorBtn" class="text-link" type="button">机をかざる →</button>
+      <button id="rewardBtn" class="text-link reward-notice" type="button" hidden>🎁 今日のごほうびが届いています →</button>
+    </div>
+
     <!-- テーマ切替はプレイ中の設定シートと共通 (data-theme-opt で配線・同期する) -->
     <div class="start-theme" role="group" aria-label="テーマ">
       <span class="start-theme-label">テーマ</span>
@@ -59,11 +66,11 @@
     </div>
 
     <!-- 音の調整はタイトル画面でもできるように (設定シートと store 連動)。
-         ゲームは音が出るので、その旨を小さく注意書きする -->
+         タイトル画面では音は出ず、設定はプレイ中 (机) に入ってから効く (id 19) -->
     <div class="start-audio">
       <div class="start-audio-head">
         <span class="start-audio-label">サウンド</span>
-        <span class="start-audio-note">♪ 音が出ます</span>
+        <span class="start-audio-note">音はプレイ中のみ流れます</span>
       </div>
       <label class="start-audio-row"><span>BGM</span><input type="checkbox" id="bgmToggleStart"></label>
       <label class="start-audio-row"><span>BGM音量</span><input type="range" id="bgmVolumeStart" min="0" max="100" step="1"></label>
@@ -99,6 +106,14 @@
     <div id="bgmToast" aria-hidden="true"></div>
     <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" type="button" aria-label="閉じる">×</button></div>
     <div id="loadingOverlay">読み込み中…</div>
+    <!-- かざる (配置編集) モードのバーとトレイ。編集中は通常の HUD を隠す -->
+    <div id="decorBar" hidden>
+      <span class="decor-title">机をかざる</span>
+      <span class="decor-hint">小物をドラッグで移動できます</span>
+      <button id="decorUnplaceBtn" class="btn decor-btn" type="button" hidden>しまう</button>
+      <button id="decorDoneBtn" class="btn decor-btn" type="button">完了</button>
+    </div>
+    <div id="decorTray" hidden></div>
   </div>
 </main>
 
@@ -122,6 +137,7 @@
       <button id="settingsPreviewBtn" class="btn settings-item" type="button">完成図を見る</button>
       <button id="settingsCollectionBtn" class="btn settings-item" type="button">コレクション</button>
       <button id="settingsHomeBtn" class="btn settings-item" type="button">スタート画面に戻る</button>
+      <button id="settingsDecorBtn" class="btn settings-item" type="button">机をかざる</button>
       <div class="settings-theme">
         <span class="settings-section-label">テーマ</span>
         <div class="settings-theme-btns">
@@ -183,7 +199,9 @@
     <h2>クリア！</h2>
     <p id="resultText"></p>
     <p id="resultBadge" class="praise" hidden>完成図を見ずにクリア！すごい！</p>
+    <p id="resultRewardLine" class="reward-line" hidden></p>
     <div class="result-actions">
+      <button id="resultRewardBtn" class="btn" type="button" hidden>今日のごほうびを選ぶ</button>
       <button id="resultCopyBtn" class="btn" type="button">結果をコピー</button>
       <button id="resultCollectionBtn" class="btn" type="button">コレクションを見る</button>
       <button id="resultCloseBtn" class="btn btn-underline" type="button">閉じる</button>
@@ -199,6 +217,17 @@
     <div class="result-actions">
       <button class="btn" type="button" data-close>閉じる</button>
     </div>
+  </div>
+</div>
+
+<!-- クリア報酬の 3 択 (あとで選ぶ場合はスタート画面の通知から開き直せる) -->
+<div id="rewardModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body reward-body">
+    <h2>今日のごほうび</h2>
+    <p class="reward-sub">どれを机に迎えますか？<br>選ばなかったものは次回の候補に戻ります</p>
+    <div id="rewardChoices" class="reward-choices"></div>
+    <button id="rewardLaterBtn" class="btn btn-underline" type="button">あとで選ぶ</button>
   </div>
 </div>
 

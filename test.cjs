@@ -780,5 +780,100 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(crossOk, 'バリ: 輪郭ポリゴンに自己交差なし (' + checkedCells + ' セル全数)');
 }
 
+/* 23. BGM クロスフェードの純粋ロジック (等パワー曲線とフェード長) */
+{
+  ok(L.BGM_FADE_SEC === 3, 'クロスフェード: 既定のフェード長は 3 秒');
+  const c0 = L.crossfadeCurve(0), c1 = L.crossfadeCurve(1), cm = L.crossfadeCurve(0.5);
+  ok(Math.abs(c0.out - 1) < 1e-9 && c0.in === 0, 'クロスフェード: t=0 で前曲のみ');
+  ok(Math.abs(c1.in - 1) < 1e-9 && Math.abs(c1.out) < 1e-9, 'クロスフェード: t=1 で次曲のみ');
+  ok(Math.abs(cm.out * cm.out + cm.in * cm.in - 1) < 1e-9, 'クロスフェード: 中点でも等パワー (out^2+in^2=1)');
+  let mono = true, prev = 2;
+  for (let t = 0; t <= 1.0001; t += 0.05) { const c = L.crossfadeCurve(t); if (c.out > prev + 1e-9) mono = false; prev = c.out; }
+  ok(mono, 'クロスフェード: 前曲ゲインは単調減少');
+  const cc = L.crossfadeCurve(7); // 範囲外はクランプ
+  ok(Math.abs(cc.in - 1) < 1e-9, 'クロスフェード: t>1 は 1 にクランプ');
+  ok(L.crossfadeDuration(200) === 3, 'フェード長: 長い曲は上限 3 秒');
+  ok(L.crossfadeDuration(8) === 2, 'フェード長: 8 秒の曲は 1/4 = 2 秒');
+  ok(L.crossfadeDuration(1) === 0 && L.crossfadeDuration(NaN) === 0, 'フェード長: 極端に短い/不明な曲はフェードなし');
+}
+
+/* 24. 箱タップの分岐 (id 20: つづきがあっても箱を出す) */
+{
+  ok(L.boxTapAction(null) === 'open', '箱タップ: 進捗なしは新規オープン');
+  ok(L.boxTapAction({ started: false, cleared: false, clusters: [] }) === 'open', '箱タップ: 未開始は新規オープン');
+  ok(L.boxTapAction({ started: true, cleared: false, clusters: [{ pieces: [0] }] }) === 'resume', '箱タップ: 進行中はつづきから再開');
+  ok(L.boxTapAction({ started: true, cleared: true, clusters: [{ pieces: [0] }] }) === 'resume', '箱タップ: クリア済みも箱から盤面へ入る');
+}
+
+/* 25. クリア報酬インテリアの純粋ロジック */
+{
+  // カタログの健全性
+  const ids = L.REWARD_ITEMS.map(it => it.id);
+  ok(L.REWARD_ITEMS.length === 13, '報酬: カタログは 13 点 (季節物を 11月/12月 で分けた)');
+  ok(new Set(ids).size === ids.length, '報酬: アイテム id は一意');
+  ok(L.REWARD_ITEMS.every(it => it.name && it.size > 0 && it.def.x >= 0 && it.def.x <= 1 && it.def.y >= 0 && it.def.y <= 1), '報酬: 全点に名前・サイズ・既定位置 (比率) がある');
+  ok(L.REWARD_ITEMS.filter(it => it.kind === 'grant').every(it => it.grantAt > 0), '報酬: 直接付与アイテムには節目の回数がある');
+  ok(L.REWARD_ITEMS.filter(it => it.photo).every(it => it.photoRect && it.photoRect.w > 0 && it.photoRect.h > 0 && it.photoRect.x + it.photoRect.w <= 1.001 && it.photoRect.y + it.photoRect.h <= 1.001), '報酬: 写真アイテムの写真窓は画像内に収まる');
+  ok(L.rewardItemById('plant').name === 'ミニ観葉植物' && L.rewardItemById('nope') === null, '報酬: id 引きができる');
+
+  // 節目の直接付与
+  const empty = L.emptyRewards();
+  ok(eq(L.milestoneGrants(empty, 2), []), '報酬付与: 累計2回では何も届かない');
+  ok(eq(L.milestoneGrants(empty, 3), ['frame']), '報酬付与: 累計3回で写真立て');
+  ok(eq(L.milestoneGrants(empty, 9), ['frame']), '報酬付与: 累計9回は写真立てのみ');
+  ok(eq(L.milestoneGrants(empty, 10), ['frame', 'gaku']), '報酬付与: 累計10回で額縁も届く');
+  ok(eq(L.milestoneGrants({ owned: ['frame'], placed: {}, pending: null, lastDate: null, history: {} }, 10), ['gaku']), '報酬付与: 所持済みは再付与しない');
+
+  // 3 択の抽選規則
+  const rng0 = () => 0;
+  const first = L.rewardChoices(L.emptyRewards(), { pieces: 36, noPreview: false, month: 6, firstEver: true }, rng0);
+  ok(first.includes('plant'), '報酬3択: 生涯初クリアにはミニ観葉植物が必ず入る');
+  ok(first.length === 3, '報酬3択: 候補が足りれば 3 件になる');
+  const nov = L.rewardChoices(L.emptyRewards(), { pieces: 36, noPreview: false, month: 11, firstEver: false }, rng0);
+  ok(nov.includes('maple') && !nov.includes('tree'), '報酬3択: 11月は紅葉の枝が確定枠、ツリーは入らない');
+  const dec = L.rewardChoices(L.emptyRewards(), { pieces: 36, noPreview: false, month: 12, firstEver: false }, rng0);
+  ok(dec.includes('tree') && !dec.includes('maple'), '報酬3択: 12月はミニツリーが確定枠');
+  const big = L.rewardChoices(L.emptyRewards(), { pieces: 400, noPreview: false, month: 6, firstEver: false }, rng0);
+  ok(big.includes('teapot'), '報酬3択: 400ピース以上の日はティーポットがレア確定枠');
+  const small = L.rewardChoices(L.emptyRewards(), { pieces: 36, noPreview: false, month: 6, firstEver: false }, rng0);
+  ok(!small.includes('lamp') && !small.includes('teapot'), '報酬3択: 36ピースでは上位/レア枠は入らない');
+  const mid = L.rewardChoices(L.emptyRewards(), { pieces: 100, noPreview: false, month: 6, firstEver: false }, rng0);
+  ok(!mid.includes('cat'), '報酬3択: 完成図を見た日は猫の置物は入らない');
+  const noPrev = L.rewardChoices(L.emptyRewards(), { pieces: 100, noPreview: true, month: 6, firstEver: false }, () => 0.42);
+  ok(noPrev.every(id => id !== 'frame' && id !== 'gaku'), '報酬3択: 直接付与アイテムは 3 択に出ない');
+  const almost = L.emptyRewards();
+  almost.owned = ids.filter(id => id !== 'mug');
+  ok(eq(L.rewardChoices(almost, { pieces: 36, noPreview: false, month: 6, firstEver: false }, rng0), ['mug']), '報酬3択: 未所持が 1 点だけならその 1 件だけ');
+  const allOwned = L.emptyRewards();
+  allOwned.owned = ids.slice();
+  ok(eq(L.rewardChoices(allOwned, { pieces: 2025, noPreview: true, month: 11, firstEver: true }, rng0), []), '報酬3択: 全所持なら空');
+
+  // 選択の適用: 所持 + 既定配置 + その日の履歴 + pending 解消
+  const rw = L.emptyRewards();
+  rw.pending = { date: '2026-11-08', choices: ['plant', 'mug', 'books'] };
+  ok(L.applyRewardPick(rw, 'lamp') === false, '報酬選択: 候補にないものは選べない');
+  ok(L.applyRewardPick(rw, 'mug') === true, '報酬選択: 候補から選べる');
+  ok(rw.owned.includes('mug') && rw.pending === null, '報酬選択: 所持に入り pending が消える');
+  ok(rw.placed.mug && rw.placed.mug.x === L.rewardItemById('mug').def.x && rw.placed.mug.y === L.rewardItemById('mug').def.y && rw.placed.mug.z >= 0, '報酬選択: 既定位置に自動配置される');
+  ok(eq(rw.history['2026-11-08'], ['mug']), '報酬選択: 獲得日の履歴に残る (pending の日付で記録)');
+  L.grantRewardItems(rw, ['frame']);
+  ok(rw.owned.includes('frame') && !!rw.placed.frame, '報酬付与: 直接付与も既定位置に置かれる');
+  ok(L.applyRewardPick(rw, 'mug') === false, '報酬選択: pending が無ければ選べない');
+
+  // 保存形式の正規化 (壊れた/未知のデータを読んでも落ちない・既存フィールドは保持)
+  const norm = L.normalizeRewards({ owned: ['mug', 'unknown-x'], placed: { mug: { x: 0.5, y: 0.5, z: 2 }, 'unknown-x': { x: 0, y: 0, z: 1 } }, pending: { date: '2026-11-08', choices: ['mug', 'unknown-x'] }, lastDate: '2026-11-08', history: { '2026-11-08': ['mug', 'unknown-x'] } });
+  ok(eq(norm.owned, ['mug']), '報酬保存: 未知の id は所持から落ちる');
+  ok(!!norm.placed.mug && !('unknown-x' in norm.placed), '報酬保存: 未知の id の配置も落ちる');
+  ok(eq(norm.pending.choices, ['mug']), '報酬保存: pending の候補からも未知の id が落ちる');
+  ok(eq(norm.history['2026-11-08'], ['mug']) && norm.lastDate === '2026-11-08', '報酬保存: 履歴と最終付与日は保持される');
+  ok(eq(L.normalizeRewards(null), L.emptyRewards()) && eq(L.normalizeRewards('garbage'), L.emptyRewards()), '報酬保存: 壊れた値は空の形に初期化');
+
+  // 配置クランプ (中心が机の内側に収まる)
+  const cl = L.clampItemPos(-3, 7);
+  ok(cl.x === 0 && cl.y === 1, '報酬配置: 比率座標は 0..1 にクランプ');
+  const cl2 = L.clampItemPos(0.25, 0.75);
+  ok(cl2.x === 0.25 && cl2.y === 0.75, '報酬配置: 範囲内はそのまま');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
