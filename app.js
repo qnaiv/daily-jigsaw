@@ -1060,13 +1060,9 @@ stage.addEventListener('wheel', function (ev) {
   updateZoomLabel();
   draw();
 }, { passive: false });
-var lastTap = 0;
-stage.addEventListener('dblclick', function () { zoomBy(1.5); });
-stage.addEventListener('touchend', function (ev) {
-  var now = Date.now();
-  if (now - lastTap < 300) zoomBy(1.5);
-  lastTap = now;
-});
+/* ダブルタップズームは廃止 (ユーザー指定)。dblclick / touchend のダブルタップ
+ * 判定は置かない: touchend 判定はピンチ終了時の2指の離し方 (<300ms) にも
+ * 反応してしまい、指を離した瞬間に zoomBy が走って画面が跳ねる事故があった。 */
 
 /* ---------- タイマー / 進捗 ---------- */
 function startTimerOnce() {
@@ -1421,33 +1417,18 @@ function giftPatternDef(patternId) {
       return '<pattern id="giftPat" width="42" height="42" patternUnits="userSpaceOnUse">' + body + '</pattern>';
   }
 }
-/* 箱の中身のチラ見え用: 小さなピース片 (四角 + 上のノブ) */
-function giftPeekPiece(cx, cy, s, color) {
-  var hw = s / 2;
-  return '<g class="gift-peek">' +
-    '<rect x="' + (cx - hw).toFixed(1) + '" y="' + cy + '" width="' + s + '" height="' + s + '" rx="3" fill="' + color + '"/>' +
-    '<circle cx="' + cx + '" cy="' + cy + '" r="' + (s * 0.24).toFixed(1) + '" fill="' + color + '"/>' +
-    '</g>';
-}
 function giftBoxSvg(patternId) {
   function face(points, shade) {
     var s = '<polygon points="' + points + '" fill="url(#giftPat)"/>';
     if (shade > 0) s += '<polygon points="' + points + '" fill="#000000" opacity="' + shade + '"/>';
     return s + '<polygon points="' + points + '" fill="none" stroke="rgba(60,30,10,0.35)" stroke-width="1"/>';
   }
-  /* 中身: 蓋に隠れて通常は見えない。蓋が開くと開口部の暗がりと
-   * ピースの端がチラッと覗く (開口部の形でクリップ)。 */
+  /* 開口部の内側: 蓋に隠れて通常は見えない。蓋が持ち上がると
+   * 暗い内側が少し見えるだけ (中身のピースは描かない)。 */
   var opening = '100,77 352,77 316,129 64,129';
-  var inside =
-    '<clipPath id="giftClip"><polygon points="' + opening + '"/></clipPath>' +
-    '<polygon points="' + opening + '" fill="#33200f"/>' +
-    '<g clip-path="url(#giftClip)">' +
-      giftPeekPiece(128, 100, 34, '#b8452e') +
-      giftPeekPiece(204, 108, 38, '#33523f') +
-      giftPeekPiece(282, 98, 32, '#c9a227') +
-    '</g>';
-  /* 蓋: 上面 + 前縁 + 右縁を1グループにし、CSS で後ろ側の辺 (上面の上辺) を
-   * 軸に跳ね上げる (.gift-lid / #giftBox.opening) */
+  var inside = '<polygon points="' + opening + '" fill="#33200f"/>';
+  /* 蓋: 上面 + 前縁 + 右縁を1グループにし、CSS で回転させず真上へ
+   * 持ち上げる (.gift-lid / #giftBox.opening) */
   var lid = '<g class="gift-lid">' +
     face('316,121 352,77 352,84 316,128', 0.22) +   /* 蓋の右縁 */
     face('64,121 316,121 316,128 64,128', 0.08) +   /* 蓋の前縁 */
