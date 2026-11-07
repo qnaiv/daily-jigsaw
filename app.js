@@ -355,7 +355,7 @@ function saveStore() {
 function progressFor(date, pieces) {
   if (!store.progress[date]) store.progress[date] = {};
   if (!store.progress[date][pieces]) {
-    store.progress[date][pieces] = { clusters: [], elapsedSec: 0, moves: 0, previewViewed: false, previewCount: 0, ghostUsed: false, cleared: false, started: false };
+    store.progress[date][pieces] = { clusters: [], elapsedSec: 0, moves: 0, previewViewed: false, previewCount: 0, cleared: false, started: false };
   }
   return store.progress[date][pieces];
 }
@@ -397,9 +397,6 @@ function newGameState(pool) {
     moves: prog.moves || 0,
     previewViewed: !!prog.previewViewed,
     previewCount: prog.previewCount || 0,
-    ghostUsed: !!prog.ghostUsed,
-    ghostOn: false,
-    edgeHighlight: false,
     mergeFlash: null,                 // { ids:Set, start:ms } 合体フィードバック
     cleared: !!prog.cleared,
     started: false, paused: false, timerStart: 0,
@@ -416,7 +413,6 @@ function persistProgress() {
   prog.moves = state.moves;
   prog.previewViewed = state.previewViewed;
   prog.previewCount = state.previewCount;
-  prog.ghostUsed = state.ghostUsed;
   prog.cleared = state.cleared;
   prog.started = state.gameStarted;
   saveStore();
@@ -522,6 +518,7 @@ function resizeStage() {
   var wrap = $('stageWrap');
   dpr = Math.min(2, window.devicePixelRatio || 1);
   stageW = wrap.clientWidth; stageH = wrap.clientHeight;
+  if (!stageW || !stageH) return; // 非表示中は実サイズが取れないので何もしない
   stage.width = Math.round(stageW * dpr); stage.height = Math.round(stageH * dpr);
   if (state && !state.views.desk) fitViews();
   draw();
@@ -536,6 +533,7 @@ function fitView(surface) {
   return { scale: fit, fit: fit, tx: (stageW - worldW * fit) / 2 - ox * fit, ty: (stageH - worldH * fit) / 2 - oy * fit };
 }
 function fitViews() {
+  if (!stageW || !stageH) return; // プレイ画面が非表示の間はフィット計算しない (表示時に resizeStage が行う)
   state.views.desk = fitView('desk');
   state.views.mat = fitView('mat');
 }
@@ -543,23 +541,88 @@ function view() { return state.views[state.surface]; }
 function worldToScreen(wx, wy) { var v = view(); return { x: wx * v.scale + v.tx, y: wy * v.scale + v.ty }; }
 function screenToWorld(sx, sy) { var v = view(); return { x: (sx - v.tx) / v.scale, y: (sy - v.ty) / v.scale }; }
 
+/* ---------- 机の木目テクスチャ ----------
+ * 木目タイルを一度だけオフスクリーンに描き、ワールド座標に固定して敷く
+ * (パン/ズームに追随するので「机の上を動いている」感触になる)。 */
+var woodPattern = null;
+function getWoodPattern() {
+  if (woodPattern) return woodPattern;
+  var cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 512;
+  var c = cv.getContext('2d');
+  var rng = rngFromString('woodgrain-v1');
+  var grad = c.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0, '#b0824f');
+  grad.addColorStop(0.5, '#a87c48');
+  grad.addColorStop(1, '#b0824f');
+  c.fillStyle = grad;
+  c.fillRect(0, 0, 512, 512);
+  // 木目: 横方向に流れる波状の線
+  for (var i = 0; i < 80; i++) {
+    var y0 = rng() * 512, amp = 1 + rng() * 3, per = 120 + rng() * 220, ph = rng() * 6.28;
+    c.beginPath();
+    for (var x = 0; x <= 512; x += 8) {
+      var y = y0 + Math.sin(x / per * 6.28 + ph) * amp;
+      if (x === 0) c.moveTo(x, y); else c.lineTo(x, y);
+    }
+    c.strokeStyle = 'rgba(' + (88 + (rng() * 40) | 0) + ',' + (56 + (rng() * 26) | 0) + ',20,' + (0.05 + rng() * 0.13).toFixed(3) + ')';
+    c.lineWidth = 0.6 + rng() * 2.2;
+    c.stroke();
+  }
+  // 板の継ぎ目
+  [0, 170, 341].forEach(function (y) {
+    c.fillStyle = 'rgba(70,44,18,0.35)'; c.fillRect(0, y, 512, 2);
+    c.fillStyle = 'rgba(255,230,180,0.10)'; c.fillRect(0, y + 2, 512, 1);
+  });
+  // 節 (ふし)
+  for (var k = 0; k < 3; k++) {
+    var kx = 60 + rng() * 390, ky = 60 + rng() * 390;
+    for (var r = 9; r > 1; r -= 2) {
+      c.beginPath();
+      c.ellipse(kx, ky, r * 1.5, r, 0.3, 0, 6.29);
+      c.strokeStyle = 'rgba(80,50,20,' + (0.10 + (9 - r) * 0.02).toFixed(3) + ')';
+      c.lineWidth = 1.4;
+      c.stroke();
+    }
+  }
+  woodPattern = sctx.createPattern(cv, 'repeat');
+  return woodPattern;
+}
+function drawDeskBackground(v) {
+  var pat = null;
+  try { pat = getWoodPattern(); } catch (e) { pat = null; }
+  if (pat) {
+    if (pat.setTransform && typeof DOMMatrix !== 'undefined') {
+      try { pat.setTransform(new DOMMatrix([v.scale, 0, 0, v.scale, v.tx, v.ty])); } catch (e) { /* 対応外環境では素のタイリング */ }
+    }
+    sctx.fillStyle = pat;
+  } else {
+    sctx.fillStyle = '#a87f4e';
+  }
+  sctx.fillRect(0, 0, stageW, stageH);
+  // 机全体にゆるい陰影をつけて天板らしくする
+  var vg = sctx.createRadialGradient(stageW / 2, stageH / 2, Math.min(stageW, stageH) * 0.35, stageW / 2, stageH / 2, Math.max(stageW, stageH) * 0.75);
+  vg.addColorStop(0, 'rgba(255,240,210,0.07)');
+  vg.addColorStop(1, 'rgba(40,22,4,0.16)');
+  sctx.fillStyle = vg;
+  sctx.fillRect(0, 0, stageW, stageH);
+}
+
 function draw() {
-  if (!state || !state.srcCanvas) return;
+  if (!state || !state.srcCanvas || !state.views[state.surface]) return;
   sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   var isMat = state.surface === 'mat';
-  sctx.fillStyle = isMat ? '#46685a' : '#a87f4e';
-  sctx.fillRect(0, 0, stageW, stageH);
   var v = view(), n = state.n;
   if (isMat) {
+    sctx.fillStyle = '#46685a';
+    sctx.fillRect(0, 0, stageW, stageH);
+  } else {
+    drawDeskBackground(v);
+  }
+  if (isMat) {
     var tl = worldToScreen(0, 0), br = worldToScreen(n * CELL, n * CELL);
-    if (state.ghostOn) {
-      sctx.save();
-      sctx.globalAlpha = 0.35;
-      sctx.drawImage(state.srcCanvas, tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-      sctx.restore();
-    }
     sctx.fillStyle = 'rgba(0,0,0,0.12)';
-    if (!state.ghostOn) sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
     sctx.strokeStyle = 'rgba(255,255,255,0.75)';
     sctx.lineWidth = 2;
     sctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
@@ -578,14 +641,6 @@ function draw() {
   var ordered = state.clusters.filter(function (c) { return c.surface === state.surface; });
   if (drag && drag.cluster) ordered = ordered.filter(function (c) { return c !== drag.cluster; }).concat([drag.cluster]);
   ordered.forEach(function (cl) { drawCluster(cl, wTl, wBr); });
-  // ふちハイライト: 机の上のふちピースだけ輪郭を光らせ、それ以外は少し暗くする
-  if (state.edgeHighlight && state.surface === 'desk') {
-    eachVisiblePiece(function (id, wx, wy) {
-      if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
-      if (isEdgePiece(id, state.n)) strokePiece(id, wx, wy, 'rgba(255,176,0,0.95)', 2.5, null);
-      else strokePiece(id, wx, wy, null, 0, 'rgba(40,26,12,0.38)');
-    });
-  }
   // 合体フィードバック: 合体した塊の輪郭が一瞬光る
   if (state.mergeFlash) {
     var alpha = Math.max(0, 1 - (Date.now() - state.mergeFlash.start) / 550);
@@ -696,7 +751,7 @@ function stagePos(ev) {
   return { x: ev.clientX - r.left, y: ev.clientY - r.top };
 }
 stage.addEventListener('pointerdown', function (ev) {
-  if (!state) return;
+  if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
   stage.setPointerCapture(ev.pointerId);
   var p = stagePos(ev);
   pointers.set(ev.pointerId, p);
@@ -814,7 +869,7 @@ function switchSurfaceDuringDrag() {
   draw();
 }
 function switchSurface() {
-  if (!state || state.phase !== 'play') return;
+  if (!state || state.phase !== 'play' || uiHome) return;
   state.surface = state.surface === 'desk' ? 'mat' : 'desk';
   updateSurfaceUI();
   draw();
@@ -876,9 +931,7 @@ function updateProgressUI() {
   var pos = piecePositions(state.clusters, state.n);
   var onMat = 0;
   pos.forEach(function (p) { if (p.surface === 'mat') onMat++; });
-  $('progressText').textContent = 'マットに置いたピース ' + onMat + ' / ' + difficulty + ' ・ 塊 ' + state.clusters.length;
-  $('progressFill').style.width = (difficulty ? (onMat / difficulty * 100) : 0) + '%';
-  $('movesText').textContent = state.moves + '手';
+  $('progressText').textContent = 'マット ' + onMat + ' / ' + difficulty + ' ・ 塊 ' + state.clusters.length;
   $('timerText').textContent = formatTime(currentElapsed());
 }
 
@@ -894,7 +947,6 @@ function onClear() {
     bestTimeSec: prev ? Math.min(prev.bestTimeSec, elapsed) : elapsed,
     moves: state.moves,
     previewViewed: state.previewViewed, previewCount: state.previewCount,
-    ghostUsed: state.ghostUsed,
     clearedAt: new Date().toISOString(),
     author: state.author || null
   };
@@ -930,16 +982,26 @@ function runConfetti() {
   })();
 }
 
-/* ---------- コレクション ---------- */
+/* ---------- 画面遷移 ----------
+ * uiHome: スタート画面を表示しているか (プレイ中は false)
+ * uiCollection: コレクションを表示しているか */
+var uiHome = true;
+var uiCollection = false;
+var firstStart = true; // 初回だけ「未開封→スタート画面 / 開始済み→そのまま続きからプレイ」
+function applyVisibility() {
+  $('startView').hidden = !uiHome || uiCollection;
+  $('playView').hidden = uiHome || uiCollection;
+  $('collectionView').hidden = !uiCollection;
+  if (!uiHome && !uiCollection) resizeStage();
+}
 function showCollection() {
-  $('playView').hidden = true;
-  $('collectionView').hidden = false;
+  uiCollection = true;
+  applyVisibility();
   renderCollection();
 }
 function showPlay() {
-  $('collectionView').hidden = true;
-  $('playView').hidden = false;
-  resizeStage();
+  uiCollection = false;
+  applyVisibility();
 }
 function renderCollection() {
   var recs = store.records.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : b.pieces - a.pieces; });
@@ -961,8 +1023,7 @@ function renderCollection() {
     card.className = 'card';
     card.type = 'button';
     var badges = '<span class="badge">' + r.pieces + 'ピース</span>' +
-      (r.previewViewed ? '<span class="badge">完成図: 見た</span>' : '<span class="badge praise">完成図を見ずにクリア！</span>') +
-      '<span class="badge">ゴースト: ' + (r.ghostUsed ? '使用' : '未使用') + '</span>';
+      (r.previewViewed ? '<span class="badge">完成図: 見た</span>' : '<span class="badge praise">完成図を見ずにクリア！</span>');
     card.innerHTML = '<img loading="lazy" src="https://picsum.photos/id/' + r.imageId + '/400/400" alt="">' +
       '<span class="card-body"><span class="card-date">' + r.date + '</span>' +
       '<span>クリアタイム ' + formatTime(r.bestTimeSec) + '</span>' + badges + '</span>';
@@ -976,7 +1037,6 @@ function openDetail(r) {
     '日付: ' + r.date + '<br>難易度: ' + r.pieces + 'ピース<br>クリアタイム: ' + formatTime(r.bestTimeSec) +
     '<br>手数: ' + (r.moves != null ? r.moves : '-') +
     '<br>完成図: ' + (r.previewViewed ? '見た（' + r.previewCount + '回）' : '見ずにクリア') +
-    '<br>ゴースト: ' + (r.ghostUsed ? '使用' : '未使用') +
     (r.author ? '<br>作者: ' + r.author : '');
   $('detailPlayBtn').onclick = function () { location.href = '?date=' + r.date; };
   $('detailModal').hidden = false;
@@ -993,7 +1053,7 @@ function buildDifficultySeg() {
     b.textContent = labels[d];
     b.addEventListener('click', function () {
       if (d === difficulty) return;
-      persistProgress();
+      if (state) persistProgress();
       difficulty = d;
       store.lastDifficulty = d;
       saveStore();
@@ -1002,42 +1062,120 @@ function buildDifficultySeg() {
     seg.appendChild(b);
   });
 }
+
+/* ---------- タイマーの一時停止/再開 ---------- */
+function timerRunning() {
+  return !!(state && state.started && !state.paused && !state.cleared);
+}
+function pauseTimer() {
+  if (!timerRunning()) return;
+  state.elapsedBase = currentElapsed();
+  state.paused = true;
+}
+function resumeTimer() {
+  if (!state || !state.paused || state.cleared) return;
+  state.paused = false;
+  state.timerStart = Date.now();
+}
+
+/* ---------- 完成図プレビュー (補助はこれだけ。開いたら記録する) ---------- */
+function openPreview() {
+  if (!state || state.phase !== 'play') return;
+  state.previewViewed = true;
+  state.previewCount++;
+  persistProgress();
+  if (state.usedFallback && state.srcCanvas) {
+    $('previewImg').src = state.srcCanvas.toDataURL();
+  } else {
+    var size = Math.min(1080, imageSizeFor(difficulty));
+    $('previewImg').src = 'https://picsum.photos/id/' + state.imageId + '/' + size + '/' + size;
+  }
+  $('previewModal').hidden = false;
+}
+
+/* ---------- 設定メニュー (開いている間はタイマー停止) ---------- */
+var settingsAutoPaused = false;
+function updateSettingsPauseBtn() {
+  var btn = $('settingsPauseBtn');
+  if (!state || !state.started || state.cleared) { btn.disabled = true; btn.textContent = '一時停止'; return; }
+  btn.disabled = false;
+  btn.textContent = state.paused ? '再開する' : '一時停止する';
+}
+function openSettings() {
+  if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
+  settingsAutoPaused = false;
+  if (timerRunning()) { pauseTimer(); settingsAutoPaused = true; persistProgress(); }
+  updateSettingsPauseBtn();
+  $('settingsDateNext').disabled = playDate >= todayStr;
+  $('settingsDateToday').disabled = playDate === todayStr;
+  $('settingsModal').hidden = false;
+}
+function closeSettings() {
+  $('settingsModal').hidden = true;
+  if (settingsAutoPaused) {
+    settingsAutoPaused = false;
+    resumeTimer();
+    persistProgress();
+  }
+}
+
+/* ---------- やりなおす (進行を消して未開始の箱に戻る) ---------- */
+function restartPuzzle() {
+  if (store.progress[playDate]) delete store.progress[playDate][difficulty];
+  saveStore();
+  uiHome = true;
+  startGame(state.pool);
+}
+
 function wireControls() {
   $('surfaceBtn').addEventListener('click', switchSurface);
   $('zoomInBtn').addEventListener('click', function () { zoomBy(1.3); });
   $('zoomOutBtn').addEventListener('click', function () { zoomBy(1 / 1.3); });
-  $('ghostBtn').addEventListener('click', function () {
-    if (!state || state.phase !== 'play') return;
-    state.ghostOn = !state.ghostOn;
-    $('ghostBtn').setAttribute('aria-pressed', String(state.ghostOn));
-    if (state.ghostOn && !state.ghostUsed) { state.ghostUsed = true; persistProgress(); }
-    draw();
+  $('settingsBtn').addEventListener('click', openSettings);
+  document.querySelectorAll('[data-settings-close]').forEach(function (el) {
+    el.addEventListener('click', closeSettings);
   });
-  $('previewBtn').addEventListener('click', function () {
-    if (!state || state.phase !== 'play') return;
-    state.previewViewed = true;
-    state.previewCount++;
+  $('settingsPauseBtn').addEventListener('click', function () {
+    if (!state || !state.started || state.cleared) return;
+    if (state.paused) resumeTimer(); else pauseTimer();
+    settingsAutoPaused = false; // ユーザーが明示的に切り替えたら自動再開しない
+    updateSettingsPauseBtn();
     persistProgress();
-    if (state.usedFallback && state.srcCanvas) {
-      $('previewImg').src = state.srcCanvas.toDataURL();
-    } else {
-      var size = Math.min(1080, imageSizeFor(difficulty));
-      $('previewImg').src = 'https://picsum.photos/id/' + state.imageId + '/' + size + '/' + size;
-    }
-    $('previewModal').hidden = false;
+    $('timerText').textContent = formatTime(currentElapsed());
   });
-  $('pauseBtn').addEventListener('click', function () {
-    if (!state || state.phase !== 'play' || !state.started || state.cleared) return;
-    state.paused = !state.paused;
-    if (state.paused) { state.elapsedBase = currentElapsed(); }
-    else { state.timerStart = Date.now(); }
-    $('pauseBtn').textContent = state.paused ? '再開' : '一時停止';
-    persistProgress();
+  $('settingsPreviewBtn').addEventListener('click', function () {
+    closeSettings();
+    openPreview();
   });
-  $('edgeBtn').addEventListener('click', function () {
-    if (!state) return;
-    state.edgeHighlight = !state.edgeHighlight;
-    $('edgeBtn').setAttribute('aria-pressed', String(state.edgeHighlight));
+  $('settingsCollectionBtn').addEventListener('click', function () {
+    closeSettings();
+    showCollection();
+  });
+  $('settingsHomeBtn').addEventListener('click', function () {
+    closeSettings();
+    if (state) persistProgress();
+    uiHome = true;
+    renderStartScreen();
+    applyVisibility();
+  });
+  $('settingsRestartBtn').addEventListener('click', function () {
+    $('confirmModal').hidden = false;
+  });
+  $('confirmNoBtn').addEventListener('click', function () { $('confirmModal').hidden = true; });
+  $('confirmYesBtn').addEventListener('click', function () {
+    $('confirmModal').hidden = true;
+    closeSettings();
+    restartPuzzle();
+  });
+  $('settingsDatePrev').addEventListener('click', function () { location.href = '?date=' + addDays(playDate, -1); });
+  $('settingsDateNext').addEventListener('click', function () {
+    if (playDate < todayStr) location.href = '?date=' + addDays(playDate, 1);
+  });
+  $('settingsDateToday').addEventListener('click', function () { location.href = location.pathname; });
+  $('resumePlayBtn').addEventListener('click', function () {
+    uiHome = false;
+    applyVisibility();
+    updateProgressUI();
     draw();
   });
   $('giftBox').addEventListener('click', openBox);
@@ -1140,8 +1278,9 @@ function openBox() {
     state.clusters = initialScatter(playDate, difficulty);
     state.gameStarted = true;
     state.phase = 'play';
-    $('startOverlay').hidden = true;
+    uiHome = false;
     persistProgress();
+    applyVisibility();
     updateProgressUI();
     draw();
     veil.classList.remove('on');
@@ -1149,13 +1288,29 @@ function openBox() {
   }, 300);
 }
 
+/* スタート画面の表示内容: 未開封なら箱、開始済みなら「つづきから」パネル */
+function renderStartScreen() {
+  if (!state) return;
+  var startedAlready = state.gameStarted;
+  $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate).id);
+  $('giftBox').hidden = startedAlready;
+  $('startHint').hidden = startedAlready;
+  $('resumePanel').hidden = !startedAlready;
+  if (startedAlready) {
+    var pos = piecePositions(state.clusters, state.n);
+    var onMat = 0;
+    pos.forEach(function (p) { if (p.surface === 'mat') onMat++; });
+    $('resumeInfo').textContent = difficulty + 'ピース ・ マットに置いたピース ' + onMat + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
+  }
+}
+
 /* ---------- ゲーム開始 ---------- */
 function startGame(pool) {
   state = newGameState(pool);
   buildDifficultySeg();
-  // スタート画面: 未開封なら包装された箱 (柄は日付で決定的) を机の上に置く
-  $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate).id);
-  $('startOverlay').hidden = state.phase !== 'box';
+  if (firstStart) { uiHome = state.phase === 'box'; firstStart = false; }
+  // スタート画面: 未開封なら包装された箱 (柄は日付で決定的)、開始済みなら続きからパネル
+  renderStartScreen();
   $('fadeVeil').classList.remove('on');
   var d = new Date(dateToMs(playDate));
   $('themeDateLabel').textContent = d.getUTCFullYear() + '年' + (d.getUTCMonth() + 1) + '月' + d.getUTCDate() + '日のお題';
@@ -1164,6 +1319,7 @@ function startGame(pool) {
   $('streakNum').textContent = computeStreak();
   $('loadingOverlay').style.display = 'flex';
   $('resumeBanner').hidden = !state.resumed;
+  applyVisibility();
   loadSourceImage().then(function (res) {
     var src = res.img;
     state.usedFallback = res.fallback;

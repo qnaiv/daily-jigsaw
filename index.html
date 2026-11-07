@@ -11,69 +11,68 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header id="appHeader">
-  <div class="header-left">
-    <h1>まいにちジグソー</h1>
-    <span id="streakBadge" class="streak" title="連続クリア日数">🔥 <span id="streakNum">0</span>日</span>
-  </div>
-  <div class="header-right">
-    <button id="datePrevBtn" class="btn" type="button">← 昨日</button>
-    <button id="dateTodayBtn" class="btn" type="button" hidden>今日に戻る</button>
-    <button id="collectionBtn" class="btn btn-accent" type="button">コレクション</button>
-  </div>
-</header>
 
-<main id="playView">
-  <div id="themeBar">
-    <span id="themeDateLabel">読み込み中…</span>
-    <span id="themeCredit" class="credit"></span>
-    <span id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</span>
-  </div>
-
-  <div id="controls">
-    <div id="difficultySeg" class="seg" role="group" aria-label="難易度"></div>
-    <div class="controls-right">
-      <button id="ghostBtn" class="btn toggle" type="button" aria-pressed="false">ゴースト</button>
-      <button id="previewBtn" class="btn" type="button">完成図</button>
-      <button id="pauseBtn" class="btn" type="button">一時停止</button>
-      <button id="surfaceBtn" class="btn btn-accent" type="button">マットを開く</button>
+<!-- スタート画面: 難易度を選ぶのはここだけ。開始済みの難易度は「つづきから」になる -->
+<section id="startView">
+  <div class="start-inner">
+    <div class="start-top">
+      <div class="start-title">
+        <h1>まいにちジグソー</h1>
+        <span id="streakBadge" class="streak" title="連続クリア日数">🔥 <span id="streakNum">0</span>日</span>
+      </div>
+      <div class="start-nav">
+        <button id="datePrevBtn" class="btn btn-glass" type="button">← 昨日</button>
+        <button id="dateTodayBtn" class="btn btn-glass" type="button" hidden>今日に戻る</button>
+        <button id="collectionBtn" class="btn btn-glass" type="button">コレクション</button>
+      </div>
     </div>
-  </div>
 
-  <div id="progressRow">
-    <div class="progress-track"><div id="progressFill"></div></div>
-    <span id="progressText">マットに置いたピース 0 / 0 ・ 塊 0</span>
-    <span id="timerText" class="mono">00:00</span>
-    <span id="movesText" class="mono">0手</span>
-    <span class="zoom-controls">
-      <button id="zoomOutBtn" class="btn btn-small" type="button" aria-label="縮小">−</button>
-      <span id="zoomLabel" class="mono">100%</span>
-      <button id="zoomInBtn" class="btn btn-small" type="button" aria-label="拡大">＋</button>
-    </span>
-  </div>
+    <p class="start-theme">
+      <span id="themeDateLabel">読み込み中…</span>
+      <span id="themeCredit" class="credit"></span>
+      <span id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</span>
+    </p>
 
+    <div id="giftBox" role="button" tabindex="0" aria-label="箱をタップして開封"></div>
+    <p id="startHint" class="start-hint">タップして開封</p>
+
+    <div id="resumePanel" hidden>
+      <p id="resumeInfo" class="resume-info"></p>
+      <button id="resumePlayBtn" class="btn btn-accent btn-big" type="button">つづきから遊ぶ</button>
+    </div>
+
+    <div class="start-difficulty">
+      <span class="start-difficulty-label">難易度</span>
+      <div id="difficultySeg" class="seg" role="group" aria-label="難易度"></div>
+    </div>
+
+    <footer class="start-footer">
+      <span>写真: <a href="https://picsum.photos" target="_blank" rel="noopener">Lorem Picsum</a>（Unsplash出典）</span>
+      <a href="https://github.com/qnaiv/daily-jigsaw" target="_blank" rel="noopener">GitHub</a>
+    </footer>
+  </div>
+</section>
+
+<!-- プレイ画面: 画面全体が机。常時表示は floating の最小要素だけ -->
+<main id="playView" hidden>
   <div id="stageWrap">
     <canvas id="stage"></canvas>
     <div id="dropZone" hidden>ここで離すと <span id="dropZoneLabel">マット</span> へ移動</div>
     <div id="surfaceLabel">作業机</div>
-    <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" class="btn btn-small" type="button">×</button></div>
-    <div id="startOverlay" hidden>
-      <div id="giftBox" role="button" tabindex="0" aria-label="箱をタップして開封"></div>
-      <p class="start-hint">タップして開封</p>
+    <div id="hud">
+      <span id="progressText">マット 0 / 0</span>
+      <span id="timerText" class="mono">00:00</span>
     </div>
+    <button id="settingsBtn" class="fab" type="button" aria-label="設定">⚙</button>
+    <button id="surfaceBtn" class="fab fab-surface" type="button">マットを開く</button>
+    <div id="zoomCtl">
+      <button id="zoomOutBtn" class="zoom-btn" type="button" aria-label="縮小">−</button>
+      <span id="zoomLabel" class="mono">100%</span>
+      <button id="zoomInBtn" class="zoom-btn" type="button" aria-label="拡大">＋</button>
+    </div>
+    <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" type="button" aria-label="閉じる">×</button></div>
     <div id="loadingOverlay">読み込み中…</div>
-    <div id="fadeVeil"></div>
   </div>
-
-  <div id="bottomBar">
-    <button id="edgeBtn" class="btn toggle" type="button" aria-pressed="false">ふちハイライト</button>
-    <span class="bar-hint">机の上のふちピースだけを目立たせます</span>
-  </div>
-
-  <footer id="appFooter">
-    <span>写真: <a href="https://picsum.photos" target="_blank" rel="noopener">Lorem Picsum</a>（Unsplash出典）</span>
-    <a href="https://github.com/qnaiv/daily-jigsaw" target="_blank" rel="noopener">GitHub</a>
-  </footer>
 </main>
 
 <section id="collectionView" hidden>
@@ -85,6 +84,41 @@
   <div id="collectionEmpty" class="empty" hidden>まだコレクションがありません。今日のパズルをクリアしよう。</div>
   <div id="collectionGrid" class="grid"></div>
 </section>
+
+<!-- 設定メニュー: プレイ中の操作はここに集約。開いている間はタイマー停止 -->
+<div id="settingsModal" class="modal" hidden>
+  <div class="modal-backdrop" data-settings-close></div>
+  <div class="modal-body settings-body">
+    <h2>設定</h2>
+    <div class="settings-list">
+      <button id="settingsPauseBtn" class="btn settings-item" type="button">一時停止</button>
+      <button id="settingsPreviewBtn" class="btn settings-item" type="button">完成図を見る</button>
+      <button id="settingsCollectionBtn" class="btn settings-item" type="button">コレクション</button>
+      <button id="settingsHomeBtn" class="btn settings-item" type="button">スタート画面に戻る</button>
+      <div class="settings-date">
+        <span class="settings-date-label">日付を変える</span>
+        <div class="settings-date-btns">
+          <button id="settingsDatePrev" class="btn" type="button">← 前日</button>
+          <button id="settingsDateToday" class="btn" type="button">今日</button>
+          <button id="settingsDateNext" class="btn" type="button">翌日 →</button>
+        </div>
+      </div>
+      <button id="settingsRestartBtn" class="btn settings-item danger" type="button">やりなおす</button>
+    </div>
+    <button class="btn modal-close" type="button" data-settings-close>閉じる</button>
+  </div>
+</div>
+
+<div id="confirmModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body result-body">
+    <p id="confirmText">この難易度の進行を消して、はじめからやりなおしますか？</p>
+    <div class="result-actions">
+      <button id="confirmYesBtn" class="btn danger-btn" type="button">やりなおす</button>
+      <button id="confirmNoBtn" class="btn" type="button">やめる</button>
+    </div>
+  </div>
+</div>
 
 <div id="previewModal" class="modal" hidden>
   <div class="modal-backdrop" data-close></div>
@@ -120,6 +154,7 @@
   </div>
 </div>
 
+<div id="fadeVeil"></div>
 <div id="confettiWrap" hidden><canvas id="confetti"></canvas></div>
 
 <script src="app.js"></script>
