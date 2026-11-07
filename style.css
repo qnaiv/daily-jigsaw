@@ -471,6 +471,28 @@ button { font: inherit; cursor: pointer; }
 .settings-theme-btns .btn { flex: 1; padding: 6px 4px; }
 .theme-btn.active { background: var(--accent); border-color: var(--accent-dark); color: var(--accent-ink); font-weight: 700; }
 
+/* サウンド設定 (BGM/SE): テーマ節と同じ区切り調で、行はラベル + 操作子 */
+.settings-audio, .settings-credits { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 44px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.settings-row input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent); flex: none; cursor: pointer; }
+.settings-row input[type="range"] { width: 55%; accent-color: var(--accent); cursor: pointer; }
+.credit-list { margin: 2px 0 0; padding: 0; list-style: none; font-size: 11.5px; line-height: 1.65; color: var(--muted); text-align: left; }
+
+/* BGM の曲名トースト: 曲が替わるたびに右下へ小さく出て、数秒でフェードアウト。
+ * 右下の表面切替ボタンと重ならないよう、その上に置く。クレジット表示を兼ねる。 */
+#bgmToast {
+  position: absolute; right: 10px; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 6;
+  max-width: 72vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: rgba(24,17,10,.55); color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 999px;
+  padding: 4px 13px; font-size: 11.5px; letter-spacing: .03em; pointer-events: none;
+  opacity: 0; transition: opacity .6s ease;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+#bgmToast.show { opacity: 1; }
+
 #confettiWrap { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
 #confettiWrap[hidden] { display: none; }
 #confetti { width: 100%; height: 100%; display: block; }

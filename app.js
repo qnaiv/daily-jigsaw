@@ -460,19 +460,52 @@ function minimapLayout(rect, maxW, maxH) {
 }
 
 /* ピースの立体感 (bitmap px): 「わずかな厚み」と縁のベベル幅をセルサイズから決める。
- * 厚みはセル比 約2.5% が目安。最低でも 1px 程度は見えるようにするが、セルが
- * 小さい難易度 (2025ピース等) では比率が膨らんで汚く見えないよう最小限に抑え、
- * 大セルでも厚くしすぎない (最大 5px)。ベベルも同方針 (1px〜6px)。
+ * 比率はユーザーがスライダープレビューで決めた確定値 (厚み 3.7% / ベベル幅 2.2%)。
+ * 厚みは大セルで 3.7% が効くよう最大 8px まで許すが、セルが小さい難易度
+ * (2025ピース等) では比率が膨らんで汚く見えないよう最小限 (約1px) に抑える。
+ * ベベルは 1px〜6px。濃さ (0.7倍) と側面の暗さ (0.41) は描画側の定数で持つ。
  * 返り値: { thickness: 側面の押し出し量 (下方向), bevel: 縁の陰影の幅 } */
 function pieceRelief(cellPx) {
   if (!(cellPx > 0)) return { thickness: 0, bevel: 0 };
-  var thickness = cellPx * 0.025;
+  var thickness = cellPx * 0.037;
   if (thickness < 1) thickness = Math.min(1, cellPx * 0.04); // 小セルでは最小限 (セル比4%まで)
-  if (thickness > 5) thickness = 5;
-  var bevel = cellPx * 0.035;
+  if (thickness > 8) thickness = 8;
+  var bevel = cellPx * 0.022;
   if (bevel < 1) bevel = 1;
   if (bevel > 6) bevel = 6;
   return { thickness: thickness, bevel: bevel };
+}
+
+/* ---- BGM プレイリスト (純粋ロジック) ----
+ * 再生はブラウザ側 (HTMLAudioElement) の責務だが、「どの順で・何回繰り返すか」
+ * の規則はここに切り出してテスト可能にする。
+ * - シャッフルは「全曲一巡するまで重複なし」: shuffledOrder が 0..count-1 の
+ *   順列を返し、UI 側はその順に再生し切ったら次の順列を作る。
+ * - 一巡の継ぎ目で同じ曲が連続しないよう、nextShuffleOrder は直前に再生した
+ *   曲 (lastPlayed) が先頭に来たら 2 番目と入れ替える (曲数 2 以上のとき)。
+ * - 短い曲 (90 秒未満) は 2 回続けて再生してから次へ進む (trackPlays)。
+ *   長さが取れない曲 (0 以下・NaN) は短い扱いにしない (無限ループ防止)。 */
+var BGM_SHORT_TRACK_SEC = 90;
+function isShortTrack(durationSec) {
+  return typeof durationSec === 'number' && durationSec > 0 && durationSec < BGM_SHORT_TRACK_SEC;
+}
+function trackPlays(durationSec) { return isShortTrack(durationSec) ? 2 : 1; }
+function shuffledOrder(count, rng) {
+  var order = [];
+  for (var i = 0; i < count; i++) order.push(i);
+  for (var j = count - 1; j > 0; j--) {
+    var k = Math.floor(rng() * (j + 1));
+    if (k < 0) k = 0; if (k > j) k = j; // rng が範囲外を返しても壊れないように
+    var t = order[j]; order[j] = order[k]; order[k] = t;
+  }
+  return order;
+}
+function nextShuffleOrder(count, rng, lastPlayed) {
+  var order = shuffledOrder(count, rng);
+  if (count > 1 && typeof lastPlayed === 'number' && order[0] === lastPlayed) {
+    var t = order[0]; order[0] = order[1]; order[1] = t;
+  }
+  return order;
 }
 
 /* 保存済み進捗が「開始済み」かどうか。
@@ -521,7 +554,9 @@ var PureLogic = {
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
   woodTileOrigin: woodTileOrigin, deskBgKey: deskBgKey, isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout,
-  pieceRelief: pieceRelief
+  pieceRelief: pieceRelief,
+  BGM_SHORT_TRACK_SEC: BGM_SHORT_TRACK_SEC, isShortTrack: isShortTrack, trackPlays: trackPlays,
+  shuffledOrder: shuffledOrder, nextShuffleOrder: nextShuffleOrder
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
 
@@ -538,7 +573,7 @@ function loadStore() {
     var raw = localStorage.getItem(STORE_KEY);
     if (raw) { var s = JSON.parse(raw); if (s && s.progress && s.records) return s; }
   } catch (e) { /* ignore */ }
-  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut' };
+  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true };
 }
 var store = loadStore();
 function saveStore() {
@@ -612,6 +647,232 @@ function setUiTheme(name) {
   saveStore();
   applyTheme();
 }
+/* ---------- サウンド (BGM / SE) ----------
+ * 設定はテーマと同じ流儀で store に保存する (bgmOn / bgmVolume / seOn)。
+ * 旧バージョンの保存データにはキーが無いので、その場合は既定値を使う。 */
+var bgmOn = store.bgmOn !== false;
+var bgmVolume = (typeof store.bgmVolume === 'number' && isFinite(store.bgmVolume))
+  ? Math.min(1, Math.max(0, store.bgmVolume)) : 0.7;
+var seOn = store.seOn !== false;
+function saveAudioSettings() {
+  store.bgmOn = bgmOn;
+  store.bgmVolume = bgmVolume;
+  store.seOn = seOn;
+  saveStore();
+}
+
+/* ---- BGM ----
+ * プレイリスト 13 曲 (合計 40:56)。選曲 UI は持たず、シャッフルで
+ * 全曲一巡するまで重複なく再生する (順列の規則は PureLogic)。
+ * 短い曲 (90 秒未満) は 2 回続けて再生してから次へ進む。
+ * 再生開始は最初のユーザー操作のあと (自動再生ポリシー)。曲が替わるたびに
+ * 右下へ曲名と作者を小さく出して数秒で消す (クレジット表示を兼ねる)。 */
+var BGM_TRACKS = [
+  { file: 'meditation-impromptu-01.mp3', title: 'Meditation Impromptu 01', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
+  { file: 'meditation-impromptu-02.mp3', title: 'Meditation Impromptu 02', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
+  { file: 'meditation-impromptu-03.mp3', title: 'Meditation Impromptu 03', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
+  { file: 'when-time-called-me-darling.mp3', title: 'When Time Called Me Darling', artist: 'HoliznaCC0', license: 'CC0' },
+  { file: 'still-life.mp3', title: 'Still Life', artist: 'HoliznaCC0', license: 'CC0' },
+  { file: 'birds.mp3', title: 'Birds', artist: 'HoliznaCC0', license: 'CC0' },
+  { file: 'one-night-in-france.mp3', title: 'One Night In France', artist: 'HoliznaCC0', license: 'CC0' },
+  { file: 'break-from-reality.mp3', title: 'Break From Reality', artist: 'HoliznaCC0', license: 'CC0' },
+  { file: 'orchid.mp3', title: 'Orchid', artist: 'HoliznaCC0', license: 'CC0' },
+  { file: 'tranquil-mindscape.mp3', title: 'Tranquil Mindscape', artist: 'HoliznaCC0', license: 'CC0' },
+  { file: 'wetlands.mp3', title: 'Wetlands', artist: 'HoliznaCC0', license: 'CC0' },
+  { file: 'coffee-lounge.mp3', title: 'Coffee Lounge', artist: 'PeriTune', license: 'CC BY 4.0' },
+  { file: 'positive3.mp3', title: 'Positive3', artist: 'PeriTune', license: 'CC BY 4.0' }
+];
+var bgm = {
+  audio: null, order: [], pos: 0, current: -1, playsLeft: 1,
+  started: false, hiddenPaused: false, toastTimer: null, errorStreak: 0
+};
+function bgmEnsure() {
+  if (bgm.audio) return bgm.audio;
+  var a = new Audio();
+  a.preload = 'auto';
+  a.volume = bgmVolume;
+  a.addEventListener('loadedmetadata', function () {
+    bgm.playsLeft = trackPlays(a.duration); // 短い曲は 2 回 (長さ確定後に決める)
+  });
+  a.addEventListener('ended', function () {
+    bgm.playsLeft--;
+    if (bgm.playsLeft > 0) { // 短い曲の 2 回目: 同じ曲をもう一度
+      a.currentTime = 0;
+      bgmPlayPromise(a.play());
+    } else {
+      bgmNext();
+    }
+  });
+  a.addEventListener('playing', function () { bgm.errorStreak = 0; });
+  a.addEventListener('error', function () {
+    // 読めない曲で止まらないよう次へ進む。ただし全曲読めない場合は
+    // 一巡ぶん試したところで諦める (次へ進み続ける無限ループにしない)
+    if (!bgm.started) return;
+    bgm.errorStreak++;
+    if (bgm.errorStreak < BGM_TRACKS.length) bgmNext();
+  });
+  bgm.audio = a;
+  return a;
+}
+function bgmPlayPromise(p) {
+  if (p && p.catch) p.catch(function () { /* 自動再生拒否などは黙って無視 */ });
+}
+function bgmShowToast(track) {
+  var el = $('bgmToast');
+  if (!el) return;
+  el.textContent = '♪ ' + track.title + ' — ' + track.artist;
+  el.classList.add('show');
+  if (bgm.toastTimer) clearTimeout(bgm.toastTimer);
+  bgm.toastTimer = setTimeout(function () { el.classList.remove('show'); }, 4500);
+}
+function bgmPlayTrack(idx) {
+  var a = bgmEnsure();
+  bgm.current = idx;
+  bgm.playsLeft = 1; // loadedmetadata で短い曲なら 2 に更新される
+  a.src = 'audio/' + BGM_TRACKS[idx].file;
+  bgmShowToast(BGM_TRACKS[idx]);
+  bgmPlayPromise(a.play());
+}
+function bgmNext() {
+  bgm.pos++;
+  if (bgm.pos >= bgm.order.length) {
+    bgm.order = nextShuffleOrder(BGM_TRACKS.length, Math.random, bgm.current);
+    bgm.pos = 0;
+  }
+  bgmPlayTrack(bgm.order[bgm.pos]);
+}
+/* 最初のユーザー操作から呼ばれる。以後の曲送りは 'ended' が駆動する */
+function bgmStart() {
+  if (bgm.started || !bgmOn) return;
+  bgm.started = true;
+  bgm.order = nextShuffleOrder(BGM_TRACKS.length, Math.random, -1);
+  bgm.pos = 0;
+  bgmPlayTrack(bgm.order[0]);
+}
+function bgmApplySettings() {
+  var a = bgmEnsure();
+  a.volume = bgmVolume;
+  if (!bgmOn) {
+    a.pause();
+  } else if (!bgm.started) {
+    bgmStart(); // 設定シートの操作自体がユーザー操作なので開始してよい
+  } else if (a.paused && !document.hidden) {
+    bgmPlayPromise(a.play()); // オフ→オンに戻したら再開する
+  }
+}
+/* タブが隠れたら一時停止し、戻ったら再開する (設定でオフのときは再開しない) */
+document.addEventListener('visibilitychange', function () {
+  var a = bgm.audio;
+  if (!a || !bgm.started) return;
+  if (document.hidden) {
+    if (!a.paused) { a.pause(); bgm.hiddenPaused = true; }
+  } else if (bgm.hiddenPaused) {
+    bgm.hiddenPaused = false;
+    if (bgmOn) bgmPlayPromise(a.play());
+  }
+});
+
+/* ---- SE (全て Web Audio 合成。音源ファイルなし) ----
+ * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
+ * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
+ * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
+var seCtx = null, seMaster = null, seNoiseBuf = null;
+function ensureSeContext() {
+  if (seCtx) {
+    if (seCtx.state === 'suspended') seCtx.resume();
+    return;
+  }
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    seCtx = new AC();
+    seMaster = seCtx.createGain();
+    seMaster.gain.value = 0.22; // マスターは控えめ (0.15〜0.3 の範囲)
+    seMaster.connect(seCtx.destination);
+  } catch (e) { seCtx = null; }
+}
+function seNoiseBuffer() {
+  if (seNoiseBuf) return seNoiseBuf;
+  var len = Math.max(1, Math.floor(seCtx.sampleRate * 0.5));
+  var buf = seCtx.createBuffer(1, len, seCtx.sampleRate);
+  var d = buf.getChannelData(0);
+  for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  seNoiseBuf = buf;
+  return buf;
+}
+/* ノイズを帯域フィルタ越しに鳴らす。freq は [開始, 終了] のスイープ */
+function seNoise(dur, type, freq, peak, delay) {
+  if (!seCtx) return;
+  var t0 = seCtx.currentTime + (delay || 0);
+  var src = seCtx.createBufferSource();
+  src.buffer = seNoiseBuffer();
+  src.loop = true;
+  var f = seCtx.createBiquadFilter();
+  f.type = type;
+  f.frequency.setValueAtTime(freq[0], t0);
+  f.frequency.exponentialRampToValueAtTime(Math.max(20, freq[1]), t0 + dur);
+  f.Q.value = 1.1;
+  var g = seCtx.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(peak, t0 + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  src.connect(f); f.connect(g); g.connect(seMaster);
+  src.start(t0); src.stop(t0 + dur + 0.05);
+}
+/* 単音。freq は [開始, 終了] (ドロップ表現) か単一数値 */
+function seTone(freq, dur, peak, type, delay) {
+  if (!seCtx) return;
+  var t0 = seCtx.currentTime + (delay || 0);
+  var o = seCtx.createOscillator();
+  o.type = type || 'sine';
+  var f0 = Array.isArray(freq) ? freq[0] : freq;
+  var f1 = Array.isArray(freq) ? freq[1] : freq;
+  o.frequency.setValueAtTime(f0, t0);
+  if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t0 + dur * 0.8);
+  var g = seCtx.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(peak, t0 + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g); g.connect(seMaster);
+  o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function seReady() { return seOn && !!seCtx; }
+function seGrab() { // 紙の「サッ」: ノイズのバンドパスを 1200→2400Hz へ上げる
+  if (!seReady()) return;
+  seNoise(0.1, 'bandpass', [1200, 2400], 0.5);
+}
+function seDrop() { // 木の「トッ」: サインのピッチドロップ + ローパスの木の当たり
+  if (!seReady()) return;
+  seTone([180, 70], 0.12, 0.6);
+  seNoise(0.05, 'lowpass', [900, 500], 0.22);
+}
+function seMerge() { // クリック + G5→C6 の 2 音チャイム
+  if (!seReady()) return;
+  seNoise(0.03, 'highpass', [3000, 3000], 0.3);
+  seTone(784, 0.22, 0.22);
+  seTone(1046.5, 0.3, 0.22, 'sine', 0.07);
+}
+function seClear() { // オルゴール風アルペジオ C5-E5-G5-C6 (倍音を薄く重ねる)
+  if (!seReady()) return;
+  [523.25, 659.25, 783.99, 1046.5].forEach(function (fq, i) {
+    seTone(fq, 0.55, 0.26, 'sine', i * 0.13);
+    seTone(fq * 2, 0.3, 0.06, 'sine', i * 0.13);
+  });
+}
+function seLid() { // 紙の擦れ (バンドパス 400→1400Hz, 0.25s) + 小さなノック
+  if (!seReady()) return;
+  seNoise(0.25, 'bandpass', [400, 1400], 0.4);
+  seTone([220, 90], 0.07, 0.28, 'sine', 0.22);
+}
+/* 最初のユーザー操作 (キャプチャ段階で受けるので、ステージ側の
+ * pointerdown ハンドラより先に AudioContext の生成と BGM 開始が走る) */
+function onFirstUserGesture() {
+  ensureSeContext();
+  if (bgmOn && !bgm.started) bgmStart();
+}
+document.addEventListener('pointerdown', onFirstUserGesture, true);
+document.addEventListener('keydown', onFirstUserGesture, true);
+
 function progressFor(date, pieces) {
   if (!store.progress[date]) store.progress[date] = {};
   if (!store.progress[date][pieces]) {
@@ -741,10 +1002,13 @@ function pieceSideColor(id, cellPx) {
     var r = 0, g = 0, b = 0, cnt = 0;
     for (var i = 0; i + 2 < data.length; i += step) { r += data[i]; g += data[i + 1]; b += data[i + 2]; cnt++; }
     if (!cnt) return fallback;
-    var f = 0.42; // 側面は上面より暗く
+    var f = 0.41; // 側面は上面より暗く (プレビューで決めた確定値)
     return 'rgb(' + Math.round(r / cnt * f) + ',' + Math.round(g / cnt * f) + ',' + Math.round(b / cnt * f) + ')';
   } catch (e) { return fallback; }
 }
+/* ベベルの濃さ: ハイライト/影の基準 alpha に掛ける強さ係数
+ * (プレビューで決めた確定値 0.7倍 → 白 0.18*0.7 ≒ 0.126 / 黒 0.22*0.7 ≒ 0.154)。 */
+var PIECE_BEVEL_STRENGTH = 0.7;
 /* 縁のベベル: 光は左上から (机の接影の向きとも揃える)。輪郭でクリップした
  * 内側に、輪郭をずらして太く描くことで反対側の縁にだけ帯を残す古典的な方法で、
  * 上・左の縁に薄いハイライト、下・右の縁に薄い影を入れる。幅は pieceRelief の bevel。 */
@@ -756,13 +1020,13 @@ function strokePieceBevel(ctx, path, bevel) {
   // ハイライト: 輪郭を下・右へずらして描く → 上・左の縁の内側に帯が残る
   ctx.save();
   ctx.translate(bevel * 0.75, bevel * 0.75);
-  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.strokeStyle = 'rgba(255,255,255,' + (0.18 * PIECE_BEVEL_STRENGTH).toFixed(3) + ')';
   ctx.stroke(path);
   ctx.restore();
   // 影: 輪郭を上・左へずらして描く → 下・右の縁の内側に帯が残る
   ctx.save();
   ctx.translate(-bevel * 0.75, -bevel * 0.75);
-  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+  ctx.strokeStyle = 'rgba(0,0,0,' + (0.22 * PIECE_BEVEL_STRENGTH).toFixed(3) + ')';
   ctx.stroke(path);
   ctx.restore();
   ctx.restore();
@@ -872,8 +1136,31 @@ function screenToWorld(sx, sy) { var v = view(); return { x: (sx - v.tx) / v.sca
  * オブジェクトの setTransform はブラウザ差で実効スケールがずれることがあり
  * (マットでピンチを繰り返したあと机の継ぎ目が太く崩れるバグの原因)、
  * テクスチャ側に可変状態を持たせないことで机とマットの状態干渉も断つ。
- * タイルのキャンバス自体はテーマごとにキャッシュし、読み取り専用で共有する。 */
+ * タイルのキャンバス自体はテーマごとにキャッシュし、読み取り専用で共有する。
+ *
+ * タイルの中身は「横長の板の並び」として手続き描画する (ピース厚みプレビュー
+ * の机の絵柄に合わせた描法): 板ごとに基準トーンを穏やかに変え、板の中は
+ * 上がわずかに明るく下へ柔らかく落ちる縦グラデーション、木目は少なく薄く、
+ * 板の境目は硬い線でなく柔らかい影の帯で表す。板の高さの合計はタイル寸法
+ * 512 に一致させ、上下の継ぎ目でも板のリズムが切れないようにする。 */
 var woodTiles = {}; // テーマごとに生成してキャッシュ (模様の配置は全テーマ共通シード)
+/* パレットの hex 色を混ぜる/明暗を付けるための小さなヘルパー */
+function woodHexRgb(hex) {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+function woodMixRgb(a, b, t) {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+function woodShadeStr(rgb, f, alpha) {
+  var r = Math.max(0, Math.min(255, Math.round(rgb[0] * f)));
+  var g = Math.max(0, Math.min(255, Math.round(rgb[1] * f)));
+  var b = Math.max(0, Math.min(255, Math.round(rgb[2] * f)));
+  return alpha == null ? 'rgb(' + r + ',' + g + ',' + b + ')' : 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+/* 3ストップのグラデーション (従来タイルの色づけ) を位置 t (0..1) でサンプルする */
+function woodSampleStops(stopsRgb, t) {
+  return t < 0.5 ? woodMixRgb(stopsRgb[0], stopsRgb[1], t * 2) : woodMixRgb(stopsRgb[1], stopsRgb[2], (t - 0.5) * 2);
+}
 function getWoodTile() {
   var key = uiTheme;
   if (woodTiles[key]) return woodTiles[key];
@@ -881,38 +1168,80 @@ function getWoodTile() {
   var cv = document.createElement('canvas');
   cv.width = 512; cv.height = 512;
   var c = cv.getContext('2d');
-  var rng = rngFromString('woodgrain-v1');
-  var grad = c.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0, pal.stops[0]);
-  grad.addColorStop(0.5, pal.stops[1]);
-  grad.addColorStop(1, pal.stops[2]);
-  c.fillStyle = grad;
-  c.fillRect(0, 0, 512, 512);
-  // 木目: 横方向に流れる波状の線
+  var rng = rngFromString('woodplanks-v1');
+  var stopsRgb = pal.stops.map(woodHexRgb);
   var gr = pal.grain;
-  for (var i = 0; i < 80; i++) {
-    var y0 = rng() * 512, amp = 1 + rng() * 3, per = 120 + rng() * 220, ph = rng() * 6.28;
-    c.beginPath();
-    for (var x = 0; x <= 512; x += 8) {
-      var y = y0 + Math.sin(x / per * 6.28 + ph) * amp;
-      if (x === 0) c.moveTo(x, y); else c.lineTo(x, y);
+  var rows = [128, 104, 152, 128]; // 板の高さ (合計 512 = タイル寸法)
+  var seamYs = [];
+  var y = 0;
+  for (var ri = 0; ri < rows.length; ri++) {
+    var ph = rows[ri];
+    seamYs.push(y);
+    // 板ごとの基準トーン: 全体の色グラデーションを板の中心でサンプルし、
+    // シード付きで穏やかにばらつかせる (±5%)
+    var base = woodSampleStops(stopsRgb, (y + ph / 2) / 512);
+    var tone = 0.95 + rng() * 0.10;
+    // 板内の陰影: 上がわずかに明るく、下へ向けて柔らかく落ちる
+    var grad = c.createLinearGradient(0, y, 0, y + ph);
+    grad.addColorStop(0, woodShadeStr(base, tone * 1.07));
+    grad.addColorStop(0.55, woodShadeStr(base, tone));
+    grad.addColorStop(1, woodShadeStr(base, tone * 0.90));
+    c.fillStyle = grad;
+    c.fillRect(0, y, 512, ph);
+    c.save();
+    c.beginPath(); c.rect(0, y, 512, ph); c.clip();
+    // 木目: 横に流れる柔らかい波線 (少なく・薄く)。周期は 512 の約数にして
+    // 横方向のタイル継ぎ目でも線がつながるようにする
+    for (var i = 0; i < 7; i++) {
+      var gy = y + rng() * ph, amp = 0.8 + rng() * 2.4;
+      var per = 512 / (2 + Math.floor(rng() * 4)), phase = rng() * 6.28;
+      c.beginPath();
+      for (var x = 0; x <= 512; x += 8) {
+        var yy = gy + Math.sin(x / per * 6.28 + phase) * amp;
+        if (x === 0) c.moveTo(x, yy); else c.lineTo(x, yy);
+      }
+      c.strokeStyle = 'rgba(' + (gr[0] + (rng() * (gr[1] - gr[0])) | 0) + ',' + (gr[2] + (rng() * (gr[3] - gr[2])) | 0) + ',' + (gr[4] + (rng() * (gr[5] - gr[4])) | 0) + ',' + (0.03 + rng() * 0.07).toFixed(3) + ')';
+      c.lineWidth = 0.8 + rng() * 2.4;
+      c.stroke();
     }
-    c.strokeStyle = 'rgba(' + (gr[0] + (rng() * (gr[1] - gr[0])) | 0) + ',' + (gr[2] + (rng() * (gr[3] - gr[2])) | 0) + ',' + (gr[4] + (rng() * (gr[5] - gr[4])) | 0) + ',' + (0.05 + rng() * 0.13).toFixed(3) + ')';
-    c.lineWidth = 0.6 + rng() * 2.2;
-    c.stroke();
+    // 幅の広い柔らかい色の流れ (絵画的なムラ) を板ごとに1本、薄く入れる
+    var sy = y + rng() * ph, sh = 10 + rng() * 22, sf = rng() < 0.6 ? 0.82 : 1.14, sa = 0.05 + rng() * 0.05;
+    var sg = c.createLinearGradient(0, sy - sh / 2, 0, sy + sh / 2);
+    sg.addColorStop(0, woodShadeStr(base, sf, 0));
+    sg.addColorStop(0.5, woodShadeStr(base, sf, sa));
+    sg.addColorStop(1, woodShadeStr(base, sf, 0));
+    c.fillStyle = sg;
+    c.fillRect(0, y, 512, ph);
+    // 板の縦継ぎ (突き付け): 長い板のつなぎ目を板ごとに1か所、柔らかい影で
+    var jx = 48 + rng() * 416;
+    var jg = c.createLinearGradient(jx - 3, 0, jx + 3, 0);
+    jg.addColorStop(0, woodShadeStr(base, 0.72, 0));
+    jg.addColorStop(0.5, woodShadeStr(base, 0.72, 0.28));
+    jg.addColorStop(1, woodShadeStr(base, 0.72, 0));
+    c.fillStyle = jg;
+    c.fillRect(jx - 3, y, 6, ph);
+    c.restore();
+    y += ph;
   }
-  // 板の継ぎ目
-  [0, 170, 341].forEach(function (y) {
-    c.fillStyle = pal.seamDark; c.fillRect(0, y, 512, 2);
-    c.fillStyle = pal.seamLight; c.fillRect(0, y + 2, 512, 1);
+  // 板と板の継ぎ目: 硬い線ではなく、境目を中心にした柔らかい影の帯 + 下側に細い光。
+  // y=512 は y=0 と同じ継ぎ目の続き (タイルの上下がつながるため両端に描く)
+  seamYs.push(512);
+  seamYs.forEach(function (sy2) {
+    var seam = c.createLinearGradient(0, sy2 - 4, 0, sy2 + 4);
+    seam.addColorStop(0, woodShadeStr(stopsRgb[1], 1, 0));
+    seam.addColorStop(0.5, pal.seamDark);
+    seam.addColorStop(1, woodShadeStr(stopsRgb[1], 1, 0));
+    c.fillStyle = seam;
+    c.fillRect(0, sy2 - 4, 512, 8);
+    c.fillStyle = pal.seamLight; c.fillRect(0, sy2 + 1, 512, 1);
   });
-  // 節 (ふし)
-  for (var k = 0; k < 3; k++) {
+  // 節 (ふし): 控えめに2つ
+  for (var k = 0; k < 2; k++) {
     var kx = 60 + rng() * 390, ky = 60 + rng() * 390;
     for (var r = 9; r > 1; r -= 2) {
       c.beginPath();
       c.ellipse(kx, ky, r * 1.5, r, 0.3, 0, 6.29);
-      c.strokeStyle = 'rgba(' + pal.knot + ',' + (0.10 + (9 - r) * 0.02).toFixed(3) + ')';
+      c.strokeStyle = 'rgba(' + pal.knot + ',' + (0.08 + (9 - r) * 0.016).toFixed(3) + ')';
       c.lineWidth = 1.4;
       c.stroke();
     }
@@ -1365,6 +1694,7 @@ stage.addEventListener('pointerdown', function (ev) {
         return { cluster: c, offX: c.gx - hit.cluster.gx, offY: c.gy - hit.cluster.gy };
       });
     }
+    seGrab(); // 掴んだ音 (紙の「サッ」)
     startTimerOnce();
     showDropZone(true);
   } else if (state.cleared) {
@@ -1498,13 +1828,14 @@ function settleDrag() {
   var wasMoved = drag.moved;
   drag = null;
   if (!wasMoved) { draw(); return; }
+  seDrop(); // 置いた音 (木の「トッ」)
   state.moves++;
   if (group && group.length > 1) { settleGroupDrag(cl, group); return; }
   // 合体処理 (相対スナップ→グリッド吸着→吸着後に正しい相対位置なら確実に合体、まで一括)
   var others = state.clusters.filter(function (c) { return c !== cl; });
   var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: cl.gx, gy: cl.gy }, state.n);
   state.clusters = res.clusters;
-  if (res.merged) startMergeFlash(res.cluster.pieces);
+  if (res.merged) { startMergeFlash(res.cluster.pieces); seMerge(); } // 合体のクリック + チャイム
   afterBoardChange();
 }
 /* 範囲選択のグループ確定:
@@ -1536,7 +1867,7 @@ function settleGroupDrag(leader, group) {
     if (r2.merged) flash = (flash || []).concat(r2.cluster.pieces);
   }
   state.clusters = all;
-  if (flash) startMergeFlash(flash);
+  if (flash) { startMergeFlash(flash); seMerge(); } // グループ側で合体した場合も同じ音
   afterBoardChange();
 }
 function afterBoardChange() {
@@ -1639,6 +1970,7 @@ function updateProgressUI() {
 
 /* ---------- クリア処理 ---------- */
 function onClear() {
+  seClear(); // クリアのオルゴール風アルペジオ
   state.cleared = true;
   state.elapsedBase = currentElapsed();
   var elapsed = state.elapsedBase;
@@ -1957,6 +2289,28 @@ function wireControls() {
   document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
     b.addEventListener('click', function () { setUiTheme(b.getAttribute('data-theme-opt')); });
   });
+  /* サウンド設定: 保存済みの値をコントロールへ反映し、変更は即保存 + 即適用。
+   * クレジット一覧は BGM_TRACKS から生成する (曲名・作者・ライセンス)。 */
+  $('bgmToggle').checked = bgmOn;
+  $('bgmVolume').value = Math.round(bgmVolume * 100);
+  $('seToggle').checked = seOn;
+  $('bgmCredits').innerHTML = BGM_TRACKS.map(function (t) {
+    return '<li>' + t.title + ' — ' + t.artist + '（' + t.license + '）</li>';
+  }).join('');
+  $('bgmToggle').addEventListener('change', function () {
+    bgmOn = $('bgmToggle').checked;
+    saveAudioSettings();
+    bgmApplySettings();
+  });
+  $('bgmVolume').addEventListener('input', function () {
+    bgmVolume = $('bgmVolume').value / 100;
+    saveAudioSettings();
+    bgmApplySettings();
+  });
+  $('seToggle').addEventListener('change', function () {
+    seOn = $('seToggle').checked;
+    saveAudioSettings();
+  });
   document.querySelectorAll('[data-settings-close]').forEach(function (el) {
     el.addEventListener('click', closeSettings);
   });
@@ -2136,6 +2490,7 @@ function giftBoxSvg(patternId) {
 function openBox() {
   if (!state || state.phase !== 'box' || state.opening) return;
   state.opening = true; // 開封アニメーション中の連打を無効化 (CSS 側でも pointer-events: none)
+  seLid(); // 蓋が開く音 (紙の擦れ + ノック)
   var box = $('giftBox');
   box.classList.add('opening');
   var veil = $('fadeVeil');

@@ -460,21 +460,23 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 }
 
 /* 18. ピースの立体感 (pieceRelief)
- * 厚みはセル比 約2.5% が目安で、小セルでは最小限・大セルでも厚くしすぎない。
- * ベベルも 1px〜6px の範囲に収まる。見た目だけの量で、判定には使わない。 */
+ * 厚みはセル比 3.7%・ベベル幅 2.2% (スライダープレビューで決めた確定値)。
+ * 小セルでは最小限に抑え、厚みは最大 8px・ベベルは 1px〜6px に収まる。
+ * 見た目だけの量で、判定には使わない。 */
 {
   ok(eq(L.pieceRelief(0), { thickness: 0, bevel: 0 }), '立体感: cellPx=0 では無効');
   ok(eq(L.pieceRelief(-10), { thickness: 0, bevel: 0 }), '立体感: 負の cellPx では無効');
   ok(eq(L.pieceRelief(NaN), { thickness: 0, bevel: 0 }), '立体感: NaN では無効');
   const r36 = L.pieceRelief(180); // 36ピース: boardPx 1080 / 6セル
-  ok(Math.abs(r36.thickness - 4.5) < 1e-9, '立体感: 大セル (180px) の厚みはセル比2.5% = 4.5px');
+  ok(Math.abs(r36.thickness - 180 * 0.037) < 1e-9, '立体感: 大セル (180px) の厚みはセル比3.7% = 6.66px');
+  ok(Math.abs(r36.bevel - 180 * 0.022) < 1e-9, '立体感: 大セル (180px) のベベル幅はセル比2.2% = 3.96px');
   const cell2025 = 2048 / 45; // 2025ピースの実セルサイズ
   const r2025 = L.pieceRelief(cell2025);
-  ok(r2025.thickness >= 1 && r2025.thickness <= cell2025 * 0.03, '立体感: 小セル (2025ピース) でも 1px 以上・セル比3%以下');
+  ok(r2025.thickness >= 1 && r2025.thickness <= cell2025 * 0.04, '立体感: 小セル (2025ピース) でも 1px 以上・セル比4%以下');
   const rSmall = L.pieceRelief(20);
   ok(rSmall.thickness > 0 && rSmall.thickness <= 20 * 0.04, '立体感: 極小セルではセル比4%以下に抑える');
   const rHuge = L.pieceRelief(1000);
-  ok(rHuge.thickness <= 5 && rHuge.bevel <= 6, '立体感: 巨大セルでも厚み5px・ベベル6pxまでに制限');
+  ok(rHuge.thickness <= 8 && rHuge.bevel <= 6, '立体感: 巨大セルでも厚み8px・ベベル6pxまでに制限');
   // 実在する難易度のセルサイズ全部で、ベベルが 1px 以上・セル比5%以下
   const cells = L.DIFFICULTIES.map(function (d) { return L.imageSizeFor(d) / Math.round(Math.sqrt(d)); });
   ok(cells.every(function (c) { const r = L.pieceRelief(c); return r.bevel >= 1 && r.bevel <= c * 0.05; }), '立体感: ベベルは全難易度で 1px 以上・セル比5%以下');
@@ -485,6 +487,33 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
     if (L.pieceRelief(sorted[i]).thickness < L.pieceRelief(sorted[i - 1]).thickness) mono = false;
   }
   ok(mono, '立体感: 厚みはセルサイズに対して単調');
+}
+
+/* 19. BGM プレイリストの規則 (シャッフル一巡 / 短い曲は2回)
+ * 再生順は順列 (全曲1回ずつ) で、一巡の継ぎ目では同じ曲が連続しない。
+ * 短い曲 (90秒未満) は2回再生する。長さ不明の曲を短い扱いにすると
+ * ループ条件が壊れるので、0/負/NaN は必ず「短くない」側に倒す。 */
+{
+  const order = L.shuffledOrder(13, L.mulberry32(12345));
+  ok(order.length === 13 && eq(order.slice().sort(function (a, b) { return a - b; }), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]), 'シャッフル一巡: 13曲すべてをちょうど1回ずつ含む');
+  ok(eq(L.shuffledOrder(13, L.mulberry32(999)), L.shuffledOrder(13, L.mulberry32(999))), 'シャッフルはシード決定的');
+  ok(eq(L.shuffledOrder(0, Math.random), []), 'シャッフル: 0曲でも空配列');
+  ok(eq(L.shuffledOrder(1, Math.random), [0]), 'シャッフル: 1曲だけなら [0]');
+  let seamOk = true;
+  for (let seed = 1; seed <= 300; seed++) {
+    if (L.nextShuffleOrder(13, L.mulberry32(seed), 5)[0] === 5) seamOk = false;
+  }
+  ok(seamOk, 'シャッフル継ぎ目: 一巡の境で同じ曲が連続しない (300シード)');
+  ok(eq(L.nextShuffleOrder(1, Math.random, 0), [0]), 'シャッフル継ぎ目: 1曲だけなら入れ替え不要で [0]');
+  // 一巡ぶん再生し切ると全曲が1回ずつ流れる (UI 側の進み方の前提)
+  const seen = new Set(L.nextShuffleOrder(13, L.mulberry32(7), -1));
+  ok(seen.size === 13, '一巡で全曲が重複なく流れる');
+  ok(L.BGM_SHORT_TRACK_SEC === 90, '短い曲の閾値は 90 秒');
+  ok(L.isShortTrack(45) === true && L.isShortTrack(89.9) === true, '短い曲: 90秒未満は真');
+  ok(L.isShortTrack(90) === false && L.isShortTrack(212) === false, '短い曲: 90秒以上は偽');
+  ok(L.isShortTrack(0) === false && L.isShortTrack(-3) === false && L.isShortTrack(NaN) === false, '短い曲: 長さ不明 (0/負/NaN) は偽 (無限ループ防止)');
+  ok(L.trackPlays(60) === 2 && L.trackPlays(89) === 2, '再生回数: 短い曲は 2 回');
+  ok(L.trackPlays(90) === 1 && L.trackPlays(255) === 1 && L.trackPlays(0) === 1, '再生回数: 通常の曲と長さ不明は 1 回');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
