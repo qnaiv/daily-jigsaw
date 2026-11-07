@@ -1066,8 +1066,8 @@ function drawClusterOn(ctx, v, cl, wTl, wBr) {
  * 机レイヤーはオフスクリーンに描いて使い回す: マット表示中は机側のカメラも
  * 塊も変わらないので、盤の状態が変わったとき (afterBoardChange 等) だけ
  * 再描画すればよい。ぼかし専用処理はせず、0.6倍の低解像度で描いて拡大する
- * ことで柔らかくし、さらにマット色のベール (不透明度 0.65) を被せて
- * 机の見え方は 3.5割ほどに落とす。 */
+ * ことで柔らかくし、さらに無色のベール (中立グレー・不透明度 0.65) を
+ * 被せて机の見え方は 3.5割ほどに落とす。 */
 var DESK_BACKDROP_SCALE = 0.6;
 var deskBackdrop = null;
 var deskBackdropDirty = true;
@@ -1096,7 +1096,9 @@ function drawMatBackdrop() {
   ensureDeskBackdrop();
   if (deskBackdrop) {
     sctx.drawImage(deskBackdrop, 0, 0, stageW, stageH);
-    sctx.fillStyle = hexToRgba(THEMES[uiTheme].mat, 0.65);
+    // ベールは無色 (中立グレー) にする: マット色で染めると盤外まで緑/赤に
+    // 見えてしまうため、色味のない半透明で机の濃さだけを落とす (ユーザー指定)
+    sctx.fillStyle = 'rgba(17,17,17,0.65)';
   } else {
     sctx.fillStyle = THEMES[uiTheme].mat;
   }
