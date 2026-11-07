@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>まいにちジグソー | Daily Jigsaw</title>
+<meta name="description" content="毎日お題が変わるジグソーパズル。開いたその日（JST）の写真が、みんな同じ今日のお題になります。">
+<meta property="og:title" content="まいにちジグソー | Daily Jigsaw">
+<meta property="og:description" content="毎日お題が変わるジグソーパズルWebアプリ">
+<meta property="og:type" content="website">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="appHeader">
+  <div class="header-left">
+    <h1>まいにちジグソー</h1>
+    <span id="streakBadge" class="streak" title="連続クリア日数">🔥 <span id="streakNum">0</span>日</span>
+  </div>
+  <div class="header-right">
+    <button id="datePrevBtn" class="btn" type="button">← 昨日</button>
+    <button id="dateTodayBtn" class="btn" type="button" hidden>今日に戻る</button>
+    <button id="collectionBtn" class="btn btn-accent" type="button">コレクション</button>
+  </div>
+</header>
+
+<main id="playView">
+  <div id="themeBar">
+    <span id="themeDateLabel">読み込み中…</span>
+    <span id="themeCredit" class="credit"></span>
+    <span id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</span>
+  </div>
+
+  <div id="controls">
+    <div id="difficultySeg" class="seg" role="group" aria-label="難易度"></div>
+    <div class="controls-right">
+      <button id="ghostBtn" class="btn toggle" type="button" aria-pressed="false">ゴースト</button>
+      <button id="previewBtn" class="btn" type="button">完成図</button>
+      <button id="pauseBtn" class="btn" type="button">一時停止</button>
+      <button id="surfaceBtn" class="btn btn-accent" type="button">マットを開く</button>
+    </div>
+  </div>
+
+  <div id="progressRow">
+    <div class="progress-track"><div id="progressFill"></div></div>
+    <span id="progressText">マットに置いたピース 0 / 0 ・ 塊 0</span>
+    <span id="timerText" class="mono">00:00</span>
+    <span id="movesText" class="mono">0手</span>
+    <span class="zoom-controls">
+      <button id="zoomOutBtn" class="btn btn-small" type="button" aria-label="縮小">−</button>
+      <span id="zoomLabel" class="mono">100%</span>
+      <button id="zoomInBtn" class="btn btn-small" type="button" aria-label="拡大">＋</button>
+    </span>
+  </div>
+
+  <div id="stageWrap">
+    <canvas id="stage"></canvas>
+    <div id="dropZone" hidden>ここで離すと <span id="dropZoneLabel">マット</span> へ移動</div>
+    <div id="surfaceLabel">作業机</div>
+    <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" class="btn btn-small" type="button">×</button></div>
+    <div id="loadingOverlay">読み込み中…</div>
+  </div>
+
+  <div id="boxPanel">
+    <div class="box-header">
+      <button id="boxToggle" class="btn" type="button">ピースの箱（<span id="boxCount">0</span>）</button>
+      <div class="seg seg-small" role="group" aria-label="箱の絞り込み">
+        <button type="button" data-filter="all" class="seg-btn active">すべて</button>
+        <button type="button" data-filter="edge" class="seg-btn">ふちだけ</button>
+        <button type="button" data-filter="inner" class="seg-btn">内側だけ</button>
+      </div>
+      <span class="box-hint">タップで机に出す（ドラッグでも可）／塊を箱ボタンへ落とすと戻す</span>
+    </div>
+    <div id="boxList" hidden></div>
+  </div>
+
+  <footer id="appFooter">
+    <span>写真: <a href="https://picsum.photos" target="_blank" rel="noopener">Lorem Picsum</a>（Unsplash出典）</span>
+    <a href="https://github.com/qnaiv/daily-jigsaw" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+</main>
+
+<section id="collectionView" hidden>
+  <div class="collection-header">
+    <button id="collectionBack" class="btn" type="button">← 戻る</button>
+    <h2>コレクション</h2>
+  </div>
+  <div id="collectionStats" class="stats"></div>
+  <div id="collectionEmpty" class="empty" hidden>まだコレクションがありません。今日のパズルをクリアしよう。</div>
+  <div id="collectionGrid" class="grid"></div>
+</section>
+
+<div id="previewModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-body">
+    <img id="previewImg" alt="完成図">
+    <button class="btn modal-close" type="button" data-close>閉じる</button>
+  </div>
+</div>
+
+<div id="resultModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body result-body">
+    <h2>クリア！</h2>
+    <p id="resultText"></p>
+    <p id="resultBadge" class="praise" hidden>完成図を見ずにクリア！すごい！</p>
+    <div class="result-actions">
+      <button id="resultCopyBtn" class="btn" type="button">結果をコピー</button>
+      <button id="resultCollectionBtn" class="btn" type="button">コレクションを見る</button>
+      <button id="resultCloseBtn" class="btn btn-accent" type="button">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div id="detailModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-body">
+    <img id="detailImg" alt="クリアしたパズルの画像">
+    <div id="detailText"></div>
+    <div class="result-actions">
+      <button id="detailPlayBtn" class="btn btn-accent" type="button">このパズルをもう一度遊ぶ</button>
+      <button class="btn" type="button" data-close>閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div id="confettiWrap" hidden><canvas id="confetti"></canvas></div>
+
+<script src="app.js"></script>
+</body>
+</html>
