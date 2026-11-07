@@ -250,31 +250,91 @@ function absorbMerges(others, moving, n) {
   return { clusters: pool.concat([cur]), cluster: cur, merged: merged };
 }
 
-/* 初期散らばり: 全ピースを机にぶちまけた状態にする。
- * 土台はマス目 (1ピース1セル、セル自体は重ならない) で、日付×難易度のシードで決定的。
- * 各ピースに ±0.4 セルの決定的な位置ずらしと、重なり順 (配列順 = z-order) の
- * シャッフルを加え、隣と少し重なったり隙間がバラつく自然な散らばりにする。
- * 回転は入れない。ずらしは机ビュー (横 n+6 セル × 縦 n+4 セル、原点 -3,-1) の
- * 範囲内にクランプするので、画面外に飛ぶピースはできない。 */
-function initialScatter(dateStr, pieces) {
+/* 散らばり領域 (セル単位の矩形): 机ワールドの広さそのもの。
+ * 旧来の机ビュー (横 n+6 × 縦 n+4) の約1.9倍の面積を縦横に確保し、
+ * マット盤 (n×n) をほぼ中央に含む。fitView (初期カメラ/ズーム下限) もこれを使う。 */
+function scatterRect(pieces) {
   var n = Math.round(Math.sqrt(pieces));
-  var cols = n + 6;
-  var rows = Math.ceil(pieces / cols);
+  var w = Math.ceil((n + 6) * 1.35);
+  var h = Math.ceil((n + 4) * 1.4);
+  return { x0: -Math.floor((w - n) / 2), y0: -Math.floor((h - n) / 2), w: w, h: h };
+}
+
+/* 初期散らばり: 全ピースを机にぶちまけた状態にする (自由配置)。
+ * セル方式はやめ、日付×難易度シードで決定的に各ピースの左上座標を直接決める。
+ * 密度にムラを出すため、大半のピースは数個のクラスタ中心の周りにばら撒き、
+ * 残りは領域全体へ一様に散らす (固まった場所と空いた場所ができる)。
+ * ところどころ重なってよいが、完全に隠れて掴めなくならないよう、既配置ピースとの
+ * 重なり (面積比) が 0.42 を超える候補は再抽選し、上限回数でも駄目なら
+ * 最も重なりの小さい候補を採る。回転は入れない。
+ * 再訪時の復元は保存済み配置そのままで、この関数は新規開始時にだけ呼ばれる。 */
+function initialScatter(dateStr, pieces) {
+  var rect = scatterRect(pieces);
   var rng = rngFromString('scatter:' + dateStr + ':' + pieces);
-  var cells = [];
-  for (var i = 0; i < cols * rows; i++) cells.push(i);
-  for (var k = cells.length - 1; k > 0; k--) {
-    var j = Math.floor(rng() * (k + 1));
-    var tmp = cells[k]; cells[k] = cells[j]; cells[j] = tmp;
-  }
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+  // クラスタ中心 (密度のムラの芯)
+  var nCenters = Math.max(3, Math.min(14, Math.round(pieces / 90)));
+  var centers = [];
+  for (var ci = 0; ci < nCenters; ci++) {
+    centers.push({ x: rect.x0 + rng() * rect.w, y: rect.y0 + rng() * rect.h });
+  }
+  var radX = rect.w * 0.16, radY = rect.h * 0.16;
+  // 空間ハッシュ (1セルバケット) で近傍の重なり検査を安くする
+  var buckets = new Map();
+  function worstOverlap(x, y) {
+    var bx = Math.floor(x), by = Math.floor(y), worst = 0;
+    for (var i = bx - 1; i <= bx + 1; i++) {
+      for (var j = by - 1; j <= by + 1; j++) {
+        var arr = buckets.get(i + ',' + j);
+        if (!arr) continue;
+        for (var k = 0; k < arr.length; k++) {
+          var ox = 1 - Math.abs(x - arr[k].x), oy = 1 - Math.abs(y - arr[k].y);
+          if (ox > 0 && oy > 0 && ox * oy > worst) worst = ox * oy;
+        }
+      }
+    }
+    return worst;
+  }
+  function put(x, y) {
+    var key = Math.floor(x) + ',' + Math.floor(y);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push({ x: x, y: y });
+  }
+  function sample(uniformOnly) {
+    var x, y;
+    if (!uniformOnly && rng() < 0.72) {
+      var c = centers[Math.floor(rng() * centers.length)];
+      x = c.x + (rng() + rng() - 1) * radX; // 三角分布で中心ほど濃く
+      y = c.y + (rng() + rng() - 1) * radY;
+    } else {
+      x = rect.x0 + rng() * rect.w;
+      y = rect.y0 + rng() * rect.h;
+    }
+    // ピース全体 (1セル) が領域内に収まるようクランプ
+    return {
+      x: clamp(x, rect.x0, rect.x0 + rect.w - 1),
+      y: clamp(y, rect.y0, rect.y0 + rect.h - 1)
+    };
+  }
   var clusters = [];
   for (var id = 0; id < pieces; id++) {
-    var cell = cells[id];
-    var baseX = (cell % cols) - 3, baseY = Math.floor(cell / cols) - 1;
-    var gx = clamp(baseX + (rng() * 2 - 1) * 0.4, -3, n + 2);
-    var gy = clamp(baseY + (rng() * 2 - 1) * 0.4, -1, rows - 2);
-    clusters.push({ pieces: [id], surface: 'desk', gx: gx, gy: gy });
+    var best = null, bestOv = Infinity, t;
+    for (t = 0; t < 12; t++) {           // 第1段: クラスタ寄せ＋一様の混合で抽選
+      var p1 = sample(false);
+      var ov1 = worstOverlap(p1.x, p1.y);
+      if (ov1 < bestOv) { bestOv = ov1; best = p1; }
+      if (ov1 <= 0.42) break;
+    }
+    if (bestOv > 0.42) {                 // 第2段: 一様抽選で逃げ場を探す
+      for (t = 0; t < 28; t++) {
+        var p2 = sample(true);
+        var ov2 = worstOverlap(p2.x, p2.y);
+        if (ov2 < bestOv) { bestOv = ov2; best = p2; }
+        if (ov2 <= 0.42) break;
+      }
+    }
+    put(best.x, best.y);
+    clusters.push({ pieces: [id], surface: 'desk', gx: best.x, gy: best.y });
   }
   // 重なり順もシャッフルする (後ろの要素ほど手前に描かれ、ヒットテストも優先される)
   for (var m = clusters.length - 1; m > 0; m--) {
@@ -331,7 +391,7 @@ var PureLogic = {
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
-  absorbMerges: absorbMerges, initialScatter: initialScatter,
+  absorbMerges: absorbMerges, scatterRect: scatterRect, initialScatter: initialScatter,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime
 };
@@ -591,11 +651,18 @@ function resizeStage() {
 }
 function fitView(surface) {
   var n = state.n;
-  var worldW = (surface === 'mat' ? n + 2 : n + 6) * CELL;
-  var worldH = (surface === 'mat' ? n + 2 : n + 4) * CELL;
+  var worldW, worldH, ox, oy;
+  if (surface === 'mat') {
+    worldW = (n + 2) * CELL; worldH = (n + 2) * CELL;
+    ox = -CELL; oy = -CELL;
+  } else {
+    // 机ワールド = 散らばり領域そのもの (旧来より縦横に広い)。
+    // fit (表示100%) とズーム下限はこの領域に追随する。
+    var r = scatterRect(n * n);
+    worldW = r.w * CELL; worldH = r.h * CELL;
+    ox = r.x0 * CELL; oy = r.y0 * CELL;
+  }
   var fit = Math.min(stageW / worldW, stageH / worldH);
-  var ox = surface === 'mat' ? -CELL : -(3 * CELL);
-  var oy = -CELL;
   return { scale: fit, fit: fit, tx: (stageW - worldW * fit) / 2 - ox * fit, ty: (stageH - worldH * fit) / 2 - oy * fit };
 }
 function fitViews() {
@@ -1354,29 +1421,66 @@ function giftPatternDef(patternId) {
       return '<pattern id="giftPat" width="42" height="42" patternUnits="userSpaceOnUse">' + body + '</pattern>';
   }
 }
+/* 箱の中身のチラ見え用: 小さなピース片 (四角 + 上のノブ) */
+function giftPeekPiece(cx, cy, s, color) {
+  var hw = s / 2;
+  return '<g class="gift-peek">' +
+    '<rect x="' + (cx - hw).toFixed(1) + '" y="' + cy + '" width="' + s + '" height="' + s + '" rx="3" fill="' + color + '"/>' +
+    '<circle cx="' + cx + '" cy="' + cy + '" r="' + (s * 0.24).toFixed(1) + '" fill="' + color + '"/>' +
+    '</g>';
+}
 function giftBoxSvg(patternId) {
   function face(points, shade) {
     var s = '<polygon points="' + points + '" fill="url(#giftPat)"/>';
     if (shade > 0) s += '<polygon points="' + points + '" fill="#000000" opacity="' + shade + '"/>';
     return s + '<polygon points="' + points + '" fill="none" stroke="rgba(60,30,10,0.35)" stroke-width="1"/>';
   }
-  return '<svg viewBox="0 0 416 190" role="img" aria-label="包装されたパズルの箱">' +
-    '<defs>' + giftPatternDef(patternId) + '</defs>' +
-    '<ellipse cx="208" cy="170" rx="168" ry="13" fill="rgba(0,0,0,0.28)"/>' +
-    face('316,128 352,84 352,114 316,158', 0.30) +  /* 右側面 */
-    face('64,128 316,128 316,158 64,158', 0.16) +   /* 正面 */
+  /* 中身: 蓋に隠れて通常は見えない。蓋が開くと開口部の暗がりと
+   * ピースの端がチラッと覗く (開口部の形でクリップ)。 */
+  var opening = '100,77 352,77 316,129 64,129';
+  var inside =
+    '<clipPath id="giftClip"><polygon points="' + opening + '"/></clipPath>' +
+    '<polygon points="' + opening + '" fill="#33200f"/>' +
+    '<g clip-path="url(#giftClip)">' +
+      giftPeekPiece(128, 100, 34, '#b8452e') +
+      giftPeekPiece(204, 108, 38, '#33523f') +
+      giftPeekPiece(282, 98, 32, '#c9a227') +
+    '</g>';
+  /* 蓋: 上面 + 前縁 + 右縁を1グループにし、CSS で後ろ側の辺 (上面の上辺) を
+   * 軸に跳ね上げる (.gift-lid / #giftBox.opening) */
+  var lid = '<g class="gift-lid">' +
     face('316,121 352,77 352,84 316,128', 0.22) +   /* 蓋の右縁 */
     face('64,121 316,121 316,128 64,128', 0.08) +   /* 蓋の前縁 */
     face('100,77 352,77 316,121 64,121', 0) +       /* 蓋の上面 */
+    '</g>';
+  /* 接地影: 箱の底面フットプリント (64,158)-(316,158)-(352,114)-(100,114) に沿った
+   * 平たく横長の影。接地面近くは濃く (芯・弱ぼかし)、外側へ柔らかくぼける (広ぼかし)。
+   * 浮いて見える楕円影は廃止。 */
+  var shadowDefs =
+    '<filter id="giftShSoft" x="-30%" y="-80%" width="160%" height="260%"><feGaussianBlur stdDeviation="7"/></filter>' +
+    '<filter id="giftShCore" x="-30%" y="-80%" width="160%" height="260%"><feGaussianBlur stdDeviation="2.5"/></filter>';
+  var shadow =
+    '<polygon points="54,163 326,163 362,117 92,117" fill="rgba(43,24,6,0.20)" filter="url(#giftShSoft)"/>' +
+    '<polygon points="62,161 318,161 354,117 98,117" fill="rgba(43,24,6,0.32)" filter="url(#giftShCore)"/>';
+  return '<svg viewBox="0 0 416 190" role="img" aria-label="包装されたパズルの箱">' +
+    '<defs>' + giftPatternDef(patternId) + shadowDefs + '</defs>' +
+    shadow +
+    face('316,128 352,84 352,114 316,158', 0.30) +  /* 右側面 */
+    face('64,128 316,128 316,158 64,158', 0.16) +   /* 正面 */
+    inside +
+    lid +
     '</svg>';
 }
-/* 箱タップ → 暗転 → ぶちまけたあとの作業机から開始 (開封アニメーションは無し)。
+/* 箱タップ → 蓋がパカッと開く (約0.42s) → 暗転 → ぶちまけたあとの作業机から開始。
+ * ピースが飛び散るアニメーションは作らない (蓋パカッ＋暗転だけ)。
  * 開封自体はタイマーを開始しない (タイマーは最初のピースを掴んだとき)。 */
 function openBox() {
   if (!state || state.phase !== 'box' || state.opening) return;
-  state.opening = true;
+  state.opening = true; // 開封アニメーション中の連打を無効化 (CSS 側でも pointer-events: none)
+  var box = $('giftBox');
+  box.classList.add('opening');
   var veil = $('fadeVeil');
-  veil.classList.add('on');
+  setTimeout(function () { veil.classList.add('on'); }, 270); // 蓋が開ききる頃から暗転を始める
   setTimeout(function () {
     if (!state) return;
     state.clusters = initialScatter(playDate, difficulty);
@@ -1388,14 +1492,16 @@ function openBox() {
     updateProgressUI();
     draw();
     veil.classList.remove('on');
+    box.classList.remove('opening'); // 次に箱を出すとき (やりなおし後) は閉じた状態から
     state.opening = false;
-  }, 300);
+  }, 580);
 }
 
 /* スタート画面の表示内容: 未開封なら箱、開始済みなら「つづきから」パネル */
 function renderStartScreen() {
   if (!state) return;
   var startedAlready = state.gameStarted;
+  $('giftBox').classList.remove('opening');
   $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate).id);
   $('giftBox').hidden = startedAlready;
   $('startHint').hidden = startedAlready;

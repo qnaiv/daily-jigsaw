@@ -164,8 +164,11 @@ button { font: inherit; cursor: pointer; }
 .credit a { color: var(--paper-dim); }
 .fallback-note { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; padding: 2px 8px; font-size: 12px; color: var(--warn-ink); }
 
-/* 箱: ボタンではなく「机の上のモノ」。ゆっくり上下に揺れて触れるものだと伝える。
- * 波紋リングは控えめな示唆。説明文はボタン型にしない (プレーンテキスト)。 */
+/* 箱: ボタンではなく「机/紙面の上のモノ」。箱本体は静止して置かれている状態にし、
+ * ふよふよ浮く上下の揺れは廃止。タップ可能性の示唆は「箱をタップ」の
+ * プレーンテキスト + 静かに出る波紋リング + 押下時の沈みで担保する。
+ * 影は SVG 内の接地影 (底面フットプリント沿い) で表現するので、
+ * CSS の drop-shadow (浮いて見える) は付けない。 */
 #giftBox {
   position: relative;
   width: min(84%, 430px); cursor: pointer; -webkit-tap-highlight-color: transparent; margin-top: 10px;
@@ -174,10 +177,7 @@ button { font: inherit; cursor: pointer; }
 #giftBox svg {
   position: relative; z-index: 1;
   width: 100%; height: auto; display: block;
-  filter: drop-shadow(0 12px 16px var(--shadow));
-  animation: giftBob 2.8s ease-in-out infinite;
 }
-@keyframes giftBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
 #giftBox::after {
   content: ''; position: absolute; z-index: 0; left: 50%; top: 46%;
   width: 118px; height: 118px; border: 2px solid var(--brass); border-radius: 50%;
@@ -191,6 +191,24 @@ button { font: inherit; cursor: pointer; }
 }
 #giftBox:active { transform: scale(.97) translateY(3px); } /* 押した瞬間に少し沈む */
 #giftBox:focus-visible { outline: 2px solid var(--brass); outline-offset: 4px; border-radius: 8px; }
+/* 開封: 蓋 (上面+前縁+右縁のグループ) が後ろ側の辺を軸にパカッと跳ね上がる。
+ * transform-origin は蓋グループの bounding box 上辺中央 = ちょうど蝶番の線。 */
+#giftBox .gift-lid {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+}
+#giftBox.opening { pointer-events: none; } /* 連打防止 (JS の state.opening と二重化) */
+#giftBox.opening .gift-lid { animation: giftLidPop .42s cubic-bezier(.3, 1.35, .45, 1) both; }
+@keyframes giftLidPop {
+  from { transform: perspective(460px) rotateX(0deg); }
+  to { transform: perspective(460px) rotateX(-103deg); }
+}
+/* 蓋が開くと中身のピースの端が少しせり上がって覗く */
+#giftBox.opening .gift-peek { animation: giftPeekRise .45s ease-out both; }
+@keyframes giftPeekRise { from { transform: translateY(3px); } to { transform: translateY(-2.5px); } }
+@media (prefers-reduced-motion: reduce) {
+  #giftBox.opening .gift-lid, #giftBox.opening .gift-peek { animation-duration: .01s; }
+}
 .start-hint {
   margin: 0; color: var(--paper-dim); font-size: 12.5px; font-weight: 600;
   letter-spacing: .26em;

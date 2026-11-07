@@ -137,25 +137,56 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.snapToGrid(2.4) === 2 && L.snapToGrid(2.5) === 3 && L.snapToGrid(-1.6) === -2, 'グリッド吸着は最寄りの整数へ');
 }
 
-/* 7. 初期散らばり配置 (ぶちまけた状態: ベースセル + ±0.4セルのずらし + z-order シャッフル) */
+/* 7. 初期散らばり配置 (自由配置: 密度ムラのある決定的ランダム、重なりは面積の半分未満) */
 {
   const s1 = L.initialScatter('2026-11-07', 100);
   const s2 = L.initialScatter('2026-11-07', 100);
   ok(eq(s1, s2), '散らばり: 同じ日付×難易度で配置が完全一致 (決定的)');
   ok(s1.length === 100 && new Set(s1.flatMap(c => c.pieces)).size === 100, '散らばり: 全ピースがちょうど1回ずつ現れる');
   ok(s1.every(c => c.surface === 'desk' && c.pieces.length === 1), '散らばり: 全ピースが机の上に単体で置かれる');
-  ok(new Set(s1.map(c => Math.round(c.gx) + ',' + Math.round(c.gy))).size === 100, '散らばり: ベースセルは重ならない (重なりは部分的なずらしだけ)');
-  const jittered = s1.filter(c => Math.abs(c.gx - Math.round(c.gx)) > 0.05 || Math.abs(c.gy - Math.round(c.gy)) > 0.05).length;
-  ok(jittered >= 50, '散らばり: 過半数のピースに「ぶちまけた」位置ずらしが入っている (' + jittered + '/100)');
-  ok(s1.every(c => Math.abs(c.gx - Math.round(c.gx)) <= 0.4 + 1e-9 && Math.abs(c.gy - Math.round(c.gy)) <= 0.4 + 1e-9), '散らばり: ずらしは±0.4セル以内');
+  // 散らばり領域: 旧机ビュー (n+6)×(n+4) の約1.5〜2倍で、マット盤 (n×n) を含む
+  const r = L.scatterRect(100);
   const n = 10;
-  ok(s1.every(c => c.gx >= -3 && c.gx <= n + 2 && c.gy >= -1 && c.gy < n + 3), '散らばり: 机ビューの範囲内に収まる (画面外に出ない)');
+  ok(r.w * r.h >= (n + 6) * (n + 4) * 1.5 && r.w * r.h <= (n + 6) * (n + 4) * 2.1, '散らばり領域: 旧机ビューの約1.5〜2倍の面積 (' + (r.w * r.h / ((n + 6) * (n + 4))).toFixed(2) + '倍)');
+  ok(r.x0 <= 0 && r.y0 <= 0 && r.x0 + r.w >= n && r.y0 + r.h >= n, '散らばり領域: マット盤 (n×n) を含む');
+  // 全ピースが領域内にピース全体 (1セル) ごと収まる
+  ok(s1.every(c => c.gx >= r.x0 && c.gx + 1 <= r.x0 + r.w && c.gy >= r.y0 && c.gy + 1 <= r.y0 + r.h), '散らばり: 全ピースが散らばり領域内に収まる');
+  // 等間隔グリッドではない: 大半のピースが整数座標からずれた自由座標にある
+  const offGrid = s1.filter(c => Math.abs(c.gx - Math.round(c.gx)) > 0.05 || Math.abs(c.gy - Math.round(c.gy)) > 0.05).length;
+  ok(offGrid >= 90, '散らばり: 等間隔グリッドではなく大半が自由座標 (' + offGrid + '/100)');
+  // 領域の縦横いっぱいに広がっている
+  const xs = s1.map(c => c.gx), ys = s1.map(c => c.gy);
+  ok(Math.max(...xs) - Math.min(...xs) >= (r.w - 1) * 0.7 && Math.max(...ys) - Math.min(...ys) >= (r.h - 1) * 0.7, '散らばり: 領域の縦横いっぱいに広がっている');
+  // 密度ムラ: 4×4 に区切ると一番濃い区画が平均の1.8倍以上
+  const grid = new Array(16).fill(0);
+  s1.forEach(c => {
+    const gi = Math.min(3, Math.floor((c.gx - r.x0) / r.w * 4)), gj = Math.min(3, Math.floor((c.gy - r.y0) / r.h * 4));
+    grid[gj * 4 + gi]++;
+  });
+  ok(Math.max(...grid) >= (100 / 16) * 1.8, '散らばり: 密度にムラがある (最濃区画 ' + Math.max(...grid) + ' / 平均 ' + (100 / 16).toFixed(1) + ')');
+  // 重なりは面積の半分未満 (完全に隠れて掴めないピースを作らない)。同一座標もなし
+  function worstPair(cs) {
+    let w = 0;
+    for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
+      const ox = 1 - Math.abs(cs[i].gx - cs[j].gx), oy = 1 - Math.abs(cs[i].gy - cs[j].gy);
+      if (ox > 0 && oy > 0 && ox * oy > w) w = ox * oy;
+    }
+    return w;
+  }
+  ok(new Set(s1.map(c => c.gx + ',' + c.gy)).size === 100, '散らばり: 同一座標に重なるピースはない');
+  ok(worstPair(s1) < 0.5, '散らばり: どの2ピースも重なりは面積の半分未満 (最大 ' + worstPair(s1).toFixed(2) + ')');
   const idsInOrder = s1.map(c => c.pieces[0]);
   ok(!eq(idsInOrder, idsInOrder.slice().sort((a, b) => a - b)), '散らばり: 重なり順 (z-order) がシャッフルされている');
   ok(!eq(s1, L.initialScatter('2026-11-08', 100)), '散らばり: 日付が変わると配置も変わる');
   ok(!eq(s1, L.initialScatter('2026-11-07', 225)), '散らばり: 難易度が変わると配置も変わる');
-  const sBig = L.initialScatter('2026-11-07', 2025);
-  ok(sBig.length === 2025 && new Set(sBig.map(c => Math.round(c.gx) + ',' + Math.round(c.gy))).size === 2025, '散らばり: 2025ピースでもベースセルは重ならず全ピース出る');
+  // 全難易度 (36〜2025) で領域・重なりの条件を満たす
+  for (const p of L.DIFFICULTIES) {
+    const cs = L.initialScatter('2026-11-07', p), rr = L.scatterRect(p);
+    ok(cs.length === p && new Set(cs.flatMap(c => c.pieces)).size === p &&
+      cs.every(c => c.gx >= rr.x0 && c.gx + 1 <= rr.x0 + rr.w && c.gy >= rr.y0 && c.gy + 1 <= rr.y0 + rr.h) &&
+      worstPair(cs) < 0.5,
+      '散らばり: ' + p + 'ピースでも全ピースが領域内に収まり重なりは半分未満');
+  }
 }
 
 /* 8. 箱の包装柄の決定性 (同じ日付なら誰でも同じ柄・完成写真は載せない前提の柄選択) */
@@ -237,9 +268,12 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const moved = clusters.map(c => ({ ...c }));
   moved[7] = { ...moved[7], gy: moved[7].gy + 1 };
   ok(L.isComplete(moved, n) === false, '36ピース: 1つずらすと完成判定 = 偽');
-  // 散らばり (n=6)
+  // 散らばり (n=6): 自由配置でも全ピースが領域内に出る
   const s36 = L.initialScatter('2026-11-07', 36);
-  ok(s36.length === 36 && new Set(s36.map(c => Math.round(c.gx) + ',' + Math.round(c.gy))).size === 36, '36ピース: 散らばりはベースセルが重ならず全ピース机に出る');
+  const r36 = L.scatterRect(36);
+  ok(s36.length === 36 && new Set(s36.flatMap(c => c.pieces)).size === 36 &&
+    s36.every(c => c.gx >= r36.x0 && c.gx + 1 <= r36.x0 + r36.w && c.gy >= r36.y0 && c.gy + 1 <= r36.y0 + r36.h),
+    '36ピース: 散らばりは全ピースが散らばり領域内に机に出る');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
