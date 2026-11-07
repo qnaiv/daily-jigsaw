@@ -225,6 +225,76 @@ function findRelativeSnap(drag, others, n) {
   });
   return best;
 }
+/* ドラッグした塊 moving を others の中へ合体させる。
+ * 手順: (1) 現在位置 (浮動小数) から相対スナップ範囲内で合体を試みる
+ *       (2) 合体しなかったらグリッド吸着し、吸着後にちょうど正しい相対位置に
+ *           揃っていたら必ず合体させる (「合っているのにくっつかない」防止)
+ *       (3) 合体した塊がさらに別の塊とも正しく隣接していれば連鎖合体する
+ * 返り値: { clusters: 合体後の全塊, cluster: moving を含む塊, merged: 合体したか } */
+function absorbMerges(others, moving, n) {
+  var pool = others.slice();
+  var cur = { pieces: moving.pieces.slice(), surface: moving.surface, gx: moving.gx, gy: moving.gy };
+  var merged = false;
+  function tryOnce(exactOnly) {
+    var snap = findRelativeSnap(cur, pool, n);
+    if (!snap) return false;
+    if (exactOnly && snap.dist > 1e-9) return false;
+    var trial = { pieces: cur.pieces, surface: cur.surface, gx: snap.gx, gy: snap.gy };
+    var posOther = piecePositions([snap.other], n);
+    var posTrial = piecePositions([trial], n);
+    var pieces = Array.from(new Set(snap.other.pieces.concat(cur.pieces)));
+    var anchorId = clusterAnchorId({ pieces: pieces });
+    var ap = posOther.get(anchorId) || posTrial.get(anchorId);
+    cur = { pieces: pieces, surface: cur.surface, gx: ap.gx, gy: ap.gy };
+    pool.splice(pool.indexOf(snap.other), 1);
+    merged = true;
+    return true;
+  }
+  while (tryOnce(false)) { /* 連鎖合体 */ }
+  if (!merged) {
+    cur.gx = snapToGrid(cur.gx); cur.gy = snapToGrid(cur.gy);
+    while (tryOnce(true)) { /* グリッド吸着後の確実合体 */ }
+  }
+  return { clusters: pool.concat([cur]), cluster: cur, merged: merged };
+}
+
+/* 初期散らばり: 全ピースを机のグリッド上に1つずつ散らばせる。
+ * 日付×難易度のシードで決定的 (同じ条件なら誰でも同じ配置)。
+ * 机ビュー (横 n+6 セル × 縦 n+4 セル、原点 -3,-1) の内側に収める。 */
+function initialScatter(dateStr, pieces) {
+  var n = Math.round(Math.sqrt(pieces));
+  var cols = n + 6;
+  var rows = Math.ceil(pieces / cols);
+  var rng = rngFromString('scatter:' + dateStr + ':' + pieces);
+  var cells = [];
+  for (var i = 0; i < cols * rows; i++) cells.push(i);
+  for (var k = cells.length - 1; k > 0; k--) {
+    var j = Math.floor(rng() * (k + 1));
+    var tmp = cells[k]; cells[k] = cells[j]; cells[j] = tmp;
+  }
+  var clusters = [];
+  for (var id = 0; id < pieces; id++) {
+    var cell = cells[id];
+    clusters.push({ pieces: [id], surface: 'desk', gx: (cell % cols) - 3, gy: Math.floor(cell / cols) - 1 });
+  }
+  return clusters;
+}
+
+/* スタート画面の箱の包装柄 (完成写真は載せない)。日付シードで決定的にローテーション */
+var BOX_PATTERNS = [
+  { id: 'dots-red', name: 'ドット（赤）' },
+  { id: 'stripes-mint', name: 'ストライプ（ミント）' },
+  { id: 'stars-navy', name: '星空（紺）' },
+  { id: 'gingham-pink', name: 'ギンガム（ピンク）' },
+  { id: 'confetti', name: 'コンフェッティ' },
+  { id: 'floral-retro', name: 'レトロ花柄' }
+];
+function boxPatternIndex(dateStr) {
+  var days = daysBetween(dateStr, BASE_DATE_FALLBACK);
+  return ((days % BOX_PATTERNS.length) + BOX_PATTERNS.length) % BOX_PATTERNS.length;
+}
+function boxPatternForDate(dateStr) { return BOX_PATTERNS[boxPatternIndex(dateStr)]; }
+
 /* 完成判定 (内部のみ): 全ピースがマット上にあり、各ピースがホーム座標に一致 */
 function isComplete(clusters, n) {
   var pos = piecePositions(clusters, n);
@@ -257,6 +327,8 @@ var PureLogic = {
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
+  absorbMerges: absorbMerges, initialScatter: initialScatter,
+  BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
@@ -283,7 +355,7 @@ function saveStore() {
 function progressFor(date, pieces) {
   if (!store.progress[date]) store.progress[date] = {};
   if (!store.progress[date][pieces]) {
-    store.progress[date][pieces] = { clusters: [], elapsedSec: 0, moves: 0, previewViewed: false, previewCount: 0, ghostUsed: false, cleared: false };
+    store.progress[date][pieces] = { clusters: [], elapsedSec: 0, moves: 0, previewViewed: false, previewCount: 0, ghostUsed: false, cleared: false, started: false };
   }
   return store.progress[date][pieces];
 }
@@ -308,6 +380,8 @@ var state = null; // ゲーム開始時に構築
 
 function newGameState(pool) {
   var prog = progressFor(playDate, difficulty);
+  // 旧バージョンの保存 (started なし) でも、塊が残っていれば開始済みとして扱う
+  var gameStarted = !!prog.started || prog.clusters.length > 0;
   return {
     pool: pool,
     imageId: pickImageId(playDate, pool),
@@ -315,31 +389,25 @@ function newGameState(pool) {
     n: Math.round(Math.sqrt(difficulty)),
     edges: generateEdges(playDate, difficulty),
     surface: 'desk',
-    clusters: prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: c.surface, gx: c.gx, gy: c.gy }; }),
+    phase: gameStarted ? 'play' : 'box', // 'box' = スタート画面 (未開封)
+    gameStarted: gameStarted,
+    opening: false,
+    clusters: gameStarted ? prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: c.surface, gx: c.gx, gy: c.gy }; }) : [],
     elapsedBase: prog.elapsedSec || 0,
     moves: prog.moves || 0,
     previewViewed: !!prog.previewViewed,
     previewCount: prog.previewCount || 0,
     ghostUsed: !!prog.ghostUsed,
     ghostOn: false,
+    edgeHighlight: false,
+    mergeFlash: null,                 // { ids:Set, start:ms } 合体フィードバック
     cleared: !!prog.cleared,
     started: false, paused: false, timerStart: 0,
     views: { desk: null, mat: null }, // {scale, tx, ty} scaleFit も保持
     bitmaps: new Map(),               // pieceId -> {canvas, path, cellPx, marginPx}
     srcCanvas: null, boardPx: 0,
-    boxFilter: 'all',
     resumed: prog.clusters.length > 0
   };
-}
-function placedIds() {
-  var s = new Set();
-  state.clusters.forEach(function (c) { c.pieces.forEach(function (id) { s.add(id); }); });
-  return s;
-}
-function boxIds() {
-  var placed = placedIds(), out = [];
-  for (var id = 0; id < difficulty; id++) if (!placed.has(id)) out.push(id);
-  return out;
 }
 function persistProgress() {
   var prog = progressFor(playDate, difficulty);
@@ -350,6 +418,7 @@ function persistProgress() {
   prog.previewCount = state.previewCount;
   prog.ghostUsed = state.ghostUsed;
   prog.cleared = state.cleared;
+  prog.started = state.gameStarted;
   saveStore();
 }
 function currentElapsed() {
@@ -509,6 +578,60 @@ function draw() {
   var ordered = state.clusters.filter(function (c) { return c.surface === state.surface; });
   if (drag && drag.cluster) ordered = ordered.filter(function (c) { return c !== drag.cluster; }).concat([drag.cluster]);
   ordered.forEach(function (cl) { drawCluster(cl, wTl, wBr); });
+  // ふちハイライト: 机の上のふちピースだけ輪郭を光らせ、それ以外は少し暗くする
+  if (state.edgeHighlight && state.surface === 'desk') {
+    eachVisiblePiece(function (id, wx, wy) {
+      if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
+      if (isEdgePiece(id, state.n)) strokePiece(id, wx, wy, 'rgba(255,176,0,0.95)', 2.5, null);
+      else strokePiece(id, wx, wy, null, 0, 'rgba(40,26,12,0.38)');
+    });
+  }
+  // 合体フィードバック: 合体した塊の輪郭が一瞬光る
+  if (state.mergeFlash) {
+    var alpha = Math.max(0, 1 - (Date.now() - state.mergeFlash.start) / 550);
+    if (alpha > 0) {
+      var flash = state.mergeFlash;
+      eachVisiblePiece(function (id, wx, wy) {
+        if (!flash.ids.has(id)) return;
+        if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
+        strokePiece(id, wx, wy, 'rgba(255,190,0,' + alpha.toFixed(3) + ')', 3.5, 'rgba(255,200,40,' + (alpha * 0.25).toFixed(3) + ')');
+      });
+    }
+  }
+}
+/* 現在の画面にある全ピースについて (id, ワールドx, ワールドy) で fn を呼ぶ */
+function eachVisiblePiece(fn) {
+  var n = state.n;
+  state.clusters.forEach(function (cl) {
+    if (cl.surface !== state.surface) return;
+    var anchor = pieceHome(clusterAnchorId(cl), n);
+    cl.pieces.forEach(function (id) {
+      var home = pieceHome(id, n);
+      fn(id, (cl.gx + (home.col - anchor.col)) * CELL, (cl.gy + (home.row - anchor.row)) * CELL);
+    });
+  });
+}
+/* ピース輪郭の輪郭線/塗りを重ね描きする (ハイライト・フラッシュ用) */
+function strokePiece(id, wx, wy, style, widthPx, fillStyle) {
+  var bmp = pieceBitmap(id), v = view();
+  var ratio = (CELL * v.scale) / bmp.cellPx;
+  var dx = wx * v.scale + v.tx - bmp.marginPx * ratio;
+  var dy = wy * v.scale + v.ty - bmp.marginPx * ratio;
+  sctx.save();
+  sctx.translate(dx, dy);
+  sctx.scale(ratio, ratio);
+  if (fillStyle) { sctx.fillStyle = fillStyle; sctx.fill(bmp.path); }
+  if (style) { sctx.strokeStyle = style; sctx.lineWidth = widthPx / ratio; sctx.stroke(bmp.path); }
+  sctx.restore();
+}
+function startMergeFlash(pieces) {
+  state.mergeFlash = { ids: new Set(pieces), start: Date.now() };
+  (function loop() {
+    if (!state || !state.mergeFlash) return;
+    if (Date.now() - state.mergeFlash.start >= 560) { state.mergeFlash = null; draw(); return; }
+    draw();
+    requestAnimationFrame(loop);
+  })();
 }
 function clusterWorldBox(cl) {
   var n = state.n, anchor = pieceHome(clusterAnchorId(cl), n);
@@ -662,43 +785,16 @@ function finishDrag(ev) {
   drag = null;
   if (!wasMoved) { draw(); return; }
   state.moves++;
-  // 箱ボタンへ落としたら箱に戻す
-  var boxBtn = $('boxToggle').getBoundingClientRect();
-  if (ev.clientX >= boxBtn.left && ev.clientX <= boxBtn.right && ev.clientY >= boxBtn.top && ev.clientY <= boxBtn.bottom) {
-    state.clusters.splice(state.clusters.indexOf(cl), 1);
-    afterBoardChange();
-    return;
-  }
-  // 相対スナップ (本来の隣同士なら合体)
-  var others = state.clusters.filter(function (c) { return c !== cl && c.surface === cl.surface; });
-  var snap = findRelativeSnap({ pieces: cl.pieces, surface: cl.surface, gx: cl.gx, gy: cl.gy }, others, state.n);
-  if (snap) {
-    // 相手の塊は動かさず、ドラッグ側だけを吸着位置へ。合体後の anchor (id最小) 基準で位置を引き直す
-    var posA = piecePositions([snap.other], state.n);
-    var posB = piecePositions([{ pieces: cl.pieces, surface: cl.surface, gx: snap.gx, gy: snap.gy }], state.n);
-    var merged = { pieces: Array.from(new Set(snap.other.pieces.concat(cl.pieces))), surface: cl.surface, gx: 0, gy: 0 };
-    var anchorPos = posA.get(clusterAnchorId(merged)) || posB.get(clusterAnchorId(merged));
-    merged.gx = anchorPos.gx; merged.gy = anchorPos.gy;
-    state.clusters.splice(state.clusters.indexOf(snap.other), 1, merged);
-    state.clusters.splice(state.clusters.indexOf(cl), 1);
-  } else {
-    cl.gx = snapToGrid(cl.gx); cl.gy = snapToGrid(cl.gy);
-    normalizeCluster(cl);
-  }
+  // 合体処理 (相対スナップ→グリッド吸着→吸着後に正しい相対位置なら確実に合体、まで一括)
+  var others = state.clusters.filter(function (c) { return c !== cl; });
+  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: cl.gx, gy: cl.gy }, state.n);
+  state.clusters = res.clusters;
+  if (res.merged) startMergeFlash(res.cluster.pieces);
   afterBoardChange();
-}
-/* anchor を id最小ピース基準にそろえる (位置は変えない) */
-function normalizeCluster(cl) {
-  var n = state.n;
-  var pos = piecePositions([cl], n);
-  var anchor = clusterAnchorId(cl);
-  var p = pos.get(anchor);
-  cl.gx = p.gx; cl.gy = p.gy;
 }
 function afterBoardChange() {
   persistProgress();
   updateProgressUI();
-  renderBoxList();
   draw();
   if (!state.cleared && isComplete(state.clusters, state.n)) onClear();
 }
@@ -718,6 +814,7 @@ function switchSurfaceDuringDrag() {
   draw();
 }
 function switchSurface() {
+  if (!state || state.phase !== 'play') return;
   state.surface = state.surface === 'desk' ? 'mat' : 'desk';
   updateSurfaceUI();
   draw();
@@ -762,86 +859,6 @@ stage.addEventListener('touchend', function (ev) {
   if (now - lastTap < 300) zoomBy(1.5);
   lastTap = now;
 });
-
-/* ---------- 箱 (ドロワー) ---------- */
-var BOX_CELL = 56, BOX_THUMB = 46;
-function filteredBoxIds() {
-  var ids = boxIds();
-  if (state.boxFilter === 'edge') return ids.filter(function (id) { return isEdgePiece(id, state.n); });
-  if (state.boxFilter === 'inner') return ids.filter(function (id) { return !isEdgePiece(id, state.n); });
-  return ids;
-}
-function renderBoxList() {
-  if (!state) return;
-  $('boxCount').textContent = boxIds().length;
-  var list = $('boxList');
-  if (list.hidden) return;
-  var ids = filteredBoxIds();
-  var cols = Math.max(1, Math.floor(list.clientWidth / BOX_CELL));
-  var rows = Math.ceil(ids.length / cols);
-  var inner = $('boxListInner');
-  if (!inner) { inner = document.createElement('div'); inner.id = 'boxListInner'; list.appendChild(inner); }
-  inner.style.height = rows * BOX_CELL + 'px';
-  inner.innerHTML = '';
-  var scrollTop = list.scrollTop;
-  var firstRow = Math.max(0, Math.floor(scrollTop / BOX_CELL) - 1);
-  var lastRow = Math.min(rows - 1, firstRow + Math.ceil(list.clientHeight / BOX_CELL) + 2);
-  for (var r = firstRow; r <= lastRow; r++) {
-    for (var c = 0; c < cols; c++) {
-      var idx = r * cols + c;
-      if (idx >= ids.length) break;
-      var id = ids[idx];
-      var div = document.createElement('div');
-      div.className = 'box-thumb';
-      div.style.left = c * BOX_CELL + 4 + 'px';
-      div.style.top = r * BOX_CELL + 4 + 'px';
-      div.style.width = BOX_CELL - 8 + 'px';
-      div.style.height = BOX_CELL - 8 + 'px';
-      div.dataset.pieceId = id;
-      var bmp = pieceBitmap(id);
-      var cv = document.createElement('canvas');
-      var scale = BOX_THUMB / bmp.canvas.width;
-      cv.width = BOX_THUMB; cv.height = BOX_THUMB;
-      cv.getContext('2d').drawImage(bmp.canvas, 0, 0, BOX_THUMB, BOX_THUMB);
-      div.appendChild(cv);
-      attachBoxThumb(div, id);
-      inner.appendChild(div);
-    }
-  }
-}
-$('boxList').addEventListener('scroll', function () { renderBoxList(); });
-function takeOut(id, atWorld) {
-  var rng = rngFromString('scatter:' + playDate + ':' + difficulty + ':' + id + ':' + Date.now());
-  var v = view();
-  var center = atWorld || screenToWorld(stageW / 2 + (rng() - 0.5) * 120, stageH / 2 + (rng() - 0.5) * 120);
-  var cl = { pieces: [id], surface: state.surface, gx: snapToGrid(center.x / CELL), gy: snapToGrid(center.y / CELL) };
-  state.clusters.push(cl);
-  startTimerOnce();
-  afterBoardChange();
-  return cl;
-}
-function attachBoxThumb(div, id) {
-  var startInfo = null;
-  div.addEventListener('pointerdown', function (ev) {
-    startInfo = { x: ev.clientX, y: ev.clientY, type: ev.pointerType };
-    ev.preventDefault();
-  });
-  div.addEventListener('pointerup', function (ev) {
-    if (!startInfo) return;
-    var moved = Math.hypot(ev.clientX - startInfo.x, ev.clientY - startInfo.y);
-    startInfo = null;
-    if (state.cleared) return;
-    if (moved < 8) { takeOut(id); return; }
-    // ドラッグで取り出し: 箱を閉じて、現在ビュー中央付近へ置く (そのまま通常ドラッグに近い感覚)
-    if (moved >= 8) {
-      $('boxList').hidden = true;
-      var r = stage.getBoundingClientRect();
-      var wx = ev.clientX - r.left, wy = ev.clientY - r.top;
-      var w = screenToWorld(Math.max(0, Math.min(stageW, wx)), Math.max(0, Math.min(stageH, wy)));
-      takeOut(id, w);
-    }
-  });
-}
 
 /* ---------- タイマー / 進捗 ---------- */
 function startTimerOnce() {
@@ -990,12 +1007,14 @@ function wireControls() {
   $('zoomInBtn').addEventListener('click', function () { zoomBy(1.3); });
   $('zoomOutBtn').addEventListener('click', function () { zoomBy(1 / 1.3); });
   $('ghostBtn').addEventListener('click', function () {
+    if (!state || state.phase !== 'play') return;
     state.ghostOn = !state.ghostOn;
     $('ghostBtn').setAttribute('aria-pressed', String(state.ghostOn));
     if (state.ghostOn && !state.ghostUsed) { state.ghostUsed = true; persistProgress(); }
     draw();
   });
   $('previewBtn').addEventListener('click', function () {
+    if (!state || state.phase !== 'play') return;
     state.previewViewed = true;
     state.previewCount++;
     persistProgress();
@@ -1008,26 +1027,22 @@ function wireControls() {
     $('previewModal').hidden = false;
   });
   $('pauseBtn').addEventListener('click', function () {
-    if (!state.started || state.cleared) return;
+    if (!state || state.phase !== 'play' || !state.started || state.cleared) return;
     state.paused = !state.paused;
     if (state.paused) { state.elapsedBase = currentElapsed(); }
     else { state.timerStart = Date.now(); }
     $('pauseBtn').textContent = state.paused ? '再開' : '一時停止';
     persistProgress();
   });
-  $('boxToggle').addEventListener('click', function () {
-    var list = $('boxList');
-    list.hidden = !list.hidden;
-    if (!list.hidden) renderBoxList();
+  $('edgeBtn').addEventListener('click', function () {
+    if (!state) return;
+    state.edgeHighlight = !state.edgeHighlight;
+    $('edgeBtn').setAttribute('aria-pressed', String(state.edgeHighlight));
+    draw();
   });
-  document.querySelectorAll('#boxPanel .seg-btn').forEach(function (b) {
-    b.addEventListener('click', function () {
-      document.querySelectorAll('#boxPanel .seg-btn').forEach(function (x) { x.classList.remove('active'); });
-      b.classList.add('active');
-      state.boxFilter = b.dataset.filter;
-      $('boxList').scrollTop = 0;
-      renderBoxList();
-    });
+  $('giftBox').addEventListener('click', openBox);
+  $('giftBox').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openBox(); }
   });
   $('collectionBtn').addEventListener('click', showCollection);
   $('collectionBack').addEventListener('click', showPlay);
@@ -1051,10 +1066,97 @@ function wireControls() {
   window.addEventListener('resize', resizeStage);
 }
 
+/* ---------- スタート画面の箱 ----------
+ * 実物のパズル箱と同じ「平たくて広い」薄型の箱を SVG で描く。
+ * 蓋・本体の多角形は頂点を共有してズレないようにし、陰影は
+ * 蓋上面 (最も明るい) → 蓋の前縁 → 正面 → 蓋の右縁 → 右側面 (最も暗い) で一貫させる。
+ * 包装柄は全面に貼り、面ごとに陰影だけを変える。文字・ラベル・完成図は入れない。 */
+function giftFlowerSvg(cx, cy, s) {
+  var out = '<g transform="translate(' + cx + ',' + cy + ') scale(' + s + ')">';
+  for (var i = 0; i < 5; i++) {
+    var a = Math.PI * 2 * i / 5 - Math.PI / 2;
+    out += '<circle cx="' + (Math.cos(a) * 5.4).toFixed(1) + '" cy="' + (Math.sin(a) * 5.4).toFixed(1) + '" r="4" fill="#ffd9a0"/>';
+  }
+  return out + '<circle r="2.6" fill="#fff3d6"/></g>';
+}
+function giftPatternDef(patternId) {
+  var body;
+  switch (patternId) {
+    case 'dots-red':
+      body = '<rect width="36" height="36" fill="#cf3a3a"/><circle cx="9" cy="9" r="5" fill="#ffe9d6"/><circle cx="27" cy="27" r="5" fill="#ffe9d6"/>';
+      return '<pattern id="giftPat" width="36" height="36" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'stripes-mint':
+      body = '<rect width="28" height="28" fill="#9fd8bd"/><rect width="11" height="28" fill="#eafff3"/>';
+      return '<pattern id="giftPat" width="28" height="28" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' + body + '</pattern>';
+    case 'stars-navy':
+      body = '<rect width="44" height="44" fill="#24365e"/>' +
+        '<polygon points="0,-5 1.5,-1.6 5,-1.6 2.2,1.2 3.2,4.8 0,2.8 -3.2,4.8 -2.2,1.2 -5,-1.6 -1.5,-1.6" transform="translate(12,13)" fill="#ffe9a8"/>' +
+        '<polygon points="0,-3.4 1,-1.1 3.4,-1.1 1.5,0.8 2.2,3.3 0,1.9 -2.2,3.3 -1.5,0.8 -3.4,-1.1 -1,-1.1" transform="translate(33,33)" fill="#cfe0ff"/>' +
+        '<circle cx="33" cy="10" r="1.6" fill="#ffffff"/><circle cx="8" cy="36" r="1.6" fill="#ffffff"/>';
+      return '<pattern id="giftPat" width="44" height="44" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'gingham-pink':
+      body = '<rect width="30" height="30" fill="#f9dce6"/><rect width="30" height="15" fill="#f2a7c3" opacity="0.55"/><rect width="15" height="30" fill="#f2a7c3" opacity="0.55"/>';
+      return '<pattern id="giftPat" width="30" height="30" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'confetti':
+      body = '<rect width="46" height="46" fill="#fdf3d8"/>' +
+        '<rect x="6" y="8" width="8" height="3.4" fill="#e4572e" transform="rotate(30 10 10)"/>' +
+        '<circle cx="32" cy="12" r="3.2" fill="#2a9d8f"/>' +
+        '<rect x="20" y="24" width="3.4" height="9" fill="#4361ee" transform="rotate(-18 22 28)"/>' +
+        '<circle cx="38" cy="36" r="2.6" fill="#f4b942"/>' +
+        '<rect x="7" y="35" width="7" height="3" fill="#8338ec" transform="rotate(12 10 36)"/>' +
+        '<circle cx="14" cy="22" r="2.2" fill="#ef476f"/>';
+      return '<pattern id="giftPat" width="46" height="46" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    default: // floral-retro
+      body = '<rect width="48" height="48" fill="#d96f4e"/>' + giftFlowerSvg(13, 13, 1) + giftFlowerSvg(36, 36, 0.72) +
+        '<circle cx="37" cy="11" r="2" fill="#ffe3b3"/><circle cx="10" cy="38" r="2" fill="#ffe3b3"/>';
+      return '<pattern id="giftPat" width="48" height="48" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+  }
+}
+function giftBoxSvg(patternId) {
+  function face(points, shade) {
+    var s = '<polygon points="' + points + '" fill="url(#giftPat)"/>';
+    if (shade > 0) s += '<polygon points="' + points + '" fill="#000000" opacity="' + shade + '"/>';
+    return s + '<polygon points="' + points + '" fill="none" stroke="rgba(60,30,10,0.35)" stroke-width="1"/>';
+  }
+  return '<svg viewBox="0 0 416 190" role="img" aria-label="包装されたパズルの箱">' +
+    '<defs>' + giftPatternDef(patternId) + '</defs>' +
+    '<ellipse cx="208" cy="170" rx="168" ry="13" fill="rgba(0,0,0,0.28)"/>' +
+    face('316,128 352,84 352,114 316,158', 0.30) +  /* 右側面 */
+    face('64,128 316,128 316,158 64,158', 0.16) +   /* 正面 */
+    face('316,121 352,77 352,84 316,128', 0.22) +   /* 蓋の右縁 */
+    face('64,121 316,121 316,128 64,128', 0.08) +   /* 蓋の前縁 */
+    face('100,77 352,77 316,121 64,121', 0) +       /* 蓋の上面 */
+    '</svg>';
+}
+/* 箱タップ → 暗転 → ぶちまけたあとの作業机から開始 (開封アニメーションは無し)。
+ * 開封自体はタイマーを開始しない (タイマーは最初のピースを掴んだとき)。 */
+function openBox() {
+  if (!state || state.phase !== 'box' || state.opening) return;
+  state.opening = true;
+  var veil = $('fadeVeil');
+  veil.classList.add('on');
+  setTimeout(function () {
+    if (!state) return;
+    state.clusters = initialScatter(playDate, difficulty);
+    state.gameStarted = true;
+    state.phase = 'play';
+    $('startOverlay').hidden = true;
+    persistProgress();
+    updateProgressUI();
+    draw();
+    veil.classList.remove('on');
+    state.opening = false;
+  }, 300);
+}
+
 /* ---------- ゲーム開始 ---------- */
 function startGame(pool) {
   state = newGameState(pool);
   buildDifficultySeg();
+  // スタート画面: 未開封なら包装された箱 (柄は日付で決定的) を机の上に置く
+  $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate).id);
+  $('startOverlay').hidden = state.phase !== 'box';
+  $('fadeVeil').classList.remove('on');
   var d = new Date(dateToMs(playDate));
   $('themeDateLabel').textContent = d.getUTCFullYear() + '年' + (d.getUTCMonth() + 1) + '月' + d.getUTCDate() + '日のお題';
   $('dateTodayBtn').hidden = playDate === todayStr;
@@ -1080,7 +1182,6 @@ function startGame(pool) {
     fitViews();
     updateSurfaceUI();
     updateProgressUI();
-    renderBoxList();
     draw();
   });
   fetchCredit();

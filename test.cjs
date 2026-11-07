@@ -138,5 +138,80 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.snapToGrid(2.4) === 2 && L.snapToGrid(2.5) === 3 && L.snapToGrid(-1.6) === -2, 'グリッド吸着は最寄りの整数へ');
 }
 
+/* 7. 初期散らばり配置の決定性 (全ピース最初から机に出ている) */
+{
+  const s1 = L.initialScatter('2026-11-07', 100);
+  const s2 = L.initialScatter('2026-11-07', 100);
+  ok(eq(s1, s2), '散らばり: 同じ日付×難易度で配置が完全一致');
+  ok(s1.length === 100 && new Set(s1.flatMap(c => c.pieces)).size === 100, '散らばり: 全ピースがちょうど1回ずつ現れる');
+  ok(s1.every(c => c.surface === 'desk' && c.pieces.length === 1 && Number.isInteger(c.gx) && Number.isInteger(c.gy)), '散らばり: 全ピースが机の上・グリッド座標に単体で置かれる');
+  ok(new Set(s1.map(c => c.gx + ',' + c.gy)).size === 100, '散らばり: 置き場所が重ならない');
+  const n = 10;
+  ok(s1.every(c => c.gx >= -3 && c.gx < n + 3 && c.gy >= -1 && c.gy < n + 3), '散らばり: 机ビューの範囲内に収まる');
+  ok(!eq(s1, L.initialScatter('2026-11-08', 100)), '散らばり: 日付が変わると配置も変わる');
+  ok(!eq(s1, L.initialScatter('2026-11-07', 225)), '散らばり: 難易度が変わると配置も変わる');
+  const sBig = L.initialScatter('2026-11-07', 2025);
+  ok(sBig.length === 2025 && new Set(sBig.map(c => c.gx + ',' + c.gy)).size === 2025, '散らばり: 2025ピースでも重ならず全ピース出る');
+}
+
+/* 8. 箱の包装柄の決定性 (同じ日付なら誰でも同じ柄・完成写真は載せない前提の柄選択) */
+{
+  ok(L.BOX_PATTERNS.length === 6, '箱の包装柄は6種');
+  ok(L.boxPatternForDate('2026-11-07').id === L.boxPatternForDate('2026-11-07').id, '箱の柄: 同じ日付で常に同じ柄');
+  const seen = new Set();
+  for (let d = 0; d < 6; d++) seen.add(L.boxPatternForDate(L.addDays('2026-11-07', d)).id);
+  ok(seen.size === 6, '箱の柄: 連続6日で6柄すべてが順に現れる');
+  ok(L.boxPatternForDate(L.addDays('2026-11-07', 6)).id === L.boxPatternForDate('2026-11-07').id, '箱の柄: 7日目に同じ柄へ戻る (ローテーション)');
+  ok(L.boxPatternForDate('2026-11-06').id === L.BOX_PATTERNS[5].id, '箱の柄: 基準日前日は末尾の柄 (負の日数でも決定的)');
+}
+
+/* 9. 机の上での合体 (相対スナップ): 正しい相対位置に置けば必ず1つの塊になり、塊として動かせる */
+{
+  const n = 10;
+  const a = { pieces: [0], surface: 'desk', gx: 3, gy: 3 };
+  const b = { pieces: [1], surface: 'desk', gx: 4, gy: 3 }; // ピース1はピース0の右隣が本来の位置
+  const res = L.absorbMerges([a], b, n);
+  ok(res.merged === true && res.clusters.length === 1 && res.cluster.pieces.length === 2, '机: 隣ピースを正しい相対位置に置くと1つの塊に合体する');
+  // 塊として移動できる: 塊全体をずらしても相対配置が保たれる
+  const movedCluster = { pieces: res.cluster.pieces.slice(), surface: 'desk', gx: res.cluster.gx + 5, gy: res.cluster.gy + 2 };
+  const pos = L.piecePositions([movedCluster], n);
+  ok(pos.get(0).gx + 1 === pos.get(1).gx && pos.get(0).gy === pos.get(1).gy && pos.get(0).surface === 'desk', '机: 合体した塊は相対配置を保ったまま塊ごと移動できる');
+  // グリッド吸着と組み合わせ: 中途半端な位置で離しても、吸着で正しい相対位置に揃えば確実に合体
+  const bFloat = { pieces: [1], surface: 'desk', gx: 4.4, gy: 2.6 };
+  const res2 = L.absorbMerges([{ pieces: [0], surface: 'desk', gx: 3, gy: 3 }], bFloat, n);
+  ok(res2.merged === true && res2.clusters.length === 1, '机: グリッド吸着で正しい相対位置に揃えば確実に合体する (合っているのにくっつかない、がない)');
+  // 相対スナップ範囲内 (浮動小数) でも合体し、位置は正しい相対位置に吸着される
+  const bNear = { pieces: [1], surface: 'desk', gx: 4.2, gy: 3.1 };
+  const resNear = L.absorbMerges([{ pieces: [0], surface: 'desk', gx: 3, gy: 3 }], bNear, n);
+  const posNear = L.piecePositions([resNear.cluster], n);
+  ok(resNear.merged === true && posNear.get(1).gx === 4 && posNear.get(1).gy === 3, '机: 近傍で離しても正しい相対位置に吸着して合体する');
+  // 塊同士の合体 (横2ピースの塊の下に、もう1つの横2ピースの塊を正しく置く)
+  const c1 = { pieces: [0, 1], surface: 'desk', gx: 3, gy: 3 };
+  const c2 = { pieces: [10, 11], surface: 'desk', gx: 3, gy: 4 };
+  const res3 = L.absorbMerges([c1], c2, n);
+  ok(res3.merged === true && res3.clusters.length === 1 && res3.cluster.pieces.length === 4, '机: 塊同士も正しい相対位置で合体する');
+  // 橋渡しピースで2つの塊が連鎖合体する
+  const left = { pieces: [0], surface: 'desk', gx: 3, gy: 3 };
+  const right = { pieces: [2], surface: 'desk', gx: 5, gy: 3 };
+  const bridge = { pieces: [1], surface: 'desk', gx: 4, gy: 3 };
+  const resChain = L.absorbMerges([left, right], bridge, n);
+  ok(resChain.merged === true && resChain.clusters.length === 1 && resChain.cluster.pieces.length === 3, '机: 間のピースを置くと両側の塊と連鎖合体する');
+  // 正しい相対位置でなければ合体しない
+  const wrong = { pieces: [1], surface: 'desk', gx: 5, gy: 3 };
+  const res4 = L.absorbMerges([{ pieces: [0], surface: 'desk', gx: 3, gy: 3 }], wrong, n);
+  ok(res4.merged === false && res4.clusters.length === 2, '机: 正しい相対位置でなければ合体しない');
+  const stranger2 = { pieces: [55], surface: 'desk', gx: 4, gy: 3 };
+  const res5 = L.absorbMerges([{ pieces: [0], surface: 'desk', gx: 3, gy: 3 }], stranger2, n);
+  ok(res5.merged === false && res5.clusters.length === 2, '机: 隣同士でないピースは隣のマスに置いても合体しない');
+  // マット上でも同様に合体する
+  const m1 = { pieces: [0], surface: 'mat', gx: 0, gy: 0 };
+  const m2 = { pieces: [1], surface: 'mat', gx: 1, gy: 0 };
+  ok(L.absorbMerges([m1], m2, n).merged === true, 'マット: 隣ピースを正しい相対位置に置くと合体する');
+  // 合体しなかった場合はグリッド吸着だけが適用される
+  const lone = { pieces: [7], surface: 'desk', gx: 2.4, gy: 6.6 };
+  const res6 = L.absorbMerges([], lone, n);
+  ok(res6.merged === false && res6.cluster.gx === 2 && res6.cluster.gy === 7, '合体相手がいなければ最寄りグリッドに吸着するだけ');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

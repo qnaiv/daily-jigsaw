@@ -57,20 +57,17 @@
     <div id="dropZone" hidden>ここで離すと <span id="dropZoneLabel">マット</span> へ移動</div>
     <div id="surfaceLabel">作業机</div>
     <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" class="btn btn-small" type="button">×</button></div>
+    <div id="startOverlay" hidden>
+      <div id="giftBox" role="button" tabindex="0" aria-label="箱をタップして開封"></div>
+      <p class="start-hint">タップして開封</p>
+    </div>
     <div id="loadingOverlay">読み込み中…</div>
+    <div id="fadeVeil"></div>
   </div>
 
-  <div id="boxPanel">
-    <div class="box-header">
-      <button id="boxToggle" class="btn" type="button">ピースの箱（<span id="boxCount">0</span>）</button>
-      <div class="seg seg-small" role="group" aria-label="箱の絞り込み">
-        <button type="button" data-filter="all" class="seg-btn active">すべて</button>
-        <button type="button" data-filter="edge" class="seg-btn">ふちだけ</button>
-        <button type="button" data-filter="inner" class="seg-btn">内側だけ</button>
-      </div>
-      <span class="box-hint">タップで机に出す（ドラッグでも可）／塊を箱ボタンへ落とすと戻す</span>
-    </div>
-    <div id="boxList" hidden></div>
+  <div id="bottomBar">
+    <button id="edgeBtn" class="btn toggle" type="button" aria-pressed="false">ふちハイライト</button>
+    <span class="bar-hint">机の上のふちピースだけを目立たせます</span>
   </div>
 
   <footer id="appFooter">
