@@ -441,5 +441,23 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.freshStartNeedsConfirm({ cleared: true, clusters: [] }) === true, '確認要否: クリア済みの再プレイも確認が必要');
 }
 
+/* 17. 机背景キャッシュのキー (deskBgKey)
+ * テーマ・ステージ寸法・dpr・カメラがすべて一致したときだけキャッシュを
+ * 使い回す。カメラ精度はミニマップ変化検知 (camKey) と同じ丸めにする。 */
+{
+  const v = { scale: 0.5, tx: 120.34, ty: -56.78 };
+  const k = L.deskBgKey('walnut', 800, 600, 2, v);
+  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.5, tx: 120.34, ty: -56.78 }) === k, '背景キー: 同条件なら同じキー (キャッシュが効く)');
+  ok(L.deskBgKey('nordic', 800, 600, 2, v) !== k, '背景キー: テーマが変われば別キー');
+  ok(L.deskBgKey('walnut', 801, 600, 2, v) !== k, '背景キー: ステージ幅が変われば別キー');
+  ok(L.deskBgKey('walnut', 800, 601, 2, v) !== k, '背景キー: ステージ高さが変われば別キー');
+  ok(L.deskBgKey('walnut', 800, 600, 1, v) !== k, '背景キー: dpr が変われば別キー');
+  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.51, tx: 120.34, ty: -56.78 }) !== k, '背景キー: ズームが変われば別キー');
+  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.5, tx: 121.34, ty: -56.78 }) !== k, '背景キー: パン (tx) が変われば別キー');
+  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.5, tx: 120.34, ty: -55.78 }) !== k, '背景キー: パン (ty) が変われば別キー');
+  // 丸め精度未満のカメラ差は同一キー (ミニマップ検知と同じ精度 = 検知とずれない)
+  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.50001, tx: 120.31, ty: -56.81 }) === k, '背景キー: 丸め未満のカメラ差は同一キー');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

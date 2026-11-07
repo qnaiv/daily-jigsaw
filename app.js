@@ -434,6 +434,16 @@ function woodTileOrigin(offset, size) {
   return m;
 }
 
+/* 机背景キャッシュのキー: テーマ・ステージ実寸 (CSS px)・dpr・カメラ
+ * (scale/tx/ty) がすべて一致したときだけ、キャッシュした机背景を
+ * 使い回せる。カメラの文字列化精度は draw() のミニマップ変化検知
+ * (camKey) と同じ (scale 4桁 / tx,ty 1桁) にそろえ、検知とキャッシュの
+ * 「変わった」判定がずれないようにする。 */
+function deskBgKey(theme, w, h, dpr, v) {
+  return theme + '|' + w + 'x' + h + '|d' + dpr + '|' +
+    v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
+}
+
 /* マット盤の外側かどうか (セル座標)。盤の範囲は [0, n) × [0, n)。
  * マット画面で盤の外をタップしたら机に戻る判定に使う。 */
 function isOutsideBoardCell(gx, gy, n) {
@@ -494,7 +504,7 @@ var PureLogic = {
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
-  woodTileOrigin: woodTileOrigin, isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout
+  woodTileOrigin: woodTileOrigin, deskBgKey: deskBgKey, isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
 
@@ -865,7 +875,46 @@ function drawDeskBackgroundOn(ctx, v, w, h) {
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, w, h);
 }
-function drawDeskBackground(v) { drawDeskBackgroundOn(sctx, v, stageW, stageH); }
+/* 机背景 (木目タイル敷き + ビネット) のキャッシュ。
+ * 背景はカメラが静止している間は1ピクセルも変わらないのに、ピースの
+ * ドラッグ中は pointermove のたびに全体を再生成していた。Firefox Android
+ * ではその同期再描画の負荷/競合で「画面内容が縦に潰れたノイズの横帯」が
+ * 背景に残る不具合が出たため、ステージ実寸 (CSS px × dpr) のオフスクリーン
+ * に描いてキャッシュし、キーが一致する間は drawImage 1回で転写だけにする。
+ * キー (deskBgKey) にテーマ・ステージ寸法・dpr・カメラを含むので、
+ * テーマ切替/リサイズ/カメラ移動では自動的に作り直され、明示的な
+ * 無効化は要らない。木目の位相 (ワールド固定) は drawDeskBackgroundOn が
+ * カメラから決めるため、キャッシュしても見た目は変わらない。 */
+var deskBgCache = null; // { key, canvas }
+function drawDeskBackground(v) {
+  if (!stageW || !stageH) { drawDeskBackgroundOn(sctx, v, stageW, stageH); return; }
+  var key = deskBgKey(uiTheme, stageW, stageH, dpr, v);
+  if (deskBgCache && deskBgCache.key === key) {
+    sctx.drawImage(deskBgCache.canvas, 0, 0, stageW, stageH);
+    return;
+  }
+  var cv = deskBgCache ? deskBgCache.canvas : document.createElement('canvas');
+  var bw = Math.max(1, Math.round(stageW * dpr)), bh = Math.max(1, Math.round(stageH * dpr));
+  if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+  var c2 = cv.getContext('2d');
+  c2.setTransform(dpr, 0, 0, dpr, 0, 0); // 以後の座標は CSS px (drawDeskBackgroundOn の前提と同じ)
+  drawDeskBackgroundOn(c2, v, stageW, stageH);
+  deskBgCache = { key: key, canvas: cv };
+  sctx.drawImage(cv, 0, 0, stageW, stageH);
+}
+
+/* 描画の rAF 集約: 対話ハンドラ (pointermove のドラッグ/パン/ピンチ、
+ * ホイール等) からは draw() を直接呼ばず、こちら経由で「1フレームに
+ * 最大1回」だけ実描画する。イベントがフレームより速く来ても描画は
+ * 間引かれ、状態そのものはハンドラ側で即時更新されるので操作感は変わらない。
+ * 状態確定が同期描画に依存する箇所 (離した瞬間の確定描画、リサイズ直後、
+ * 合体フラッシュの自前 rAF ループ等) は従来どおり draw() を直接呼ぶ。 */
+var drawQueued = false;
+function requestDraw() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(function () { drawQueued = false; draw(); });
+}
 
 function draw() {
   if (!state || !state.srcCanvas || !state.views[state.surface]) return;
@@ -1280,12 +1329,12 @@ stage.addEventListener('pointermove', function (ev) {
     v.scale = ns;
     v.tx = cx - wx * ns; v.ty = cy - wy * ns;
     updateZoomLabel();
-    draw();
+    requestDraw(); // ピンチは連続発火するので rAF 集約 (requestDraw のコメント参照)
     return;
   }
   if (selRect && selRect.id === ev.pointerId) {
     selRect.x1 = p.x; selRect.y1 = p.y;
-    draw();
+    requestDraw(); // 矩形描画も pointermove 連続発火なので rAF 集約
     return;
   }
   if (pressPending && pressPending.id === ev.pointerId) {
@@ -1320,13 +1369,13 @@ stage.addEventListener('pointermove', function (ev) {
         g.cluster.gy = drag.cluster.gy + g.offY;
       });
     }
-    draw();
+    requestDraw(); // ドラッグは pointermove 連続発火なので rAF 集約
     return;
   }
   if (panStart) {
     view().tx = panStart.tx + (p.x - panStart.sx);
     view().ty = panStart.ty + (p.y - panStart.sy);
-    draw();
+    requestDraw(); // パンも pointermove 連続発火なので rAF 集約
   }
 });
 function endPointer(ev) {
@@ -1488,7 +1537,7 @@ stage.addEventListener('wheel', function (ev) {
   v.scale = clampZoom(v.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
   v.tx = p.x - w.x * v.scale; v.ty = p.y - w.y * v.scale;
   updateZoomLabel();
-  draw();
+  requestDraw(); // ホイールは連続発火するので rAF 集約
 }, { passive: false });
 /* ダブルタップズームは廃止 (ユーザー指定)。dblclick / touchend のダブルタップ
  * 判定は置かない: touchend 判定はピンチ終了時の2指の離し方 (<300ms) にも
