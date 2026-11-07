@@ -48,6 +48,14 @@
       <button id="collectionBtn" class="text-link" type="button">コレクション →</button>
     </nav>
 
+    <!-- テーマ切替はプレイ中の設定シートと共通 (data-theme-opt で配線・同期する) -->
+    <div class="start-theme" role="group" aria-label="テーマ">
+      <span class="start-theme-label">テーマ</span>
+      <button class="theme-opt" type="button" data-theme-opt="walnut"><span class="theme-swatch sw-walnut" aria-hidden="true"></span>ウォルナット</button>
+      <button class="theme-opt" type="button" data-theme-opt="nordic"><span class="theme-swatch sw-nordic" aria-hidden="true"></span>北欧ペーパー</button>
+      <button class="theme-opt" type="button" data-theme-opt="atelier"><span class="theme-swatch sw-atelier" aria-hidden="true"></span>ダーク・アトリエ</button>
+    </div>
+
     <footer class="start-footer">
       <span>写真: <a href="https://picsum.photos" target="_blank" rel="noopener">Lorem Picsum</a>（Unsplash出典）</span>
       <a href="https://github.com/qnaiv/daily-jigsaw" target="_blank" rel="noopener">GitHub</a>
@@ -73,6 +81,7 @@
       <span id="zoomLabel" class="mono">100%</span>
       <button id="zoomInBtn" class="zoom-btn" type="button" aria-label="拡大">＋</button>
     </div>
+    <canvas id="minimap" width="264" height="236" aria-hidden="true"></canvas>
     <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" type="button" aria-label="閉じる">×</button></div>
     <div id="loadingOverlay">読み込み中…</div>
   </div>

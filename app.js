@@ -418,6 +418,37 @@ function detailRenderPlan(pieces) {
     perSeg: n >= 28 ? 6 : 10
   };
 }
+/* ---- 机の木目タイル敷き (描画オフセット計算) ----
+ * 木目タイルはワールド座標に固定して敷く (パン/ズームで机の上を動く感触)。
+ * CanvasPattern.setTransform には頼らない: パターンの変換行列は CTM (dpr) との
+ * 合成や再ラスタライズの扱いがブラウザごとに異なり、マットでカメラを動かした
+ * あと机に戻るとタイルの実効スケールがずれて継ぎ目が太く崩れて見える事故が
+ * あったため、タイルは drawImage で明示的に敷く方式に統一する。
+ * woodTileOrigin: ワールド原点の画面座標 offset から、タイルを描き始める
+ * 画面座標を返す。結果は (-size, 0] の範囲に収まり、offset - result は size の
+ * 整数倍になる (タイル境界が常にワールドに固定される)。負の offset でも壊れない。 */
+function woodTileOrigin(offset, size) {
+  if (!(size > 0)) return 0;
+  var m = offset % size;
+  if (m > 0) m -= size;
+  return m;
+}
+
+/* マット盤の外側かどうか (セル座標)。盤の範囲は [0, n) × [0, n)。
+ * マット画面で盤の外をタップしたら机に戻る判定に使う。 */
+function isOutsideBoardCell(gx, gy, n) {
+  return gx < 0 || gy < 0 || gx >= n || gy >= n;
+}
+
+/* ミニマップ: ワールド矩形 (セル単位 {x0, y0, w, h}) を maxW × maxH (px) に
+ * アスペクト維持で収め、中央寄せするレイアウトを返す。
+ * 返り値の (ox, oy) に (セルの位置 - rect.x0/y0) * scale を足すとマップ内座標になる。 */
+function minimapLayout(rect, maxW, maxH) {
+  var scale = Math.min(maxW / rect.w, maxH / rect.h);
+  var w = rect.w * scale, h = rect.h * scale;
+  return { scale: scale, w: w, h: h, ox: (maxW - w) / 2, oy: (maxH - h) / 2 };
+}
+
 function formatTime(sec) {
   sec = Math.max(0, Math.floor(sec));
   var m = Math.floor(sec / 60), s = sec % 60, hh = Math.floor(m / 60);
@@ -440,7 +471,8 @@ var PureLogic = {
   scatterRect: scatterRect, initialScatter: initialScatter,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime,
-  completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan
+  completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
+  woodTileOrigin: woodTileOrigin, isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
 
@@ -520,6 +552,7 @@ function applyTheme() {
   document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
     b.classList.toggle('active', b.getAttribute('data-theme-opt') === uiTheme);
   });
+  invalidateDeskBackdrop(); // 木目・マット色が変わるので背景レイヤーを作り直す
   if (state) { renderStartScreen(); draw(); } // 箱の色と Canvas (木目/マット) を新テーマで描き直す
   if (typeof detailRecord !== 'undefined' && detailRecord && !$('detailModal').hidden) renderDetailPuzzle(detailRecord); // 詳細のマット色も追従
 }
@@ -697,6 +730,7 @@ function resizeStage() {
   stageW = wrap.clientWidth; stageH = wrap.clientHeight;
   if (!stageW || !stageH) return; // 非表示中は実サイズが取れないので何もしない
   stage.width = Math.round(stageW * dpr); stage.height = Math.round(stageH * dpr);
+  invalidateDeskBackdrop(); // 背景レイヤーはステージ実寸で描くので作り直す
   if (state && !state.views.desk) fitViews();
   draw();
 }
@@ -720,6 +754,7 @@ function fitViews() {
   if (!stageW || !stageH) return; // プレイ画面が非表示の間はフィット計算しない (表示時に resizeStage が行う)
   state.views.desk = fitView('desk');
   state.views.mat = fitView('mat');
+  invalidateDeskBackdrop(); // 机カメラが変わるので背景レイヤーを作り直す
 }
 function view() { return state.views[state.surface]; }
 function worldToScreen(wx, wy) { var v = view(); return { x: wx * v.scale + v.tx, y: wy * v.scale + v.ty }; }
@@ -727,11 +762,16 @@ function screenToWorld(sx, sy) { var v = view(); return { x: (sx - v.tx) / v.sca
 
 /* ---------- 机の木目テクスチャ ----------
  * 木目タイルを一度だけオフスクリーンに描き、ワールド座標に固定して敷く
- * (パン/ズームに追随するので「机の上を動いている」感触になる)。 */
-var woodPatterns = {}; // テーマごとに生成してキャッシュ (模様の配置は全テーマ共通シード)
-function getWoodPattern() {
+ * (パン/ズームに追随するので「机の上を動いている」感触になる)。
+ * 敷き方は CanvasPattern ではなく drawImage の明示タイル敷き: 共有パターン
+ * オブジェクトの setTransform はブラウザ差で実効スケールがずれることがあり
+ * (マットでピンチを繰り返したあと机の継ぎ目が太く崩れるバグの原因)、
+ * テクスチャ側に可変状態を持たせないことで机とマットの状態干渉も断つ。
+ * タイルのキャンバス自体はテーマごとにキャッシュし、読み取り専用で共有する。 */
+var woodTiles = {}; // テーマごとに生成してキャッシュ (模様の配置は全テーマ共通シード)
+function getWoodTile() {
   var key = uiTheme;
-  if (woodPatterns[key]) return woodPatterns[key];
+  if (woodTiles[key]) return woodTiles[key];
   var pal = THEMES[key].wood;
   var cv = document.createElement('canvas');
   cv.width = 512; cv.height = 512;
@@ -772,29 +812,39 @@ function getWoodPattern() {
       c.stroke();
     }
   }
-  woodPatterns[key] = sctx.createPattern(cv, 'repeat');
-  return woodPatterns[key];
+  woodTiles[key] = cv;
+  return cv;
 }
-function drawDeskBackground(v) {
+/* 机の背景を ctx に描く (w, h は CSS px の描画領域)。メイン画面とマット背景の
+ * 「ぼんやりした机」レイヤーの両方から使う。タイルはワールド固定で敷く:
+ * 1タイル = 512ワールド単位、画面上は 512 * v.scale px になり、開始位置は
+ * woodTileOrigin でワールド原点に位相を合わせる。 */
+function drawDeskBackgroundOn(ctx, v, w, h) {
   var pal = THEMES[uiTheme].wood;
-  var pat = null;
-  try { pat = getWoodPattern(); } catch (e) { pat = null; }
-  if (pat) {
-    if (pat.setTransform && typeof DOMMatrix !== 'undefined') {
-      try { pat.setTransform(new DOMMatrix([v.scale, 0, 0, v.scale, v.tx, v.ty])); } catch (e) { /* 対応外環境では素のタイリング */ }
+  ctx.fillStyle = pal.fallback;
+  ctx.fillRect(0, 0, w, h);
+  var tile = null;
+  try { tile = getWoodTile(); } catch (e) { tile = null; }
+  if (tile) {
+    var ts = 512 * v.scale; // タイルの画面サイズ (CSS px)
+    if (ts >= 2) {
+      var ox = woodTileOrigin(v.tx, ts), oy = woodTileOrigin(v.ty, ts);
+      // +1 は隣接タイル間のサブピクセルの隙間を埋めるための重なり (下地色で保険済み)
+      for (var x = ox; x < w; x += ts) {
+        for (var y = oy; y < h; y += ts) {
+          ctx.drawImage(tile, x, y, ts + 1, ts + 1);
+        }
+      }
     }
-    sctx.fillStyle = pat;
-  } else {
-    sctx.fillStyle = pal.fallback;
   }
-  sctx.fillRect(0, 0, stageW, stageH);
   // 机全体にゆるい陰影 (ビネット) をつけて天板らしくする
-  var vg = sctx.createRadialGradient(stageW / 2, stageH / 2, Math.min(stageW, stageH) * 0.35, stageW / 2, stageH / 2, Math.max(stageW, stageH) * 0.75);
+  var vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
   vg.addColorStop(0, pal.vigLight);
   vg.addColorStop(1, pal.vigDark);
-  sctx.fillStyle = vg;
-  sctx.fillRect(0, 0, stageW, stageH);
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, w, h);
 }
+function drawDeskBackground(v) { drawDeskBackgroundOn(sctx, v, stageW, stageH); }
 
 function draw() {
   if (!state || !state.srcCanvas || !state.views[state.surface]) return;
@@ -802,13 +852,18 @@ function draw() {
   var isMat = state.surface === 'mat';
   var v = view(), n = state.n;
   if (isMat) {
-    sctx.fillStyle = THEMES[uiTheme].mat;
-    sctx.fillRect(0, 0, stageW, stageH);
+    drawMatBackdrop(); // 盤の外側: 机が薄いベール越しにぼんやり見える
   } else {
     drawDeskBackground(v);
+    // 机でカメラが動いたらミニマップを出す (初回は現在値で初期化だけする)
+    var camKey = v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
+    if (lastCamKey === '') lastCamKey = camKey;
+    else if (camKey !== lastCamKey) { lastCamKey = camKey; pokeMinimap(); }
   }
   if (isMat) {
     var tl = worldToScreen(0, 0), br = worldToScreen(n * CELL, n * CELL);
+    sctx.fillStyle = THEMES[uiTheme].mat; // 盤そのものはベールを被せずクッキリ
+    sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
     sctx.fillStyle = 'rgba(0,0,0,0.12)';
     sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
     sctx.strokeStyle = 'rgba(255,255,255,0.75)';
@@ -872,6 +927,70 @@ function draw() {
     sctx.strokeRect(rx, ry, rw, rh);
   }
 }
+/* ---------- ミニマップ (机でカメラを動かしている間だけ表示) ----------
+ * 散らばり領域全体の縮小図に、机上のピースを点で、現在のビューポートを
+ * 枠で描く。画面外にピースが残っていることが分かるようにするのが目的で、
+ * ミニマップ自体は操作対象にしない。表示の出し入れは draw() のカメラ変化
+ * 検知 (pokeMinimap) が担い、移動が止まると少し置いてフェードアウトする。 */
+var minimapHideTimer = null;
+var lastCamKey = ''; // draw() がカメラ変化を検知するための前回値
+function pokeMinimap() {
+  if (!state || state.surface !== 'desk') return;
+  var mm = $('minimap');
+  if (!mm) return;
+  mm.classList.add('on');
+  drawMinimap();
+  if (minimapHideTimer) clearTimeout(minimapHideTimer);
+  minimapHideTimer = setTimeout(function () { mm.classList.remove('on'); }, 700);
+}
+function hideMinimap() {
+  var mm = $('minimap');
+  if (mm) mm.classList.remove('on');
+  if (minimapHideTimer) { clearTimeout(minimapHideTimer); minimapHideTimer = null; }
+}
+function drawMinimap() {
+  var mm = $('minimap');
+  if (!mm || !state || !state.views.desk) return;
+  var ctx = mm.getContext('2d');
+  var u = mm.width / 132; // CSS 132×118 に対する backing 解像度の比
+  ctx.setTransform(u, 0, 0, u, 0, 0);
+  ctx.clearRect(0, 0, 132, 118);
+  var n = state.n;
+  var r = scatterRect(n * n);
+  var lay = minimapLayout(r, 120, 106);
+  ctx.save();
+  ctx.translate(6, 6);
+  // 散らばり領域 (机全体)
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  ctx.fillRect(lay.ox, lay.oy, lay.w, lay.h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(lay.ox, lay.oy, lay.w, lay.h);
+  // 机上のピースを点で (領域の外に出た分はクリップ)。選択中の塊は真鍮色
+  ctx.save();
+  ctx.beginPath(); ctx.rect(lay.ox, lay.oy, lay.w, lay.h); ctx.clip();
+  state.clusters.forEach(function (cl) {
+    if (cl.surface !== 'desk') return;
+    ctx.fillStyle = selection.has(cl) ? THEMES[uiTheme].brass : 'rgba(255,255,255,0.92)';
+    var anchor = pieceHome(clusterAnchorId(cl), n);
+    cl.pieces.forEach(function (id) {
+      var home = pieceHome(id, n);
+      var gx = cl.gx + (home.col - anchor.col), gy = cl.gy + (home.row - anchor.row);
+      var px = lay.ox + (gx - r.x0) * lay.scale, py = lay.oy + (gy - r.y0) * lay.scale;
+      ctx.fillRect(px - 1, py - 1, 2, 2);
+    });
+  });
+  ctx.restore();
+  // 現在のビューポート範囲
+  var tl = screenToWorld(0, 0), br = screenToWorld(stageW, stageH);
+  var vx = lay.ox + (tl.x / CELL - r.x0) * lay.scale, vy = lay.oy + (tl.y / CELL - r.y0) * lay.scale;
+  var vw = (br.x - tl.x) / CELL * lay.scale, vh = (br.y - tl.y) / CELL * lay.scale;
+  ctx.strokeStyle = THEMES[uiTheme].brass;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(vx, vy, vw, vh);
+  ctx.restore();
+}
+
 /* '#c9a227' + alpha → 'rgba(...)' (Canvas の選択ハイライト用) */
 function hexToRgba(hex, alpha) {
   var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
@@ -924,10 +1043,11 @@ function clusterWorldBox(cl) {
     x1: (cl.gx + (maxC - anchor.col) + 1.4) * CELL, y1: (cl.gy + (maxR - anchor.row) + 1.4) * CELL
   };
 }
-function drawCluster(cl, wTl, wBr) {
+function drawCluster(cl, wTl, wBr) { drawClusterOn(sctx, view(), cl, wTl, wBr); }
+function drawClusterOn(ctx, v, cl, wTl, wBr) {
   var box = clusterWorldBox(cl);
   if (box.x1 < wTl.x || box.x0 > wBr.x || box.y1 < wTl.y || box.y0 > wBr.y) return;
-  var n = state.n, anchor = pieceHome(clusterAnchorId(cl), n), v = view();
+  var n = state.n, anchor = pieceHome(clusterAnchorId(cl), n);
   cl.pieces.forEach(function (id) {
     var home = pieceHome(id, n);
     var wx = (cl.gx + (home.col - anchor.col)) * CELL, wy = (cl.gy + (home.row - anchor.row)) * CELL;
@@ -937,8 +1057,50 @@ function drawCluster(cl, wTl, wBr) {
     var dx = wx * v.scale + v.tx - bmp.marginPx * ratio;
     var dy = wy * v.scale + v.ty - bmp.marginPx * ratio;
     var sz = bmp.canvas.width * ratio;
-    sctx.drawImage(bmp.canvas, dx, dy, sz, sz);
+    ctx.drawImage(bmp.canvas, dx, dy, sz, sz);
   });
+}
+
+/* ---------- マット画面の背景: 机をぼんやり見せる ----------
+ * マット盤の外側には、机 (木目 + 机上の塊) を薄いベール越しに見せる。
+ * 机レイヤーはオフスクリーンに描いて使い回す: マット表示中は机側のカメラも
+ * 塊も変わらないので、盤の状態が変わったとき (afterBoardChange 等) だけ
+ * 再描画すればよい。ぼかし専用処理はせず、0.6倍の低解像度で描いて拡大する
+ * ことで柔らかくし、さらにマット色のベール (不透明度 0.65) を被せて
+ * 机の見え方は 3.5割ほどに落とす。 */
+var DESK_BACKDROP_SCALE = 0.6;
+var deskBackdrop = null;
+var deskBackdropDirty = true;
+function invalidateDeskBackdrop() { deskBackdropDirty = true; }
+function ensureDeskBackdrop() {
+  var dv = state && state.views.desk;
+  if (!dv || !stageW || !stageH) { deskBackdrop = null; return; }
+  if (!deskBackdropDirty && deskBackdrop) return;
+  var bw = Math.max(1, Math.round(stageW * dpr * DESK_BACKDROP_SCALE));
+  var bh = Math.max(1, Math.round(stageH * dpr * DESK_BACKDROP_SCALE));
+  if (!deskBackdrop) deskBackdrop = document.createElement('canvas');
+  deskBackdrop.width = bw; deskBackdrop.height = bh;
+  var bctx = deskBackdrop.getContext('2d');
+  bctx.setTransform(bw / stageW, 0, 0, bh / stageH, 0, 0); // 以後の座標は CSS px でよい
+  drawDeskBackgroundOn(bctx, dv, stageW, stageH);
+  var wTl = { x: (0 - dv.tx) / dv.scale, y: (0 - dv.ty) / dv.scale };
+  var wBr = { x: (stageW - dv.tx) / dv.scale, y: (stageH - dv.ty) / dv.scale };
+  state.clusters.forEach(function (cl) {
+    if (cl.surface === 'desk') drawClusterOn(bctx, dv, cl, wTl, wBr);
+  });
+  deskBackdropDirty = false;
+}
+/* マット画面の下地: ぼんやりした机 + ベール。机レイヤーが作れない初期状態では
+ * 従来どおりマット色ベタ塗りに落とす。盤そのものは draw() 側でこの上に描く。 */
+function drawMatBackdrop() {
+  ensureDeskBackdrop();
+  if (deskBackdrop) {
+    sctx.drawImage(deskBackdrop, 0, 0, stageW, stageH);
+    sctx.fillStyle = hexToRgba(THEMES[uiTheme].mat, 0.65);
+  } else {
+    sctx.fillStyle = THEMES[uiTheme].mat;
+  }
+  sctx.fillRect(0, 0, stageW, stageH);
 }
 /* ヒットテスト: 画面座標 → 塊 (最前面優先) */
 function hitCluster(sx, sy) {
@@ -1065,8 +1227,9 @@ stage.addEventListener('pointerdown', function (ev) {
     // 空き地: すぐにはパンを始めず、長押し (範囲選択) かパンかの判定に入る。
     // 450ms ほぼ静止できたら選択モードへ、判定前に 10px 超動いたら通常パンへ。
     var pid = ev.pointerId, sx0 = p.x, sy0 = p.y;
+    var w0 = screenToWorld(sx0, sy0);
     pressPending = {
-      id: pid, sx: sx0, sy: sy0, tx: view().tx, ty: view().ty,
+      id: pid, sx: sx0, sy: sy0, tx: view().tx, ty: view().ty, wx: w0.x, wy: w0.y,
       timer: setTimeout(function () {
         if (!pressPending || pressPending.id !== pid || !pointers.has(pid)) return;
         pressPending = null;
@@ -1149,8 +1312,15 @@ function endPointer(ev) {
   if (pressPending && pressPending.id === ev.pointerId) {
     clearTimeout(pressPending.timer);
     var wasTap = !panStart && pointers.size === 1; // パンに移行せず単独で離した = 空き地タップ
+    var pp = pressPending;
     pressPending = null;
-    if (wasTap && !cancelled) clearSelection(); // 空き地を短くタップ → 選択解除
+    if (wasTap && !cancelled) {
+      clearSelection(); // 空き地を短くタップ → 選択解除
+      // マット画面で盤の外側をタップしたら机に戻る (盤の中のタップは従来どおり)。
+      // 空き地タップだけがここを通る (ピースはドラッグ、パンは panStart 経由、
+      // 長押しは selRect 経由) ので、パン/ドラッグ/ピンチとは誤判定しない。
+      if (state && state.surface === 'mat' && isOutsideBoardCell(pp.wx / CELL, pp.wy / CELL, state.n)) switchSurface();
+    }
   }
   if (selRect && selRect.id === ev.pointerId) {
     if (cancelled) { selRect = null; $('selectChip').hidden = true; draw(); }
@@ -1225,6 +1395,7 @@ function settleGroupDrag(leader, group) {
 }
 function afterBoardChange() {
   pruneSelection(); // 合体で差し替わった塊は選択から外れる
+  invalidateDeskBackdrop(); // 塊の配置が変わったのでマット背景の机レイヤーを作り直す
   persistProgress();
   updateProgressUI();
   draw();
@@ -1247,6 +1418,7 @@ function switchSurfaceDuringDrag() {
   }
   // 切替先でのドロップゾーンは「戻る」方向を案内する
   $('dropZoneLabel').textContent = state.surface === 'desk' ? 'マット' : '机';
+  invalidateDeskBackdrop(); // 塊が面を移ったので机レイヤーを作り直す
   updateSurfaceUI();
   draw();
 }
@@ -1254,12 +1426,14 @@ function switchSurface() {
   if (!state || state.phase !== 'play' || uiHome) return;
   state.surface = state.surface === 'desk' ? 'mat' : 'desk';
   selection.clear(); // 画面切替では選択は保持しない
+  invalidateDeskBackdrop();
   updateSurfaceUI();
   draw();
 }
 function updateSurfaceUI() {
   $('surfaceLabel').textContent = state.surface === 'desk' ? '作業机' : 'パズルマット';
   $('surfaceBtn').textContent = state.surface === 'desk' ? 'マットを開く' : '机に戻る';
+  if (state.surface !== 'desk') hideMinimap(); // ミニマップは机画面だけのもの
   updateZoomLabel();
 }
 function clampZoom(s) {
@@ -1369,6 +1543,7 @@ function runConfetti() {
  * uiCollection: コレクションを表示しているか */
 var uiHome = true;
 var uiCollection = false;
+var collectionBackToHome = false; // クリア画面経由で開いたコレクションの「戻る」はプレイ画面でなくスタート画面へ
 var firstStart = true; // 初回だけ「未開封→スタート画面 / 開始済み→そのまま続きからプレイ」
 function applyVisibility() {
   $('startView').hidden = !uiHome || uiCollection;
@@ -1383,6 +1558,14 @@ function showCollection() {
 }
 function showPlay() {
   uiCollection = false;
+  applyVisibility();
+}
+/* スタート画面に戻る (設定の「スタート画面に戻る」と、クリア画面を閉じたときの共通動線) */
+function goToStartScreen() {
+  if (state) persistProgress();
+  uiHome = true;
+  uiCollection = false;
+  renderStartScreen();
   applyVisibility();
 }
 function renderCollection() {
@@ -1644,14 +1827,12 @@ function wireControls() {
   });
   $('settingsCollectionBtn').addEventListener('click', function () {
     closeSettings();
+    collectionBackToHome = false; // プレイ中からのコレクションはプレイ画面へ戻る
     showCollection();
   });
   $('settingsHomeBtn').addEventListener('click', function () {
     closeSettings();
-    if (state) persistProgress();
-    uiHome = true;
-    renderStartScreen();
-    applyVisibility();
+    goToStartScreen();
   });
   $('settingsRestartBtn').addEventListener('click', function () {
     $('confirmModal').hidden = false;
@@ -1672,8 +1853,14 @@ function wireControls() {
   $('giftBox').addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openBox(); }
   });
-  $('collectionBtn').addEventListener('click', showCollection);
-  $('collectionBack').addEventListener('click', showPlay);
+  $('collectionBtn').addEventListener('click', function () {
+    collectionBackToHome = false;
+    showCollection();
+  });
+  $('collectionBack').addEventListener('click', function () {
+    if (collectionBackToHome) { collectionBackToHome = false; goToStartScreen(); }
+    else showPlay();
+  });
   $('resumeClose').addEventListener('click', function () { $('resumeBanner').hidden = true; });
   document.querySelectorAll('[data-close]').forEach(function (el) {
     el.addEventListener('click', function () {
@@ -1681,8 +1868,13 @@ function wireControls() {
       $('detailModal').hidden = true;
     });
   });
-  $('resultCloseBtn').addEventListener('click', function () { $('resultModal').hidden = true; });
-  $('resultCollectionBtn').addEventListener('click', function () { $('resultModal').hidden = true; showCollection(); });
+  // クリア画面を閉じたらプレイ画面 (空の机) には残らず、スタート画面に戻す
+  $('resultCloseBtn').addEventListener('click', function () { $('resultModal').hidden = true; goToStartScreen(); });
+  $('resultCollectionBtn').addEventListener('click', function () {
+    $('resultModal').hidden = true;
+    collectionBackToHome = true; // コレクションから戻る先もスタート画面にする
+    showCollection();
+  });
   $('resultCopyBtn').addEventListener('click', function () {
     var text = $('resultText').textContent + ' #まいにちジグソー';
     if (navigator.clipboard) navigator.clipboard.writeText(text);
@@ -1815,10 +2007,17 @@ function renderStartScreen() {
   $('startHint').hidden = startedAlready;
   $('resumePanel').hidden = !startedAlready;
   if (startedAlready) {
-    var pos = piecePositions(state.clusters, state.n);
-    var onMat = 0;
-    pos.forEach(function (p) { if (p.surface === 'mat') onMat++; });
-    $('resumeInfo').textContent = difficulty + 'ピース ・ マットに置いたピース ' + onMat + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
+    if (state.cleared) {
+      // クリア済みの日付×難易度は進捗サマリーの代わりにクリア表示にする
+      var rec = findRecord(playDate, difficulty);
+      var best = rec ? rec.bestTimeSec : currentElapsed();
+      $('resumeInfo').textContent = difficulty + 'ピース ・ クリア済み ・ ベストタイム ' + formatTime(best);
+    } else {
+      var pos = piecePositions(state.clusters, state.n);
+      var onMat = 0;
+      pos.forEach(function (p) { if (p.surface === 'mat') onMat++; });
+      $('resumeInfo').textContent = difficulty + 'ピース ・ マットに置いたピース ' + onMat + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
+    }
   }
 }
 

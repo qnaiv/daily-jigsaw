@@ -367,5 +367,58 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
     '詳細の辺生成は決定的で、全ピースの輪郭点が有限値で作れる');
 }
 
+/* 13. 木目タイル敷きのオフセット計算 (回帰: パターン変換に頼らず drawImage で敷く) */
+{
+  ok(L.woodTileOrigin(0, 100) === 0, 'タイル原点: オフセット0なら0');
+  ok(L.woodTileOrigin(100, 100) === 0, 'タイル原点: ちょうどタイル幅ぶんなら0');
+  ok(L.woodTileOrigin(30, 100) === -70, 'タイル原点: 正のオフセットは1タイル手前から敷く');
+  ok(L.woodTileOrigin(-30, 100) === -30, 'タイル原点: 負のオフセットでもそのまま位相が合う');
+  ok(L.woodTileOrigin(-100, 100) === 0, 'タイル原点: 負のタイル幅ぶんでも0');
+  ok(Math.abs(L.woodTileOrigin(250.5, 100) - (-49.5)) < 1e-9, 'タイル原点: 小数のオフセットにも対応');
+  ok(L.woodTileOrigin(50, 0) === 0 && L.woodTileOrigin(50, -10) === 0, 'タイル原点: 不正なタイル幅では0 (描画側でフォールバック)');
+  // 任意のオフセットで「結果は (-size, 0]」かつ「offset - result は size の整数倍」
+  let propOk = true;
+  for (const off of [-12345.678, -512, -0.001, 0.001, 511.9, 512, 9876.543]) {
+    for (const size of [512 * 0.17, 512 * 0.34, 512 * 1.36]) {
+      const r = L.woodTileOrigin(off, size);
+      const k = (off - r) / size;
+      if (!(r > -size && r <= 0 && Math.abs(k - Math.round(k)) < 1e-6)) propOk = false;
+    }
+  }
+  ok(propOk, 'タイル原点: 負座標・小ズームでも常に範囲内かつワールドに位相が固定される');
+}
+
+/* 14. マット盤の外側タップ判定 (盤外タップ → 机に戻る) */
+{
+  ok(L.isOutsideBoardCell(-0.1, 5, 10) === true, '盤外判定: 盤の左は外');
+  ok(L.isOutsideBoardCell(5, -1, 10) === true, '盤外判定: 盤の上は外');
+  ok(L.isOutsideBoardCell(10, 5, 10) === true, '盤外判定: 右端 (gx == n) は外');
+  ok(L.isOutsideBoardCell(5, 10, 10) === true, '盤外判定: 下端 (gy == n) は外');
+  ok(L.isOutsideBoardCell(0, 0, 10) === false, '盤外判定: 左上セルは内');
+  ok(L.isOutsideBoardCell(9.99, 9.99, 10) === false, '盤外判定: 右下セル内は内');
+  ok(L.isOutsideBoardCell(5.5, 5.5, 10) === false, '盤外判定: 中央は内');
+}
+
+/* 15. ミニマップのレイアウト計算 */
+{
+  const r = L.scatterRect(100); // {x0:-3, y0:-3, w:22, h:20}
+  const lay = L.minimapLayout(r, 120, 106);
+  ok(Math.abs(lay.scale - Math.min(120 / r.w, 106 / r.h)) < 1e-9, 'ミニマップ: アスペクト維持のスケール');
+  ok(lay.w <= 120 && lay.h <= 106, 'ミニマップ: 最大サイズに収まる');
+  ok(Math.abs(lay.ox - (120 - lay.w) / 2) < 1e-9 && Math.abs(lay.oy - (106 - lay.h) / 2) < 1e-9, 'ミニマップ: 中央寄せされる');
+  ok(Math.abs(lay.w / lay.h - r.w / r.h) < 1e-9, 'ミニマップ: ワールドのアスペクト比を保つ');
+  const wide = L.minimapLayout({ x0: 0, y0: 0, w: 40, h: 10 }, 120, 106);
+  ok(Math.abs(wide.w - 120) < 1e-9 && Math.abs(wide.h - 30) < 1e-9 && wide.oy > 0, 'ミニマップ: 横長ワールドは横いっぱい・縦中央');
+  const tall = L.minimapLayout({ x0: 0, y0: 0, w: 10, h: 40 }, 120, 106);
+  ok(Math.abs(tall.h - 106) < 1e-9 && Math.abs(tall.w - 26.5) < 1e-9 && tall.ox > 0, 'ミニマップ: 縦長ワールドは縦いっぱい・横中央');
+  // 全難易度で散らばり領域がミニマップに収まる
+  let allFit = true;
+  for (const p of L.DIFFICULTIES) {
+    const l2 = L.minimapLayout(L.scatterRect(p), 120, 106);
+    if (!(l2.w <= 120 + 1e-9 && l2.h <= 106 + 1e-9 && l2.scale > 0)) allFit = false;
+  }
+  ok(allFit, 'ミニマップ: 全難易度の散らばり領域が収まる');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
