@@ -6,7 +6,7 @@
 /* ================= 純粋ロジック ================= */
 
 var BASE_DATE_FALLBACK = '2026-11-07';
-var DIFFICULTIES = [100, 225, 400, 784, 1225, 2025];
+var DIFFICULTIES = [36, 100, 225, 400, 784, 1225, 2025];
 var TABSIZE = 0.2;      // デコの高さ = 一辺の約20%
 var JITTER = 0.045;     // 制御点ジッター (辺長比)
 var SNAP_DIST = 0.35;   // 相対スナップの許容距離 (セル単位)
@@ -346,7 +346,7 @@ function loadStore() {
     var raw = localStorage.getItem(STORE_KEY);
     if (raw) { var s = JSON.parse(raw); if (s && s.progress && s.records) return s; }
   } catch (e) { /* ignore */ }
-  return { records: [], progress: {}, lastDifficulty: 100 };
+  return { records: [], progress: {}, lastDifficulty: 36 };
 }
 var store = loadStore();
 function saveStore() {
@@ -375,7 +375,7 @@ function computeStreak() {
 var params = new URLSearchParams(location.search);
 var todayStr = jstTodayString();
 var playDate = resolvePlayDate(params.get('date'), todayStr);
-var difficulty = DIFFICULTIES.indexOf(store.lastDifficulty) >= 0 ? store.lastDifficulty : 100;
+var difficulty = DIFFICULTIES.indexOf(store.lastDifficulty) >= 0 ? store.lastDifficulty : 36;
 var state = null; // ゲーム開始時に構築
 
 function newGameState(pool) {
@@ -1046,7 +1046,7 @@ function openDetail(r) {
 function buildDifficultySeg() {
   var seg = $('difficultySeg');
   seg.innerHTML = '';
-  var labels = { 100: '100 かんたん', 225: '225', 400: '400', 784: '784', 1225: '1225', 2025: '2025 おに' };
+  var labels = { 36: '36 かんたん', 100: '100', 225: '225', 400: '400', 784: '784', 1225: '1225', 2025: '2025 おに' };
   DIFFICULTIES.forEach(function (d) {
     var b = document.createElement('button');
     b.type = 'button'; b.className = 'seg-btn' + (d === difficulty ? ' active' : '');

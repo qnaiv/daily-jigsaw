@@ -213,5 +213,30 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(res6.merged === false && res6.cluster.gx === 2 && res6.cluster.gy === 7, '合体相手がいなければ最寄りグリッドに吸着するだけ');
 }
 
+/* 10. 最低難易度 36ピース (6×6) */
+{
+  ok(L.DIFFICULTIES.length === 7 && L.DIFFICULTIES[0] === 36 && L.DIFFICULTIES[6] === 2025, '難易度は7段階で最低が36ピース');
+  const e1 = L.generateEdges('2026-11-07', 36);
+  const e2 = L.generateEdges('2026-11-07', 36);
+  ok(e1.n === 6, '36ピースは 6×6 グリッド');
+  ok(eq(e1.h, e2.h) && eq(e1.v, e2.v), '36ピース: 同じ日付で辺形状が完全一致');
+  const e3 = L.generateEdges('2026-11-08', 36);
+  ok(!eq(e1.h, e3.h), '36ピース: 日付が変わると辺形状も変わる');
+  // 完成判定 (n=6)
+  const n = 6, pieces = 36;
+  const clusters = [];
+  for (let id = 0; id < pieces; id++) {
+    const h = L.pieceHome(id, n);
+    clusters.push({ pieces: [id], surface: 'mat', gx: h.col, gy: h.row });
+  }
+  ok(L.isComplete(clusters, n) === true, '36ピース: 全セル正解配置で完成判定 = 真');
+  const moved = clusters.map(c => ({ ...c }));
+  moved[7] = { ...moved[7], gy: moved[7].gy + 1 };
+  ok(L.isComplete(moved, n) === false, '36ピース: 1つずらすと完成判定 = 偽');
+  // 散らばり (n=6)
+  const s36 = L.initialScatter('2026-11-07', 36);
+  ok(s36.length === 36 && new Set(s36.map(c => c.gx + ',' + c.gy)).size === 36, '36ピース: 散らばりは全ピース重ならず机に出る');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
