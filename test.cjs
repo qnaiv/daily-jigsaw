@@ -441,22 +441,85 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.freshStartNeedsConfirm({ cleared: true, clusters: [] }) === true, '確認要否: クリア済みの再プレイも確認が必要');
 }
 
-/* 17. 机背景キャッシュのキー (deskBgKey)
- * テーマ・ステージ寸法・dpr・カメラがすべて一致したときだけキャッシュを
- * 使い回す。カメラ精度はミニマップ変化検知 (camKey) と同じ丸めにする。 */
+/* 17. 机背景の世界空間キャッシュ (deskBgRegionCells / deskBgPlan / deskBgBlit)
+ * キャッシュはカメラに依存しない世界空間で作り、毎フレームは部分転写だけ。
+ * 転写は「整数アラインしたソース矩形 + 等倍率デスト矩形」で、引き伸ばしや
+ * 潰れ (異方スケール) が構造的に起こらないことをここで保証する。
+ * 範囲を出たカメラでは null → 直接描画にフォールバックする。 */
 {
-  const v = { scale: 0.5, tx: 120.34, ty: -56.78 };
-  const k = L.deskBgKey('walnut', 800, 600, 2, v);
-  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.5, tx: 120.34, ty: -56.78 }) === k, '背景キー: 同条件なら同じキー (キャッシュが効く)');
-  ok(L.deskBgKey('nordic', 800, 600, 2, v) !== k, '背景キー: テーマが変われば別キー');
-  ok(L.deskBgKey('walnut', 801, 600, 2, v) !== k, '背景キー: ステージ幅が変われば別キー');
-  ok(L.deskBgKey('walnut', 800, 601, 2, v) !== k, '背景キー: ステージ高さが変われば別キー');
-  ok(L.deskBgKey('walnut', 800, 600, 1, v) !== k, '背景キー: dpr が変われば別キー');
-  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.51, tx: 120.34, ty: -56.78 }) !== k, '背景キー: ズームが変われば別キー');
-  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.5, tx: 121.34, ty: -56.78 }) !== k, '背景キー: パン (tx) が変われば別キー');
-  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.5, tx: 120.34, ty: -55.78 }) !== k, '背景キー: パン (ty) が変われば別キー');
-  // 丸め精度未満のカメラ差は同一キー (ミニマップ検知と同じ精度 = 検知とずれない)
-  ok(L.deskBgKey('walnut', 800, 600, 2, { scale: 0.50001, tx: 120.31, ty: -56.81 }) === k, '背景キー: 丸め未満のカメラ差は同一キー');
+  const CELLT = 100;
+  // 範囲: どのステージでも「最小ズームで見える範囲 (散らばり中心)」を覆う
+  for (const pieces of [36, 100, 2025]) {
+    const s = L.scatterRect(pieces);
+    for (const [W, H] of [[412, 915], [800, 600], [2560, 1440]]) {
+      const r = L.deskBgRegionCells(pieces, W, H, CELLT);
+      const fit = Math.min(W / (s.w * CELLT), H / (s.h * CELLT));
+      const visW = 2 * W / (fit * CELLT), visH = 2 * H / (fit * CELLT);
+      const cx = s.x0 + s.w / 2, cy = s.y0 + s.h / 2;
+      ok(r.x0 <= cx - visW / 2 + 1e-9 && r.y0 <= cy - visH / 2 + 1e-9 &&
+         r.x0 + r.w >= cx + visW / 2 - 1e-9 && r.y0 + r.h >= cy + visH / 2 - 1e-9,
+        '背景範囲: 最小ズームの表示範囲を覆う (' + pieces + 'ピース, ' + W + 'x' + H + ')');
+      ok(r.x0 <= s.x0 && r.y0 <= s.y0 && r.x0 + r.w >= s.x0 + s.w && r.y0 + r.h >= s.y0 + s.h,
+        '背景範囲: 散らばり領域を内包する (' + pieces + 'ピース, ' + W + 'x' + H + ')');
+      ok(eq(L.deskBgRegionCells(pieces, W, H, CELLT), r), '背景範囲: 決定的 (' + pieces + 'ピース, ' + W + 'x' + H + ')');
+    }
+  }
+  // 計画: 全難易度 (縦長ステージ = 最大範囲) で最大寸法・最大面積に収まる
+  const MAXD = 4096, MAXA = 8388608;
+  for (const pieces of L.DIFFICULTIES) {
+    const rc = L.deskBgRegionCells(pieces, 412, 915, CELLT);
+    const plan = L.deskBgPlan(rc.w * CELLT, rc.h * CELLT, MAXD, MAXA);
+    ok(!!plan, '背景計画: 生成できる (' + pieces + 'ピース)');
+    ok(plan.wPx <= MAXD && plan.hPx <= MAXD, '背景計画: 最大寸法に収まる (' + pieces + 'ピース)');
+    ok(plan.wPx * plan.hPx <= MAXA * 1.01, '背景計画: 最大面積にほぼ収まる (' + pieces + 'ピース, ' + plan.wPx + 'x' + plan.hPx + ')');
+    ok(plan.R > 0 && plan.R <= 1.5, '背景計画: 解像度は 0〜1.5 px/単位 (' + pieces + 'ピース, R=' + plan.R.toFixed(3) + ')');
+  }
+  ok(L.deskBgPlan(0, 100, MAXD, MAXA) === null && L.deskBgPlan(100, -5, MAXD, MAXA) === null, '背景計画: 不正な範囲では null');
+  ok(L.deskBgPlan(1e9, 1e9, MAXD, MAXA) === null, '背景計画: 解像度が細かすぎる場合は null (キャッシュしない)');
+  // 転写: fit カメラ (散らばり領域がちょうど画面に収まる) では必ず成功し、
+  // 等倍率・ソース範囲内・画面を覆う矩形が返る
+  const CELL = 100;
+  const stageW = 800, stageH = 600;
+  const rc = L.deskBgRegionCells(36, stageW, stageH, CELL);
+  const region = { x0: rc.x0 * CELL, y0: rc.y0 * CELL, w: rc.w * CELL, h: rc.h * CELL };
+  const plan = L.deskBgPlan(region.w, region.h, MAXD, MAXA);
+  const s = L.scatterRect(36);
+  const fit = Math.min(stageW / (s.w * CELL), stageH / (s.h * CELL));
+  const vFit = { scale: fit, fit: fit, tx: (stageW - s.w * CELL * fit) / 2 - s.x0 * CELL * fit, ty: (stageH - s.h * CELL * fit) / 2 - s.y0 * CELL * fit };
+  const b = L.deskBgBlit(vFit, stageW, stageH, region, plan);
+  ok(!!b, '背景転写: fit カメラで転写できる');
+  ok(Number.isInteger(b.sx) && Number.isInteger(b.sy) && Number.isInteger(b.sw) && Number.isInteger(b.sh), '背景転写: ソース矩形は整数アライン');
+  ok(b.sx >= 0 && b.sy >= 0 && b.sx + b.sw <= plan.wPx && b.sy + b.sh <= plan.hPx, '背景転写: ソース矩形はキャッシュ範囲内');
+  ok(Math.abs(b.dw / b.sw - b.dh / b.sh) < 1e-9, '背景転写: 横と縦の倍率が一致 (引き伸ばし/潰れなし)');
+  ok(Math.abs(b.dw / b.sw - vFit.scale / plan.R) < 1e-9, '背景転写: 倍率はカメラ/R に一致');
+  ok(b.dx <= 0.5 && b.dy <= 0.5 && b.dx + b.dw >= stageW - 0.5 && b.dy + b.dh >= stageH - 0.5, '背景転写: 画面全体を覆う');
+  // 最小ズーム (fit×0.5, 中心同じ) でも覆える
+  const vMin = { scale: fit * 0.5, tx: stageW / 2 - (s.x0 + s.w / 2) * CELL * fit * 0.5, ty: stageH / 2 - (s.y0 + s.h / 2) * CELL * fit * 0.5 };
+  ok(!!L.deskBgBlit(vMin, stageW, stageH, region, plan), '背景転写: 最小ズームでもキャッシュ範囲内');
+  // ズームイン (fit×4) でも転写でき、ソース矩形は小さくなる
+  const vMax = { scale: fit * 4, tx: stageW / 2 - (s.x0 + s.w / 2) * CELL * fit * 4, ty: stageH / 2 - (s.y0 + s.h / 2) * CELL * fit * 4 };
+  const bMax = L.deskBgBlit(vMax, stageW, stageH, region, plan);
+  ok(!!bMax && bMax.sw < b.sw, '背景転写: ズームインではソース矩形が狭まる');
+  // 範囲外へ大きくパンしたら null (直接描画フォールバック)
+  const vFar = { scale: fit, tx: vFit.tx + region.w * fit * 2, ty: vFit.ty };
+  ok(L.deskBgBlit(vFar, stageW, stageH, region, plan) === null, '背景転写: キャッシュ範囲外のカメラでは null');
+  ok(L.deskBgBlit(null, stageW, stageH, region, plan) === null && L.deskBgBlit(vFit, 0, stageH, region, plan) === null, '背景転写: 不正な入力では null');
+}
+
+/* 17b. ピースビットマップの健全性チェック (bitmapProbeOk / bitmapRetryPlan)
+ * 写真面は必ず不透明なので、中心 alpha が全滅ならビットマップ異常。
+ * 異常を恒常キャッシュしないための作り直しポリシーを固定する。 */
+{
+  ok(L.bitmapProbeOk([0, 0, 0, 0]) === false, 'プローブ: alpha がすべて0なら異常');
+  ok(L.bitmapProbeOk([0, 0, 255, 0]) === true, 'プローブ: 1つでも不透明なら正常');
+  ok(L.bitmapProbeOk([1]) === true, 'プローブ: わずかな alpha でも正常扱い');
+  ok(L.bitmapProbeOk([]) === false && L.bitmapProbeOk(null) === false && L.bitmapProbeOk(undefined) === false, 'プローブ: サンプルなしは異常扱い');
+  ok(eq(L.bitmapRetryPlan(0), { retryNow: true, giveUp: false }), '再試行: 失敗0回は即作り直し');
+  ok(eq(L.bitmapRetryPlan(1), { retryNow: true, giveUp: false }), '再試行: 失敗1回目も即作り直し');
+  ok(eq(L.bitmapRetryPlan(2), { retryNow: false, giveUp: false }), '再試行: 失敗2回目はキャッシュせず次回再試行');
+  ok(eq(L.bitmapRetryPlan(3), { retryNow: false, giveUp: false }), '再試行: 失敗3回目もキャッシュしない');
+  ok(eq(L.bitmapRetryPlan(4), { retryNow: false, giveUp: true }), '再試行: 失敗4回で諦めてキャッシュ (再生成ループ防止)');
+  ok(eq(L.bitmapRetryPlan(99), { retryNow: false, giveUp: true }), '再試行: それ以上の失敗でも諦める');
 }
 
 /* 18. ピースの立体感 (pieceRelief)

@@ -495,14 +495,92 @@ function woodTileOrigin(offset, size) {
   return m;
 }
 
-/* 机背景キャッシュのキー: テーマ・ステージ実寸 (CSS px)・dpr・カメラ
- * (scale/tx/ty) がすべて一致したときだけ、キャッシュした机背景を
- * 使い回せる。カメラの文字列化精度は draw() のミニマップ変化検知
- * (camKey) と同じ (scale 4桁 / tx,ty 1桁) にそろえ、検知とキャッシュの
- * 「変わった」判定がずれないようにする。 */
-function deskBgKey(theme, w, h, dpr, v) {
-  return theme + '|' + w + 'x' + h + '|d' + dpr + '|' +
-    v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
+/* ---- 机背景の世界空間キャッシュ (純粋計算) ----
+ * 旧方式は「画面全体・カメラ込みキー」のキャッシュで、カメラが動くたびに
+ * 画面全体を手続き描画し直していた。Firefox Android ではジェスチャ中の
+ * その毎フレーム再生成が重なり、背景が横縞に化ける/潰れる表示崩れが出た。
+ * 新方式はカメラに依存しない「ワールド空間・固定解像度」のキャッシュにし、
+ * 毎フレームは部分転写 (drawImage) だけで済ませる。転写は deskBgBlit が
+ * 「整数アラインしたソース矩形 + 等倍率のデスト矩形」で返すため、
+ * 引き伸ばし/潰れ (異方スケール) が構造的に起こらない。キャッシュ範囲を
+ * 出たカメラでは null を返し、呼び出し側が直接描画にフォールバックする。 */
+
+/* キャッシュが覆う範囲 (セル単位)。机の fit は散らばり領域で決まるが、
+ * 画面のアスペクトが領域と違うと、fit 表示でも領域の外まで見える
+ * (例: 縦長スマホでは上下に大きくはみ出す)。さらに最小ズーム (fit×0.5)
+ * では見える範囲が各辺 2 倍になる。そこで「現在のステージで最小ズーム・
+ * 中心 = 散らばり中心のときに見える範囲」を 1 割の余白つきで覆う。
+ * 範囲はテーマ・難易度・ステージ寸法だけで決まり、カメラには依存しない
+ * (ステージ寸法の変化はリサイズ時だけなので再生成は稀)。 */
+function deskBgRegionCells(pieces, stageW, stageH, cellUnits) {
+  var s = scatterRect(pieces);
+  var fit = Math.min(stageW / (s.w * cellUnits), stageH / (s.h * cellUnits));
+  if (!(fit > 0)) {
+    var mx0 = Math.ceil(s.w * 0.6), my0 = Math.ceil(s.h * 0.6);
+    return { x0: s.x0 - mx0, y0: s.y0 - my0, w: s.w + mx0 * 2, h: s.h + my0 * 2 };
+  }
+  var visW = 2 * stageW / (fit * cellUnits), visH = 2 * stageH / (fit * cellUnits); // 最小ズームで見える幅・高さ (セル)
+  var w = Math.max(s.w, visW) * 1.1, h = Math.max(s.h, visH) * 1.1;
+  var cx = s.x0 + s.w / 2, cy = s.y0 + s.h / 2;
+  return { x0: Math.floor(cx - w / 2), y0: Math.floor(cy - h / 2), w: Math.ceil(w), h: Math.ceil(h) };
+}
+
+/* キャッシュの解像度計画: 目標 1.5 px/ワールド単位を上限に、最大寸法
+ * maxDim・最大面積 maxArea (px) の両方に収まる解像度 R を決める。
+ * 収まりきらない/細かすぎる場合は null (キャッシュを使わない)。 */
+function deskBgPlan(regionW, regionH, maxDim, maxArea) {
+  if (!(regionW > 0) || !(regionH > 0) || !(maxDim > 0) || !(maxArea > 0)) return null;
+  var R = Math.min(1.5, maxDim / regionW, maxDim / regionH, Math.sqrt(maxArea / (regionW * regionH)));
+  if (!(R >= 0.05)) return null;
+  var wPx = Math.min(maxDim, Math.max(1, Math.ceil(regionW * R)));
+  var hPx = Math.min(maxDim, Math.max(1, Math.ceil(regionH * R)));
+  return { R: R, wPx: wPx, hPx: hPx };
+}
+
+/* カメラ v でステージ (stageW × stageH, CSS px) に机背景キャッシュを
+ * 貼るための矩形。region はワールド単位 {x0, y0, w, h}、plan は deskBgPlan
+ * の結果。見えているワールド範囲がキャッシュ範囲に完全に収まるときだけ
+ * 矩形を返し、はみ出す場合は null (直接描画フォールバック)。
+ * sx/sy/sw/sh はキャッシュ側 px (整数)、dx/dy/dw/dh は CSS px。
+ * dw/sw と dh/sh はどちらも v.scale / R に一致する (等倍率を保証)。 */
+function deskBgBlit(v, stageW, stageH, region, plan) {
+  if (!v || !plan || !(v.scale > 0) || !(stageW > 0) || !(stageH > 0)) return null;
+  var vx0 = (0 - v.tx) / v.scale, vy0 = (0 - v.ty) / v.scale;
+  var vx1 = (stageW - v.tx) / v.scale, vy1 = (stageH - v.ty) / v.scale;
+  if (vx0 < region.x0 || vy0 < region.y0 || vx1 > region.x0 + region.w || vy1 > region.y0 + region.h) return null;
+  var R = plan.R;
+  var sx = Math.floor((vx0 - region.x0) * R), sy = Math.floor((vy0 - region.y0) * R);
+  var ex = Math.ceil((vx1 - region.x0) * R), ey = Math.ceil((vy1 - region.y0) * R);
+  if (sx < 0) sx = 0; if (sy < 0) sy = 0;
+  if (ex > plan.wPx) ex = plan.wPx; if (ey > plan.hPx) ey = plan.hPx;
+  var sw = ex - sx, sh = ey - sy;
+  if (sw <= 0 || sh <= 0) return null;
+  return {
+    sx: sx, sy: sy, sw: sw, sh: sh,
+    dx: (region.x0 + sx / R) * v.scale + v.tx, dy: (region.y0 + sy / R) * v.scale + v.ty,
+    dw: sw / R * v.scale, dh: sh / R * v.scale
+  };
+}
+
+/* ---- ピースビットマップの健全性チェック (純粋判定) ----
+ * ピースの写真面は必ず不透明なので、ビットマップ中心部の alpha が
+ * すべて 0 なら「描いたはずなのに中身が無い」異常 (ブラウザ側で
+ * キャンバスの実体が失われた等)。その判定と、作り直しのポリシーを
+ * ここに切り出してテスト可能にする。 */
+function bitmapProbeOk(alphas) {
+  if (!alphas || !alphas.length) return false;
+  for (var i = 0; i < alphas.length; i++) if (alphas[i] > 0) return true;
+  return false;
+}
+/* failures = そのピースでプローブが連続失敗した回数 (今回分を含む)。
+ * 1回目はその場で即作り直す。数回はキャッシュせず次の描画で再試行し
+ * (一時的な喪失なら自然に回復する)、それ以上続く場合は毎フレーム
+ * 再生成で固まらないよう諦めてキャッシュする (スポットチェック側で
+ * 後から回復を検出できる)。 */
+function bitmapRetryPlan(failures) {
+  if (failures <= 1) return { retryNow: true, giveUp: false };
+  if (failures <= 3) return { retryNow: false, giveUp: false };
+  return { retryNow: false, giveUp: true };
 }
 
 /* マット盤の外側かどうか (セル座標)。盤の範囲は [0, n) × [0, n)。
@@ -614,7 +692,9 @@ var PureLogic = {
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
-  woodTileOrigin: woodTileOrigin, deskBgKey: deskBgKey, isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout,
+  woodTileOrigin: woodTileOrigin, deskBgRegionCells: deskBgRegionCells, deskBgPlan: deskBgPlan, deskBgBlit: deskBgBlit,
+  bitmapProbeOk: bitmapProbeOk, bitmapRetryPlan: bitmapRetryPlan,
+  isOutsideBoardCell: isOutsideBoardCell, minimapLayout: minimapLayout,
   pieceRelief: pieceRelief,
   BGM_SHORT_TRACK_SEC: BGM_SHORT_TRACK_SEC, isShortTrack: isShortTrack, trackPlays: trackPlays,
   shuffledOrder: shuffledOrder, nextShuffleOrder: nextShuffleOrder
@@ -904,6 +984,17 @@ document.addEventListener('visibilitychange', function () {
     if (bgmOn) bgmPlayPromise(a.play());
   }
 });
+/* タブが隠れている間はブラウザがオフスクリーン canvas の実体を落とす
+ * ことがある (Firefox Android)。表示に戻ったらビットマップを全捨てして
+ * 遅延再生成させ、「ピースが透明なまま」を防ぐ (リサイズ時も resizeStage
+ * で同様に捨てる)。 */
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden || !state) return;
+  state.bitmaps.clear();
+  state.bitmapFailures.clear();
+  bmpIdList = null;
+  draw();
+});
 
 /* ---- SE (全て Web Audio 合成。音源ファイルなし) ----
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
@@ -1055,6 +1146,7 @@ function newGameState(pool) {
     started: false, paused: false, timerStart: 0,
     views: { desk: null, mat: null }, // {scale, tx, ty} scaleFit も保持
     bitmaps: new Map(),               // pieceId -> {canvas, path, cellPx, marginPx}
+    bitmapFailures: new Map(),        // pieceId -> プローブ連続失敗回数 (作り直しポリシー用)
     srcCanvas: null, boardPx: 0,
     resumed: prog.clusters.length > 0
   };
@@ -1165,8 +1257,73 @@ function strokePieceBevel(ctx, path, bevel) {
   ctx.restore();
   ctx.restore();
 }
+/* ビットマップの健全性プローブ: 中心部 (セルの中心はどの形状でも必ず
+ * ピースの内側) の alpha を読み、1つでも不透明なら正常とみなす。
+ * Firefox Android ではメモリ逼迫時にオフスクリーン canvas の実体が
+ * 黙って失われ、drawImage しても何も描かれないことがある (輪郭パスは
+ * JS 側に残るので「輪郭だけの中空ピース」になる)。読み取れない環境
+ * では干渉しないよう正常扱いにする。 */
+function probePieceBitmap(bmp) {
+  try {
+    var ctx = bmp.canvas.getContext('2d');
+    var cx = Math.round(bmp.marginPx + bmp.cellPx / 2), cy = Math.round(bmp.marginPx + bmp.cellPx / 2);
+    var data = ctx.getImageData(Math.max(0, cx - 3), Math.max(0, cy - 3), 6, 6).data;
+    var alphas = [];
+    for (var i = 3; i < data.length; i += 4) alphas.push(data[i]);
+    return bitmapProbeOk(alphas);
+  } catch (e) { return true; }
+}
 function pieceBitmap(id) {
-  if (state.bitmaps.has(id)) return state.bitmaps.get(id);
+  var cached = state.bitmaps.get(id);
+  if (cached) return cached;
+  var failures = state.bitmapFailures.get(id) || 0;
+  var bmp = renderPieceBitmap(id);
+  if (probePieceBitmap(bmp)) {
+    state.bitmapFailures.delete(id);
+    state.bitmaps.set(id, bmp);
+    return bmp;
+  }
+  // 描いたはずのビットマップが透明なまま = 実体が失われた疑い。
+  // 異常なビットマップを恒常キャッシュするとセッション中ずっと中空に
+  // なるため、ポリシー (bitmapRetryPlan) に従って作り直す/再試行する。
+  failures++;
+  state.bitmapFailures.set(id, failures);
+  var plan = bitmapRetryPlan(failures);
+  if (plan.retryNow) {
+    var retry = renderPieceBitmap(id);
+    if (probePieceBitmap(retry)) {
+      state.bitmapFailures.delete(id);
+      state.bitmaps.set(id, retry);
+      return retry;
+    }
+    bmp = retry;
+    failures++;
+    state.bitmapFailures.set(id, failures);
+    plan = bitmapRetryPlan(failures);
+  }
+  if (plan.giveUp) state.bitmaps.set(id, bmp); // 諦めてキャッシュ (スポットチェックで回復検出は続く)
+  return bmp;
+}
+/* 描画中ビットマップのローテーションチェック: draw() のたびに最大1つだけ
+ * プローブし、実体が失われていたらキャッシュから捨てる (次回描画で
+ * 作り直される)。全数チェックは重いので、遊んでいるうちに一巡する
+ * この方式で「透明なまま固定」を防ぐ。 */
+var bmpProbePos = 0, bmpIdList = null;
+function spotCheckBitmap() {
+  if (!state || !state.bitmaps.size) return;
+  if (!bmpIdList || bmpIdList.length !== state.bitmaps.size) bmpIdList = Array.from(state.bitmaps.keys());
+  if (!bmpIdList.length) return;
+  var id = bmpIdList[bmpProbePos % bmpIdList.length];
+  bmpProbePos++;
+  var bmp = state.bitmaps.get(id);
+  // 生成直後 (<2秒) は対象外: 生成時プローブと二重に再生成が走って
+  // スラッシングになるのを防ぐ (実体の喪失は時間をおいて起こる前提)
+  if (bmp && bmp.createdAt && Date.now() - bmp.createdAt > 2000 && !probePieceBitmap(bmp)) {
+    state.bitmaps.delete(id);
+    bmpIdList = null;
+  }
+}
+function renderPieceBitmap(id) {
   var n = state.n, home = pieceHome(id, n);
   var cellPx = state.boardPx / n;
   var marginPx = Math.ceil(cellPx * 0.34);
@@ -1188,19 +1345,23 @@ function pieceBitmap(id) {
       ctx.restore();
     }
   }
-  // 写真面
+  // 写真面: 描画自体が例外になる環境では側面色で塗って「見える」状態に
+  // 留める (例外で draw() 全体が死んで画面が固まるよりましな劣化にする)
   ctx.save();
   ctx.clip(path);
-  ctx.drawImage(state.srcCanvas, marginPx - home.col * cellPx, marginPx - home.row * cellPx, state.boardPx, state.boardPx);
+  try {
+    ctx.drawImage(state.srcCanvas, marginPx - home.col * cellPx, marginPx - home.row * cellPx, state.boardPx, state.boardPx);
+  } catch (e) {
+    ctx.fillStyle = pieceSideColor(id, cellPx);
+    ctx.fillRect(0, 0, sizePx, sizePx);
+  }
   ctx.restore();
   // 縁のベベル (上・左に光、下・右に影)。既存の輪郭線はこの上に引いて締める
   strokePieceBevel(ctx, path, relief.bevel);
   ctx.strokeStyle = 'rgba(30,30,30,0.35)';
   ctx.lineWidth = Math.max(1, cellPx * 0.02);
   ctx.stroke(path);
-  var bmp = { canvas: cv, path: path, cellPx: cellPx, marginPx: marginPx };
-  state.bitmaps.set(id, bmp);
-  return bmp;
+  return { canvas: cv, path: path, cellPx: cellPx, marginPx: marginPx, createdAt: Date.now() };
 }
 /* ピース輪郭を Path2D で作る (bitmap ピクセル座標, 原点はマージン分ずらす) */
 function buildPiecePath(id, cellPx, marginPx) {
@@ -1234,6 +1395,10 @@ function resizeStage() {
   if (!stageW || !stageH) return; // 非表示中は実サイズが取れないので何もしない
   stage.width = Math.round(stageW * dpr); stage.height = Math.round(stageH * dpr);
   invalidateDeskBackdrop(); // 背景レイヤーはステージ実寸で描くので作り直す
+  // リサイズはブラウザがオフスクリーン canvas の実体を落とす契機にもなる
+  // (向き変更・ツールバー伸縮)。ビットマップは遅延再生成されるので、
+  // ここで全捨てして「透明なまま固定」を防ぐ (失敗カウントもリセット)。
+  if (state) { state.bitmaps.clear(); state.bitmapFailures.clear(); bmpIdList = null; }
   if (state && !state.views.desk) fitViews();
   draw();
 }
@@ -1408,39 +1573,81 @@ function drawDeskBackgroundOn(ctx, v, w, h) {
       }
     }
   }
-  // 机全体にゆるい陰影 (ビネット) をつけて天板らしくする
+  drawDeskVignette(ctx, w, h);
+}
+/* 机全体にゆるい陰影 (ビネット) をつけて天板らしくする。ビネットは
+ * 画面空間で決まるので、世界空間キャッシュには焼かず毎回上に描く。 */
+function drawDeskVignette(ctx, w, h) {
+  var pal = THEMES[uiTheme].wood;
   var vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
   vg.addColorStop(0, pal.vigLight);
   vg.addColorStop(1, pal.vigDark);
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, w, h);
 }
-/* 机背景 (木目タイル敷き + ビネット) のキャッシュ。
- * 背景はカメラが静止している間は1ピクセルも変わらないのに、ピースの
- * ドラッグ中は pointermove のたびに全体を再生成していた。Firefox Android
- * ではその同期再描画の負荷/競合で「画面内容が縦に潰れたノイズの横帯」が
- * 背景に残る不具合が出たため、ステージ実寸 (CSS px × dpr) のオフスクリーン
- * に描いてキャッシュし、キーが一致する間は drawImage 1回で転写だけにする。
- * キー (deskBgKey) にテーマ・ステージ寸法・dpr・カメラを含むので、
- * テーマ切替/リサイズ/カメラ移動では自動的に作り直され、明示的な
- * 無効化は要らない。木目の位相 (ワールド固定) は drawDeskBackgroundOn が
- * カメラから決めるため、キャッシュしても見た目は変わらない。 */
-var deskBgCache = null; // { key, canvas }
+/* 世界座標に変換済みの ctx へ、ワールド矩形 rect の範囲だけ下地色 +
+ * 木目タイルを敷く (机背景の世界空間キャッシュ生成用)。タイルの位相は
+ * ワールド原点基準 (512 の倍数) で、画面空間版 (drawDeskBackgroundOn の
+ * woodTileOrigin) と一致する。ビネットは含まない。 */
+function paintDeskTiles(ctx, rect) {
+  var pal = THEMES[uiTheme].wood;
+  ctx.fillStyle = pal.fallback;
+  ctx.fillRect(rect.x0, rect.y0, rect.w, rect.h);
+  var tile = null;
+  try { tile = getWoodTile(); } catch (e) { tile = null; }
+  if (!tile) return;
+  var x0 = Math.floor(rect.x0 / 512) * 512, y0 = Math.floor(rect.y0 / 512) * 512;
+  for (var x = x0; x < rect.x0 + rect.w; x += 512) {
+    for (var y = y0; y < rect.y0 + rect.h; y += 512) {
+      ctx.drawImage(tile, x, y, 512, 512);
+    }
+  }
+}
+/* 机背景のキャッシュ (世界空間・固定解像度)。
+ * 旧方式は「画面全体をカメラ込みキーでキャッシュ」し、カメラが動くたび
+ * (ピンチ/パンの毎フレーム) に画面全体を手続き描画し直していた。Firefox
+ * Android ではその最中に背景が横縞に化ける表示崩れが残ったため、キャッシュ
+ * をカメラから切り離す: 覆う範囲 (deskBgRegionCells) と解像度 (deskBgPlan)
+ * はテーマ・難易度・ステージ寸法だけで決まり、カメラ移動では作り直されない。
+ * 毎フレームの仕事は deskBgBlit が返す部分矩形の転写 + ビネットだけになる。
+ * 転写矩形は整数アライン + 等倍率 (deskBgBlit の保証) なので、引き伸ばしや
+ * 潰れは起こらない。範囲外のカメラでは直接描画にフォールバックする。 */
+var DESK_BG_MAX_DIM = 4096, DESK_BG_MAX_AREA = 8388608; // 4096×2048 相当を上限にする
+var deskBgWorld = null; // { key, canvas, region, plan }
+var deskBgWorldFailed = false; // 生成に失敗したセッションでは直接描画に固定する
+function ensureDeskBgWorld() {
+  if (!state) return null;
+  var rc = deskBgRegionCells(state.n * state.n, stageW, stageH, CELL);
+  var region = { x0: rc.x0 * CELL, y0: rc.y0 * CELL, w: rc.w * CELL, h: rc.h * CELL };
+  var key = uiTheme + '|' + stageW + 'x' + stageH + '|' + region.x0 + ',' + region.y0 + ',' + region.w + 'x' + region.h;
+  if (deskBgWorld && deskBgWorld.key === key) return deskBgWorld;
+  var plan = deskBgPlan(region.w, region.h, DESK_BG_MAX_DIM, DESK_BG_MAX_AREA);
+  if (!plan) { deskBgWorld = null; return null; }
+  try {
+    var cv = document.createElement('canvas');
+    cv.width = plan.wPx; cv.height = plan.hPx;
+    var c2 = cv.getContext('2d');
+    c2.setTransform(plan.R, 0, 0, plan.R, -region.x0 * plan.R, -region.y0 * plan.R);
+    paintDeskTiles(c2, region);
+    deskBgWorld = { key: key, canvas: cv, region: region, plan: plan };
+  } catch (e) {
+    deskBgWorld = null;
+    deskBgWorldFailed = true;
+  }
+  return deskBgWorld;
+}
 function drawDeskBackground(v) {
   if (!stageW || !stageH) { drawDeskBackgroundOn(sctx, v, stageW, stageH); return; }
-  var key = deskBgKey(uiTheme, stageW, stageH, dpr, v);
-  if (deskBgCache && deskBgCache.key === key) {
-    sctx.drawImage(deskBgCache.canvas, 0, 0, stageW, stageH);
-    return;
-  }
-  var cv = deskBgCache ? deskBgCache.canvas : document.createElement('canvas');
-  var bw = Math.max(1, Math.round(stageW * dpr)), bh = Math.max(1, Math.round(stageH * dpr));
-  if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
-  var c2 = cv.getContext('2d');
-  c2.setTransform(dpr, 0, 0, dpr, 0, 0); // 以後の座標は CSS px (drawDeskBackgroundOn の前提と同じ)
-  drawDeskBackgroundOn(c2, v, stageW, stageH);
-  deskBgCache = { key: key, canvas: cv };
-  sctx.drawImage(cv, 0, 0, stageW, stageH);
+  var bg = deskBgWorldFailed ? null : ensureDeskBgWorld();
+  var blit = bg ? deskBgBlit(v, stageW, stageH, bg.region, bg.plan) : null;
+  if (!blit) { drawDeskBackgroundOn(sctx, v, stageW, stageH); return; }
+  // 転写はソース整数矩形 → 等倍率デスト矩形のみ (deskBgBlit)。端数の
+  // ズレで端に隙間が出ても、下地色を先に全面へ敷くので透けはしない。
+  var pal = THEMES[uiTheme].wood;
+  sctx.fillStyle = pal.fallback;
+  sctx.fillRect(0, 0, stageW, stageH);
+  sctx.drawImage(bg.canvas, blit.sx, blit.sy, blit.sw, blit.sh, blit.dx, blit.dy, blit.dw, blit.dh);
+  drawDeskVignette(sctx, stageW, stageH);
 }
 
 /* 描画の rAF 集約: 対話ハンドラ (pointermove のドラッグ/パン/ピンチ、
@@ -1499,6 +1706,7 @@ function draw() {
       .concat(ordered.filter(function (c) { return tops.indexOf(c) >= 0; }));
   }
   ordered.forEach(function (cl) { drawCluster(cl, wTl, wBr); });
+  spotCheckBitmap(); // 失われたビットマップがあれば1つまで検出して捨てる (次回描画で回復)
   // 合体フィードバック: 合体した塊の輪郭が一瞬光る
   if (state.mergeFlash) {
     var alpha = Math.max(0, 1 - (Date.now() - state.mergeFlash.start) / 550);
@@ -1689,7 +1897,11 @@ function ensureDeskBackdrop() {
   var bw = Math.max(1, Math.round(stageW * dpr * DESK_BACKDROP_SCALE));
   var bh = Math.max(1, Math.round(stageH * dpr * DESK_BACKDROP_SCALE));
   if (!deskBackdrop) deskBackdrop = document.createElement('canvas');
-  deskBackdrop.width = bw; deskBackdrop.height = bh;
+  // 寸法が同じなら width/height に触らない: 代入は実体の再確保 (全消去) に
+  // なるため、盤面が変わるたびに大きな canvas を確保し直すとメモリ圧が
+  // 上がり、他の canvas の実体喪失 (ピースの透明化) を招きやすい。
+  if (deskBackdrop.width !== bw) deskBackdrop.width = bw;
+  if (deskBackdrop.height !== bh) deskBackdrop.height = bh;
   var bctx = deskBackdrop.getContext('2d');
   bctx.setTransform(bw / stageW, 0, 0, bh / stageH, 0, 0); // 以後の座標は CSS px でよい
   drawDeskBackgroundOn(bctx, dv, stageW, stageH);
@@ -2696,6 +2908,7 @@ function startGame(pool) {
     state.srcCanvas = cv;
     state.boardPx = boardPx;
     state.bitmaps.clear();
+    state.bitmapFailures.clear();
     $('fallbackNote').hidden = !res.fallback;
     $('loadingOverlay').style.display = 'none';
     fitViews();
