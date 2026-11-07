@@ -284,6 +284,14 @@ button { font: inherit; cursor: pointer; }
   font-size: 12px; font-weight: 700; letter-spacing: .06em; pointer-events: none; z-index: 4;
   backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
 }
+/* 範囲選択モードに入ったことを示すチップ (長押し成立〜矩形を離すまで) */
+#selectChip {
+  position: absolute; left: 50%; top: 42px; transform: translateX(-50%);
+  background: rgba(24,17,10,.55); color: #fff; border: 1.5px solid var(--brass); border-radius: 999px; padding: 3px 14px;
+  font-size: 12px; font-weight: 700; letter-spacing: .1em; pointer-events: none; z-index: 6;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+#selectChip[hidden] { display: none; }
 #hud {
   position: absolute; left: 10px; top: 10px; z-index: 4; pointer-events: none;
   display: flex; gap: 10px; align-items: baseline;

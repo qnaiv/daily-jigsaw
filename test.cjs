@@ -276,5 +276,70 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
     '36ピース: 散らばりは全ピースが散らばり領域内に机に出る');
 }
 
+/* 11. 範囲選択 (長押し) の純粋ロジック: 矩形×塊の交差判定 / 追随移動 / グループ確定 */
+{
+  const n = 10;
+  const approx = (a, b) => Math.abs(a - b) < 1e-9;
+  // --- clustersInRect ---
+  const c1 = { pieces: [0], surface: 'desk', gx: 2, gy: 2 };          // ピース矩形 [2,3]×[2,3]
+  const c2 = { pieces: [55], surface: 'desk', gx: 5, gy: 5 };
+  const c3 = { pieces: [11, 12], surface: 'desk', gx: 7, gy: 1 };      // ピース11が(7,1)、12が(8,1)
+  const c4 = { pieces: [3], surface: 'mat', gx: 2, gy: 2 };            // c1 と同じ位置だがマット側
+  const all = [c1, c2, c3, c4];
+  ok(eq(L.clustersInRect(all, n, { x0: 1.5, y0: 1.5, x1: 2.5, y1: 2.5 }, 'desk'), [c1]), '範囲選択: 矩形と交差したピースの塊が選ばれる');
+  ok(eq(L.clustersInRect(all, n, { x0: 3, y0: 2, x1: 4, y1: 3 }, 'desk'), []), '範囲選択: 辺だけ接する矩形は交差とみなさない');
+  ok(eq(L.clustersInRect(all, n, { x0: 7.5, y0: 0.5, x1: 8.5, y1: 1.5 }, 'desk'), [c3]), '範囲選択: 塊の1ピースでも交差すれば塊全体が選ばれる');
+  ok(eq(L.clustersInRect(all, n, { x0: 5.5, y0: 5.5, x1: 9, y1: 9 }, 'desk'), [c2]), '範囲選択: 部分的な重なりでも選ばれる');
+  ok(eq(L.clustersInRect(all, n, { x0: -10, y0: -10, x1: 20, y1: 20 }, 'mat'), [c4]), '範囲選択: 面 (机/マット) で絞れる');
+  ok(L.clustersInRect(all, n, { x0: -10, y0: -10, x1: 20, y1: 20 }).length === 4, '範囲選択: 面を指定しなければ両面が対象');
+  // --- shiftClusters ---
+  const src = [{ pieces: [0, 1], surface: 'desk', gx: 3.5, gy: 2.25 }];
+  const shifted = L.shiftClusters(src, 2, -1);
+  ok(shifted[0].gx === 5.5 && shifted[0].gy === 1.25 && shifted[0].surface === 'desk' && eq(shifted[0].pieces, [0, 1]), '追随移動: 指定量だけ平行移動し面とピースを保持する');
+  ok(src[0].gx === 3.5 && src[0].gy === 2.25 && shifted[0] !== src[0] && shifted[0].pieces !== src[0].pieces, '追随移動: 元の塊は変更しない (新しい塊を返す)');
+  // --- absorbMerges の noSnap (追随塊用: 合体判定だけ行い、単独のグリッド吸着はしない) ---
+  const aBlk = { pieces: [0], surface: 'desk', gx: 3, gy: 3 };
+  const fFloat = { pieces: [1], surface: 'desk', gx: 4.3, gy: 3.2 }; // 正しい相対位置 (4,3) から 0.36 離れていて相対スナップ圏外
+  const rNo = L.absorbMerges([aBlk], fFloat, n, { noSnap: true });
+  ok(rNo.merged === false && rNo.cluster.gx === 4.3 && rNo.cluster.gy === 3.2, 'noSnap: 合体しない塊は自由座標のまま動かない');
+  const rSnap = L.absorbMerges([aBlk], fFloat, n);
+  ok(rSnap.merged === true && rSnap.clusters.length === 1, '通常版: 同じ位置でもグリッド吸着して合体する (noSnap との対比)');
+  const fExact = { pieces: [1], surface: 'desk', gx: 4, gy: 3 };
+  ok(L.absorbMerges([aBlk], fExact, n, { noSnap: true }).merged === true, 'noSnap: ちょうど正しい相対位置なら合体する');
+  const fNear = { pieces: [1], surface: 'desk', gx: 4.2, gy: 3.0 };
+  const rNear = L.absorbMerges([aBlk], fNear, n, { noSnap: true });
+  const posNearSel = L.piecePositions([rNear.cluster], n);
+  ok(rNear.merged === true && posNearSel.get(1).gx === 4 && posNearSel.get(1).gy === 3, 'noSnap: 相対スナップ圏内なら吸着して合体する');
+  // --- グループ確定の合成 (UI の settleGroupDrag と同じ手順を純粋関数で再現) ---
+  function settleGroupSim(leader, followers, others, nn) {
+    const anchorId = L.clusterAnchorId(leader);
+    const before = L.piecePositions([leader], nn).get(anchorId);
+    const res = L.absorbMerges(others, { pieces: leader.pieces, surface: leader.surface, gx: leader.gx, gy: leader.gy }, nn);
+    const after = L.piecePositions([res.cluster], nn).get(anchorId);
+    const dx = after.gx - before.gx, dy = after.gy - before.gy;
+    let allC = res.clusters.concat(L.shiftClusters(followers, dx, dy));
+    const queue = allC.slice(res.clusters.length);
+    while (queue.length) {
+      const f = queue.shift();
+      if (allC.indexOf(f) < 0) continue;
+      const r2 = L.absorbMerges(allC.filter(c => c !== f), { pieces: f.pieces, surface: f.surface, gx: f.gx, gy: f.gy }, nn, { noSnap: true });
+      allC = r2.clusters;
+    }
+    return allC;
+  }
+  // 掴んだ塊がグリッド吸着し、隣の選択塊が追随して合体する
+  const lead = { pieces: [0], surface: 'desk', gx: 10.5, gy: 10.25 };
+  const foll = { pieces: [1], surface: 'desk', gx: 11.5, gy: 10.25 }; // ピース1はピース0の右隣 (相対オフセット正確)
+  const g1 = settleGroupSim(lead, [foll], [], n);
+  const g1pos = L.piecePositions(g1, n);
+  ok(g1.length === 1 && g1pos.get(0).gx === 11 && g1pos.get(0).gy === 10 && g1pos.get(1).gx === 12 && g1pos.get(1).gy === 10,
+    'グループ確定: 掴んだ塊の吸着に追随して隣の選択塊が合体する');
+  // 合体しない選択塊は、追随した自由座標のまま (相対配置を保持し、個別に吸着しない)
+  const follFar = { pieces: [55], surface: 'desk', gx: 20.5, gy: 15.75 };
+  const g2 = settleGroupSim(lead, [follFar], [], n);
+  const g2f = g2.find(c => c.pieces.indexOf(55) >= 0);
+  ok(g2.length === 2 && approx(g2f.gx, 21) && approx(g2f.gy, 15.5), 'グループ確定: 合体しない塊は追随量だけ動き、自由座標を保つ');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -222,8 +222,11 @@ function findRelativeSnap(drag, others, n) {
  *       (2) 合体しなかったらグリッド吸着し、吸着後にちょうど正しい相対位置に
  *           揃っていたら必ず合体させる (「合っているのにくっつかない」防止)
  *       (3) 合体した塊がさらに別の塊とも正しく隣接していれば連鎖合体する
+ * opts.noSnap=true のときは (2) のグリッド吸着を行わず、現在位置のままで
+ * 合体判定だけを行う (範囲選択の追随塊用: 相対配置を壊さないため)。
  * 返り値: { clusters: 合体後の全塊, cluster: moving を含む塊, merged: 合体したか } */
-function absorbMerges(others, moving, n) {
+function absorbMerges(others, moving, n, opts) {
+  var noSnap = !!(opts && opts.noSnap);
   var pool = others.slice();
   var cur = { pieces: moving.pieces.slice(), surface: moving.surface, gx: moving.gx, gy: moving.gy };
   var merged = false;
@@ -244,10 +247,32 @@ function absorbMerges(others, moving, n) {
   }
   while (tryOnce(false)) { /* 連鎖合体 */ }
   if (!merged) {
-    cur.gx = snapToGrid(cur.gx); cur.gy = snapToGrid(cur.gy);
-    while (tryOnce(true)) { /* グリッド吸着後の確実合体 */ }
+    if (!noSnap) { cur.gx = snapToGrid(cur.gx); cur.gy = snapToGrid(cur.gy); }
+    while (tryOnce(true)) { /* 吸着後 (noSnap 時は現在位置) で正しい相対位置なら確実合体 */ }
   }
   return { clusters: pool.concat([cur]), cluster: cur, merged: merged };
+}
+
+/* 範囲選択: 矩形 (セル座標・正規化済み {x0,y0,x1,y1}、x0<x1, y0<y1 前提) と
+ * 交差するピースを持つ塊を返す。ピースの矩形は [gx, gx+1] × [gy, gy+1] で、
+ * 辺だけが接する場合は交差とみなさない。surface を渡すとその面の塊だけに絞る。 */
+function clustersInRect(clusters, n, rect, surface) {
+  var pos = piecePositions(clusters, n);
+  return clusters.filter(function (cl) {
+    if (surface && cl.surface !== surface) return false;
+    for (var i = 0; i < cl.pieces.length; i++) {
+      var p = pos.get(cl.pieces[i]);
+      if (p && p.gx < rect.x1 && p.gx + 1 > rect.x0 && p.gy < rect.y1 && p.gy + 1 > rect.y0) return true;
+    }
+    return false;
+  });
+}
+/* 塊の配列を (dx, dy) だけ平行移動した新しい配列を返す (元の塊は変更しない)。
+ * 範囲選択のグループ移動で「掴んだ塊の確定移動量を他の塊へ追随させる」計算に使う。 */
+function shiftClusters(clusters, dx, dy) {
+  return clusters.map(function (cl) {
+    return { pieces: cl.pieces.slice(), surface: cl.surface, gx: cl.gx + dx, gy: cl.gy + dy };
+  });
 }
 
 /* 散らばり領域 (セル単位の矩形): 机ワールドの広さそのもの。
@@ -391,7 +416,8 @@ var PureLogic = {
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
-  absorbMerges: absorbMerges, scatterRect: scatterRect, initialScatter: initialScatter,
+  absorbMerges: absorbMerges, clustersInRect: clustersInRect, shiftClusters: shiftClusters,
+  scatterRect: scatterRect, initialScatter: initialScatter,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime
 };
@@ -425,6 +451,7 @@ var THEME_NAMES = ['walnut', 'nordic', 'atelier'];
 var THEMES = {
   walnut: {
     mat: '#33523f',
+    brass: '#c9a227', // 範囲選択ハイライト (CSS の --brass と一致)
     wood: { stops: ['#7a5636', '#64452a', '#7a5636'], grain: [70, 105, 45, 68, 18, 30], seamDark: 'rgba(43,26,10,0.40)', seamLight: 'rgba(255,238,200,0.10)', knot: '60,38,16', fallback: '#6b4a2a', vigLight: 'rgba(255,240,210,0.06)', vigDark: 'rgba(30,17,4,0.22)' },
     confetti: ['#33523f', '#c9a227', '#f5efe4', '#7a3b3a', '#8a6d3b'],
     box: {
@@ -438,6 +465,7 @@ var THEMES = {
   },
   nordic: {
     mat: '#9db89a',
+    brass: '#c99b3f',
     wood: { stops: ['#dec294', '#d2af7e', '#dec294'], grain: [150, 182, 114, 140, 68, 96], seamDark: 'rgba(146,110,58,0.32)', seamLight: 'rgba(255,255,255,0.22)', knot: '150,112,62', fallback: '#d9b98c', vigLight: 'rgba(255,255,255,0.10)', vigDark: 'rgba(120,84,32,0.12)' },
     confetti: ['#cf6f4f', '#9db89a', '#fbfaf7', '#d9a441', '#7d9bb3'],
     box: {
@@ -451,6 +479,7 @@ var THEMES = {
   },
   atelier: {
     mat: '#5e2f35',
+    brass: '#b08d4f',
     wood: { stops: ['#413125', '#352820', '#413125'], grain: [10, 26, 7, 18, 4, 12], seamDark: 'rgba(0,0,0,0.50)', seamLight: 'rgba(232,221,200,0.07)', knot: '10,7,4', fallback: '#3a2c22', vigLight: 'rgba(232,221,200,0.04)', vigDark: 'rgba(0,0,0,0.35)' },
     confetti: ['#b08d4f', '#5e2f35', '#e8ddc8', '#33523f', '#8a6d3b'],
     box: {
@@ -776,7 +805,12 @@ function draw() {
   // 表示範囲のカリング: 画面内にある塊だけ描く
   var wTl = screenToWorld(0, 0), wBr = screenToWorld(stageW, stageH);
   var ordered = state.clusters.filter(function (c) { return c.surface === state.surface; });
-  if (drag && drag.cluster) ordered = ordered.filter(function (c) { return c !== drag.cluster; }).concat([drag.cluster]);
+  if (drag && drag.cluster) {
+    // ドラッグ中の塊 (範囲選択時はグループ全塊) を最前面に描く
+    var tops = drag.group ? drag.group.map(function (g) { return g.cluster; }) : [drag.cluster];
+    ordered = ordered.filter(function (c) { return tops.indexOf(c) < 0; })
+      .concat(ordered.filter(function (c) { return tops.indexOf(c) >= 0; }));
+  }
   ordered.forEach(function (cl) { drawCluster(cl, wTl, wBr); });
   // 合体フィードバック: 合体した塊の輪郭が一瞬光る
   if (state.mergeFlash) {
@@ -790,6 +824,36 @@ function draw() {
       });
     }
   }
+  // 範囲選択: 選択中の塊の輪郭を真鍮色でハイライトする
+  if (selection.size) {
+    var brass = THEMES[uiTheme].brass;
+    selection.forEach(function (cl) {
+      if (cl.surface !== state.surface) return;
+      var anchor = pieceHome(clusterAnchorId(cl), n);
+      cl.pieces.forEach(function (id) {
+        var home = pieceHome(id, n);
+        var wx = (cl.gx + (home.col - anchor.col)) * CELL, wy = (cl.gy + (home.row - anchor.row)) * CELL;
+        if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
+        strokePiece(id, wx, wy, brass, 3, hexToRgba(brass, 0.16));
+      });
+    });
+  }
+  // 範囲選択の矩形 (画面座標でそのまま描く)
+  if (selRect) {
+    var rx = Math.min(selRect.x0, selRect.x1), ry = Math.min(selRect.y0, selRect.y1);
+    var rw = Math.abs(selRect.x1 - selRect.x0), rh = Math.abs(selRect.y1 - selRect.y0);
+    var brass2 = THEMES[uiTheme].brass;
+    sctx.fillStyle = hexToRgba(brass2, 0.14);
+    sctx.fillRect(rx, ry, rw, rh);
+    sctx.strokeStyle = brass2;
+    sctx.lineWidth = 1.5;
+    sctx.strokeRect(rx, ry, rw, rh);
+  }
+}
+/* '#c9a227' + alpha → 'rgba(...)' (Canvas の選択ハイライト用) */
+function hexToRgba(hex, alpha) {
+  var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
 }
 /* 現在の画面にある全ピースについて (id, ワールドx, ワールドy) で fn を呼ぶ */
 function eachVisiblePiece(fn) {
@@ -877,11 +941,55 @@ function hitCluster(sx, sy) {
 }
 
 /* ---------- 操作 (ドラッグ / ピンチ / パン / ズーム) ---------- */
-var drag = null;         // { cluster, grabDX, grabDY, startSurface, moved }
+var drag = null;         // { cluster, grabDX, grabDY, startSurface, moved, group }
 var pointers = new Map();
 var pinch = null;        // { d0, scale0, cx, cy, tx0, ty0 }
 var panStart = null;     // { sx, sy, tx, ty }
 var zoneHot = false;
+
+/* ---------- 範囲選択 (長押し方式・セッション限りで保存しない) ----------
+ * 空き地を長押し (450ms・ほぼ静止) すると選択モードに入り、ドラッグで矩形を描く。
+ * 長押し判定前に指が 10px 超動いたら通常パンに移行する (パンは少し遅れて始まる)。
+ * ピース上の長押しは従来どおり即ドラッグ (判定は空き地だけ)。 */
+var selection = new Set();  // 選択中の塊オブジェクトの集合
+var pressPending = null;    // 長押し判定待ち { id, sx, sy, tx, ty, timer }
+var selRect = null;         // 描画中の矩形 (画面座標) { id, x0, y0, x1, y1 }
+var LONG_PRESS_MS = 450;
+var PRESS_MOVE_PX = 10;
+
+function clearSelection() {
+  if (!selection.size) return;
+  selection.clear();
+  draw();
+}
+/* 合体などで塊オブジェクトが差し替わったあと、残っていない塊を選択から落とす */
+function pruneSelection() {
+  if (!selection.size || !state) return;
+  selection.forEach(function (cl) {
+    if (state.clusters.indexOf(cl) < 0) selection.delete(cl);
+  });
+}
+/* 長押し判定と矩形を打ち切る (ピンチ開始時など)。矩形は確定せず捨てる */
+function cancelPressAndRect() {
+  if (pressPending) { clearTimeout(pressPending.timer); pressPending = null; }
+  if (selRect) { selRect = null; $('selectChip').hidden = true; draw(); }
+}
+/* 矩形を離した: 交差した塊を選択する。ほぼ点のままならタップ扱いで選択解除のみ */
+function finishSelRect() {
+  var r = selRect;
+  selRect = null;
+  $('selectChip').hidden = true;
+  if (Math.abs(r.x1 - r.x0) < 4 && Math.abs(r.y1 - r.y0) < 4) {
+    selection.clear();
+    draw();
+    return;
+  }
+  var a = screenToWorld(Math.min(r.x0, r.x1), Math.min(r.y0, r.y1));
+  var b = screenToWorld(Math.max(r.x0, r.x1), Math.max(r.y0, r.y1));
+  var rect = { x0: a.x / CELL, y0: a.y / CELL, x1: b.x / CELL, y1: b.y / CELL };
+  selection = new Set(clustersInRect(state.clusters, state.n, rect, state.surface));
+  draw();
+}
 
 function stagePos(ev) {
   var r = stage.getBoundingClientRect();
@@ -895,6 +1003,8 @@ stage.addEventListener('pointerdown', function (ev) {
   if (pointers.size === 2) {
     // ピンチ開始: 掴んでいた塊はその場で確定 (吸着/合体/保存) させてからピンチへ切り替える。
     // (旧実装は drag を捨てていたため、塊が浮いたまま未保存になることがあった)
+    // 範囲選択の長押し判定・矩形はピンチが優先なので打ち切る (ピンチ中は選択操作をしない)
+    cancelPressAndRect();
     if (drag) { settleDrag(); showDropZone(false); zoneHot = false; }
     panStart = null;
     var pts = Array.from(pointers.values());
@@ -908,18 +1018,41 @@ stage.addEventListener('pointerdown', function (ev) {
   var hit = state.cleared ? null : hitCluster(p.x, p.y);
   if (hit) {
     var w = screenToWorld(p.x, p.y);
+    var inSelection = selection.has(hit.cluster);
+    // 選択外のピースを掴んだら、その時点で選択を解除して通常ドラッグにする
+    if (!inSelection) clearSelection();
     // 掴んだ塊を最前面へ
     state.clusters.splice(state.clusters.indexOf(hit.cluster), 1);
     state.clusters.push(hit.cluster);
     drag = {
       cluster: hit.cluster,
       grabDX: w.x / CELL - hit.cluster.gx, grabDY: w.y / CELL - hit.cluster.gy,
-      startSurface: state.surface, moved: false
+      startSurface: state.surface, moved: false, group: null
     };
+    if (inSelection && selection.size > 1) {
+      // 範囲選択のグループドラッグ: 選択全塊の相対オフセットを掴んだ塊基準で保持する
+      drag.group = Array.from(selection).map(function (c) {
+        return { cluster: c, offX: c.gx - hit.cluster.gx, offY: c.gy - hit.cluster.gy };
+      });
+    }
     startTimerOnce();
     showDropZone(true);
-  } else {
+  } else if (state.cleared) {
     panStart = { sx: p.x, sy: p.y, tx: view().tx, ty: view().ty };
+  } else {
+    // 空き地: すぐにはパンを始めず、長押し (範囲選択) かパンかの判定に入る。
+    // 450ms ほぼ静止できたら選択モードへ、判定前に 10px 超動いたら通常パンへ。
+    var pid = ev.pointerId, sx0 = p.x, sy0 = p.y;
+    pressPending = {
+      id: pid, sx: sx0, sy: sy0, tx: view().tx, ty: view().ty,
+      timer: setTimeout(function () {
+        if (!pressPending || pressPending.id !== pid || !pointers.has(pid)) return;
+        pressPending = null;
+        selRect = { id: pid, x0: sx0, y0: sy0, x1: sx0, y1: sy0 };
+        $('selectChip').hidden = false;
+        draw();
+      }, LONG_PRESS_MS)
+    };
   }
 });
 stage.addEventListener('pointermove', function (ev) {
@@ -942,6 +1075,22 @@ stage.addEventListener('pointermove', function (ev) {
     draw();
     return;
   }
+  if (selRect && selRect.id === ev.pointerId) {
+    selRect.x1 = p.x; selRect.y1 = p.y;
+    draw();
+    return;
+  }
+  if (pressPending && pressPending.id === ev.pointerId) {
+    // 長押し判定前に指が動いたら通常パンへ移行する。パンの基準は pointerdown
+    // 時点のままなので、遅れて始まっても視点は跳ねない (移動量をそのまま適用)。
+    if (Math.hypot(p.x - pressPending.sx, p.y - pressPending.sy) > PRESS_MOVE_PX) {
+      clearTimeout(pressPending.timer);
+      panStart = { sx: pressPending.sx, sy: pressPending.sy, tx: pressPending.tx, ty: pressPending.ty };
+      pressPending = null;
+    } else {
+      return; // 判定待ちの微動では何もしない
+    }
+  }
   if (drag) {
     drag.moved = true;
     var zone = $('dropZone');
@@ -955,6 +1104,14 @@ stage.addEventListener('pointermove', function (ev) {
     var w = screenToWorld(p.x, p.y);
     drag.cluster.gx = w.x / CELL - drag.grabDX;
     drag.cluster.gy = w.y / CELL - drag.grabDY;
+    if (drag.group) {
+      // 範囲選択: 他の選択塊も相対位置を保って追随する
+      drag.group.forEach(function (g) {
+        if (g.cluster === drag.cluster) return;
+        g.cluster.gx = drag.cluster.gx + g.offX;
+        g.cluster.gy = drag.cluster.gy + g.offY;
+      });
+    }
     draw();
     return;
   }
@@ -965,6 +1122,18 @@ stage.addEventListener('pointermove', function (ev) {
   }
 });
 function endPointer(ev) {
+  var cancelled = ev.type === 'pointercancel';
+  // 範囲選択まわりの終了処理 (この指が担当していた場合のみ)
+  if (pressPending && pressPending.id === ev.pointerId) {
+    clearTimeout(pressPending.timer);
+    var wasTap = !panStart && pointers.size === 1; // パンに移行せず単独で離した = 空き地タップ
+    pressPending = null;
+    if (wasTap && !cancelled) clearSelection(); // 空き地を短くタップ → 選択解除
+  }
+  if (selRect && selRect.id === ev.pointerId) {
+    if (cancelled) { selRect = null; $('selectChip').hidden = true; draw(); }
+    else finishSelRect(); // 矩形に交差した塊を選択
+  }
   pointers.delete(ev.pointerId);
   if (pointers.size < 2) pinch = null;
   if (pointers.size === 1 && !drag && state && state.views[state.surface]) {
@@ -982,14 +1151,17 @@ function endPointer(ev) {
 }
 stage.addEventListener('pointerup', endPointer);
 stage.addEventListener('pointercancel', endPointer);
+stage.addEventListener('contextmenu', function (ev) { ev.preventDefault(); }); // 長押しでメニューを出さない
 
 /* ドラッグの確定処理 (離したとき & ピンチへ切り替えるとき共通) */
 function settleDrag() {
   var cl = drag.cluster;
+  var group = drag.group;
   var wasMoved = drag.moved;
   drag = null;
   if (!wasMoved) { draw(); return; }
   state.moves++;
+  if (group && group.length > 1) { settleGroupDrag(cl, group); return; }
   // 合体処理 (相対スナップ→グリッド吸着→吸着後に正しい相対位置なら確実に合体、まで一括)
   var others = state.clusters.filter(function (c) { return c !== cl; });
   var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: cl.gx, gy: cl.gy }, state.n);
@@ -997,7 +1169,40 @@ function settleDrag() {
   if (res.merged) startMergeFlash(res.cluster.pieces);
   afterBoardChange();
 }
+/* 範囲選択のグループ確定:
+ * (1) 掴んだ塊だけを非選択塊に対して通常どおり確定 (相対スナップ/グリッド吸着/合体) し、
+ *     アンカーピースの実移動量 (吸着込み) を求める
+ * (2) 他の選択塊へ同じ移動量を追随させる (相対配置は保持)
+ * (3) 追随した各塊は合体判定だけ行う (noSnap: 単独のグリッド吸着で相対配置を壊さない) */
+function settleGroupDrag(leader, group) {
+  var n = state.n;
+  var gset = new Set(group.map(function (g) { return g.cluster; }));
+  var anchorId = clusterAnchorId(leader);
+  var before = piecePositions([leader], n).get(anchorId);
+  var res = absorbMerges(
+    state.clusters.filter(function (c) { return !gset.has(c); }),
+    { pieces: leader.pieces, surface: leader.surface, gx: leader.gx, gy: leader.gy }, n);
+  var after = piecePositions([res.cluster], n).get(anchorId);
+  var dx = after.gx - before.gx, dy = after.gy - before.gy;
+  var flash = res.merged ? res.cluster.pieces.slice() : null;
+  var followers = group.map(function (g) { return g.cluster; }).filter(function (c) { return c !== leader; });
+  var all = res.clusters.concat(shiftClusters(followers, dx, dy));
+  var queue = all.slice(res.clusters.length);
+  while (queue.length) {
+    var f = queue.shift();
+    if (all.indexOf(f) < 0) continue; // 既に別の塊へ合体済み
+    var r2 = absorbMerges(
+      all.filter(function (c) { return c !== f; }),
+      { pieces: f.pieces, surface: f.surface, gx: f.gx, gy: f.gy }, n, { noSnap: true });
+    all = r2.clusters;
+    if (r2.merged) flash = (flash || []).concat(r2.cluster.pieces);
+  }
+  state.clusters = all;
+  if (flash) startMergeFlash(flash);
+  afterBoardChange();
+}
 function afterBoardChange() {
+  pruneSelection(); // 合体で差し替わった塊は選択から外れる
   persistProgress();
   updateProgressUI();
   draw();
@@ -1012,7 +1217,12 @@ function showDropZone(show) {
 function switchSurfaceDuringDrag() {
   if (!drag) return;
   state.surface = state.surface === 'desk' ? 'mat' : 'desk';
-  drag.cluster.surface = state.surface;
+  if (drag.group) {
+    // 範囲選択: グループ全塊が一緒に画面を移る (選択は維持される)
+    drag.group.forEach(function (g) { g.cluster.surface = state.surface; });
+  } else {
+    drag.cluster.surface = state.surface;
+  }
   // 切替先でのドロップゾーンは「戻る」方向を案内する
   $('dropZoneLabel').textContent = state.surface === 'desk' ? 'マット' : '机';
   updateSurfaceUI();
@@ -1021,6 +1231,7 @@ function switchSurfaceDuringDrag() {
 function switchSurface() {
   if (!state || state.phase !== 'play' || uiHome) return;
   state.surface = state.surface === 'desk' ? 'mat' : 'desk';
+  selection.clear(); // 画面切替では選択は保持しない
   updateSurfaceUI();
   draw();
 }
@@ -1465,6 +1676,7 @@ function openBox() {
   setTimeout(function () {
     if (!state) return;
     state.clusters = initialScatter(playDate, difficulty);
+    selection.clear(); // 散らばった新しい塊に旧選択は引き継がない
     state.gameStarted = true;
     state.phase = 'play';
     uiHome = false;
@@ -1498,6 +1710,8 @@ function renderStartScreen() {
 /* ---------- ゲーム開始 ---------- */
 function startGame(pool) {
   state = newGameState(pool);
+  selection.clear(); // 塊が作り直されるので選択は引き継がない
+  cancelPressAndRect();
   buildDifficultySeg();
   if (firstStart) { uiHome = state.phase === 'box'; firstStart = false; }
   // スタート画面: 未開封なら包装された箱 (柄は日付で決定的)、開始済みなら続きからパネル
