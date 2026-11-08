@@ -6,7 +6,7 @@
 /* ================= 純粋ロジック ================= */
 
 var BASE_DATE_FALLBACK = '2026-11-07';
-var DIFFICULTIES = [16, 36, 100, 225, 400, 1225]; // 2025 は廃止し 16 (4x4) を追加 (2026-11-08)、784 も廃止し6段階に (2026-11-08)
+var DIFFICULTIES = [16, 36, 64, 100, 225, 400, 1024]; // 2025/784/1225 は廃止。2グループ制に合わせて 64 と 1024 (32x32) を追加 (2026-11-08)
 var TABSIZE = 0.2;      // デコの高さ = 一辺の約20%
 var JITTER = 0.045;     // 制御点ジッター (辺長比)
 var SNAP_DIST = 0.35;   // 相対スナップの許容距離 (セル単位)
@@ -50,7 +50,7 @@ function jstTodayString(now) {
  * ?date= パラメータにも対応しない。過去の記録はコレクションで見るだけ。 */
 
 /* ---- お題決定: (対象日 - 基準日) をプールで引く ----
- * 2026-11-08 からは難易度グループ制: ペア ([16,36] / [100,225] / [400,1225])
+ * 2026-11-08 からは難易度グループ制: 2グループ ([16,36,64] / [100,225,400,1024])
  * ごとに別のお題を割り当てる (pickPoolEntry の group 引数)。グループなしの
  * 呼び出しは従来の日付のみ選択 (旧バージョンで開始した進行中ゲームの維持用)。
  * プール (data/images.json) はエントリ配列形式:
@@ -65,25 +65,35 @@ function poolEntries(pool) {
   if (Array.isArray(pool.ids)) return pool.ids.map(function (id) { return { type: 'picsum', id: id }; });
   return [];
 }
-/* 難易度グループ: 隣り合う2段階がペアで同じお題 (画像) を共有する。
- * [16,36]→0 / [100,225]→1 / [400,1225]→2。未知の値 (旧 784 など) は 0。 */
+/* 難易度グループ: 同じグループの難易度は同じお題 (画像) を共有する。
+ * 2グループ制 (2026-11-08): [16,36,64]→0 / [100,225,400,1024]→1。
+ * 旧 1225 はグループ1扱い (進行中ゲームの維持用)、未知の値 (旧 784 など) は 0。 */
 function difficultyGroup(pieces) {
-  if (pieces === 100 || pieces === 225) return 1;
-  if (pieces === 400 || pieces === 1225) return 2;
+  if (pieces === 100 || pieces === 225 || pieces === 400 || pieces === 1024 || pieces === 1225) return 1;
   return 0;
 }
-/* ペアの上位難易度 (36 / 225 / 1225) か。「上級」豪華仕様の対象 */
+/* 装飾ティア: グループ内の順位で額装飾と ★ の色が変わる。
+ * 中位 (36 / 225) = 'silver'、上位 (64 / 400) = 'gold'、
+ * 最上位 (1024) = 'royal' (金 + 全周ライン)。旧 1225 は 'gold' 扱いで維持。
+ * 対象外 (16 / 100 など) は null。 */
+function frameTier(pieces) {
+  if (pieces === 1024) return 'royal';
+  if (pieces === 64 || pieces === 400 || pieces === 1225) return 'gold';
+  if (pieces === 36 || pieces === 225) return 'silver';
+  return null;
+}
+/* 装飾ティア対象か (旧称「上級」)。銀・金・特別装飾いずれかの記録に付く */
 function isUpperTier(pieces) {
-  return pieces === 36 || pieces === 225 || pieces === 1225;
+  return frameTier(pieces) !== null;
 }
 function pickPoolEntry(dateStr, pool, group) {
   var entries = poolEntries(pool);
   if (!entries.length) return null;
   var days = daysBetween(dateStr, pool.baseDate || BASE_DATE_FALLBACK);
-  /* グループ指定時は (日数×3 + グループ) で引く: 同じ日でもグループごとに
-   * 別のお題になり、ペア内 (同グループ) では同じお題を共有する。
+  /* グループ指定時は (日数×2 + グループ) で引く: 同じ日でもグループごとに
+   * 別のお題になり、グループ内では同じお題を共有する。
    * 省略時は従来どおり日数だけで引く (旧バージョン互換)。 */
-  var raw = typeof group === 'number' ? days * 3 + group : days;
+  var raw = typeof group === 'number' ? days * 2 + group : days;
   var idx = ((raw % entries.length) + entries.length) % entries.length;
   return entries[idx];
 }
@@ -504,12 +514,12 @@ var BOX_PATTERNS = [
   { id: 'confetti', name: '小紋' },
   { id: 'floral-retro', name: '小花' }
 ];
-/* グループ指定時は (日数×3 + グループ) で引く (お題画像のグループ選択と同じリズム):
+/* グループ指定時は (日数×2 + グループ) で引く (お題画像のグループ選択と同じリズム):
  * 同じ日でもグループごとに別の柄になり、翌日は全グループの柄が変わる。
  * 省略時は従来どおり日数だけで引く (旧バージョン互換)。 */
 function boxPatternIndex(dateStr, group) {
   var days = daysBetween(dateStr, BASE_DATE_FALLBACK);
-  var raw = typeof group === 'number' ? days * 3 + group : days;
+  var raw = typeof group === 'number' ? days * 2 + group : days;
   return ((raw % BOX_PATTERNS.length) + BOX_PATTERNS.length) % BOX_PATTERNS.length;
 }
 function boxPatternForDate(dateStr, group) { return BOX_PATTERNS[boxPatternIndex(dateStr, group)]; }
@@ -1191,7 +1201,7 @@ var PureLogic = {
   jstTodayString: jstTodayString,
   pickImageId: pickImageId, imageSizeFor: imageSizeFor,
   poolEntries: poolEntries, pickPoolEntry: pickPoolEntry, poolEntryKey: poolEntryKey,
-  difficultyGroup: difficultyGroup, isUpperTier: isUpperTier,
+  difficultyGroup: difficultyGroup, isUpperTier: isUpperTier, frameTier: frameTier,
   poolEntryByKey: poolEntryByKey, recordImageKey: recordImageKey,
   entryPhotoUrl: entryPhotoUrl, entryThumbUrl: entryThumbUrl,
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
@@ -3054,7 +3064,9 @@ function onClear() {
   $('resultDateLine').textContent = Number(dp[0]) + '年' + Number(dp[1]) + '月' + Number(dp[2]) + '日 ・ ' + difficulty + 'ピース';
   $('resultStatLine').textContent = 'タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
-  $('resultUpperBadge').hidden = !isUpperTier(difficulty); // 上級 (ペア上位) のときだけ金のバッジを出す
+  var clearTier = frameTier(difficulty); // 装飾ティア (銀/金/特別) のときだけティア色のバッジを出す
+  $('resultUpperBadge').hidden = !clearTier;
+  $('resultUpperBadge').className = 'cert-badge cert-badge-upper' + (clearTier && clearTier !== 'gold' ? ' ' + clearTier : '');
   var boardHost = $('resultBoard');
   boardHost.innerHTML = '';
   renderBoardCanvasAt(rec, 288).then(function (cv) {
@@ -3837,21 +3849,38 @@ function paintFrameUnit(ctx, st, U, board, boardState, seedKey, upperPieces) {
   else if (st.ornament === 'corners') drawFrameCorners(ctx, X0, Y0, U);
   else if (st.ornament === 'pearl') drawFramePearls(ctx, X0, Y0, U, bw + matW);
   else if (st.ornament === 'crown') drawFrameCrown(ctx, X0 + U / 2, Y0 - U * 0.017, U * 0.147);
-  // 8. 上級仕様: 額の外側4隅にフラットな金の三角キャップを付ける (案F6。
-  // 絵の中には何も描かない。額自体の豪華化ではなく「付け足す装飾」として区別する)
-  if (upperPieces) drawFrameCornerCaps(ctx, X0, Y0, U);
+  // 8. 装飾ティア: 額の外側4隅にフラットな三角キャップを付ける (案F6。
+  // 絵の中には何も描かない。額自体の豪華化ではなく「付け足す装飾」として区別する)。
+  // 銀 (中位) は銀キャップ、金 (上位) は金キャップ、最上位 (royal) は
+  // 金キャップ + 額の全周に細い金ライン (案B)。
+  if (upperPieces) drawFrameCornerCaps(ctx, X0, Y0, U, frameTier(upperPieces));
 }
-/* 上級仕様 (案F6): 額の外側4隅に付ける、フラットでマットな金の三角キャップ。
- * 壁インテリアの作風 (単色 + 輪郭線) に合わせ、グラデーションや影は付けない。 */
-function drawFrameCornerCaps(ctx, X0, Y0, U) {
+/* 装飾ティア (案F6 + B): 額の外側4隅に付ける、フラットでマットな三角キャップ。
+ * 壁インテリアの作風 (単色 + 輪郭線) に合わせ、グラデーションや影は付けない。
+ * tier: 'silver' = 銀キャップ / 'gold' = 金キャップ /
+ * 'royal' = 金キャップ + 額の全周に細い金ライン (最上位 1024 専用、案B) */
+var CAP_COLORS = {
+  silver: { fill: '#b9bfc7', edge: '#8f979f' },
+  gold: { fill: '#c9a24b', edge: '#a48034' },
+  royal: { fill: '#c9a24b', edge: '#a48034' }
+};
+function drawFrameCornerCaps(ctx, X0, Y0, U, tier) {
+  var col = CAP_COLORS[tier] || CAP_COLORS.gold;
   var L = U * 0.135;
   var X1 = X0 + U, Y1 = Y0 + U;
   var corners = [
     [X0, Y0, 1, 1], [X1, Y0, -1, 1], [X0, Y1, 1, -1], [X1, Y1, -1, -1]
   ];
   ctx.save();
-  ctx.fillStyle = '#c9a24b';
-  ctx.strokeStyle = '#a48034';
+  if (tier === 'royal') {
+    // 全周の金ライン (キャップの下に敷く: 隅ではキャップが上に重なる)
+    var inset = U * 0.024;
+    ctx.strokeStyle = col.fill;
+    ctx.lineWidth = Math.max(1, U * 0.012);
+    ctx.strokeRect(X0 + inset, Y0 + inset, U - inset * 2, U - inset * 2);
+  }
+  ctx.fillStyle = col.fill;
+  ctx.strokeStyle = col.edge;
   ctx.lineWidth = Math.max(1, U * 0.007);
   ctx.lineJoin = 'round';
   for (var i = 0; i < corners.length; i++) {
@@ -3869,20 +3898,29 @@ function drawFrameCornerCaps(ctx, X0, Y0, U) {
   }
   ctx.restore();
 }
-/* 上級仕様 (円形フレーム用): 四角い額の金キャップ (案F6) に相当する表現として、
- * リング (額) 自体の左上部分をフラットな金の弧に替える。絵の中には描かない。 */
-function drawCircleUpperArc(ctx, cx, cy, R, bw) {
+/* 装飾ティア (円形フレーム用): 四角い額のキャップ (案F6) に相当する表現として、
+ * リング (額) 自体の左上部分をティア色のフラットな弧に替える。絵の中には描かない。 */
+function drawCircleUpperArc(ctx, cx, cy, R, bw, tier) {
+  var col = CAP_COLORS[tier] || CAP_COLORS.gold;
   var rMid = R - bw / 2;
   var a0 = Math.PI * 202 / 180, a1 = Math.PI * 248 / 180;
   ctx.save();
-  ctx.strokeStyle = '#c9a24b';
+  if (tier === 'royal') {
+    // 最上位: リングの外周寄りに細い金ラインを全周に引く (四角額の全周ライン相当)
+    ctx.strokeStyle = col.fill;
+    ctx.lineWidth = Math.max(1, R * 0.02);
+    ctx.beginPath();
+    ctx.arc(cx, cy, R - Math.max(1, R * 0.02), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = col.fill;
   ctx.lineWidth = bw;
   ctx.lineCap = 'butt';
   ctx.beginPath();
   ctx.arc(cx, cy, rMid, a0, a1);
   ctx.stroke();
-  // 弧の両端に一段濃い金の仕切り線
-  ctx.strokeStyle = '#a48034';
+  // 弧の両端に一段濃い仕切り線
+  ctx.strokeStyle = col.edge;
   ctx.lineWidth = Math.max(1, R * 0.014);
   [a0, a1].forEach(function (a) {
     ctx.beginPath();
@@ -3960,8 +3998,8 @@ function paintCircleFrameUnit(ctx, st, U, board, boardState, seedKey, geo, upper
   if (board) ctx.drawImage(board, cx - rIn, cy - rIn, rIn * 2, rIn * 2);
   else drawFrameBoardPlaceholder(ctx, cx - rIn, cy - rIn, rIn * 2, U, boardState);
   ctx.restore();
-  // 上級仕様 (円形): リングの左上を金の弧に替える (四角額の金キャップ相当)
-  if (upperPieces) drawCircleUpperArc(ctx, cx, cy, R, bw);
+  // 装飾ティア (円形): リングの左上をティア色の弧に替える (四角額のキャップ相当)
+  if (upperPieces) drawCircleUpperArc(ctx, cx, cy, R, bw, frameTier(upperPieces));
 }
 function buildWallFrameEl(f) {
   var rec = recordByWallKey(f.recordKey);
@@ -3993,7 +4031,7 @@ function paintWallFrameUnit(cv, f, rec, st) {
   cv.height = px;
   var ctx = cv.getContext('2d');
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  // 上級仕様は対象レコード (ペア上位難易度) のときだけ付ける
+  // 装飾ティアは対象レコード (銀/金/特別装飾の難易度) のときだけ付ける
   var upperPieces = rec && isUpperTier(rec.pieces) ? rec.pieces : 0;
   paintFrameUnit(ctx, st, U, null, rec ? 'loading' : 'missing', f.recordKey, upperPieces);
   if (!rec) return;
@@ -4011,11 +4049,6 @@ function paintWallFrameUnit(cv, f, rec, st) {
 function renderWallBoardCanvas(rec) {
   return renderBoardCanvasAt(rec, detailRenderPlan(rec.pieces).sizePx);
 }
-/* 上級仕様: 完成盤面の左上隅に斜めの金のリボン帯を描く (ペア上位難易度
- * 36/225/1225 の記録だけ)。帯は左上コーナーを 45° で横切り、帯幅は盤面
- * 一辺の約13%。盤面の正方形領域でクリップするのでマットや額にはみ出さない。
- * renderBoardCanvasAt の共通処理として描くため、壁の額・コレクション詳細・
- * 額ピッカー・クリア画面・共有画像のすべてに効く (額自体は通常のまま)。 */
 /* 完成盤面を指定サイズで描く。額装は詳細サイズ、額装ピッカーの
  * サムネイルは小サイズで、どちらも同じ実ピース形状の見た目にする。 */
 function renderBoardCanvasAt(rec, sizePx) {
@@ -4598,7 +4631,7 @@ function openDetail(r) {
   });
   $('detailText').innerHTML =
     '日付: ' + r.date + '<br>難易度: ' + r.pieces + 'ピース' +
-    (isUpperTier(r.pieces) ? ' <span class="upper-chip">上級クリア</span>' : '') +
+    (frameTier(r.pieces) ? ' <span class="upper-chip' + (frameTier(r.pieces) !== 'gold' ? ' ' + frameTier(r.pieces) : '') + '">上級クリア</span>' : '') +
     '<br>クリアタイム: ' + formatTime(r.bestTimeSec) +
     '<br>手数: ' + (r.moves != null ? r.moves : '-') +
     '<br>完成図: ' + (r.previewViewed ? '見た（' + r.previewCount + '回）' : '見ずにクリア') +
@@ -4698,13 +4731,42 @@ function renderDetailPuzzle(r) {
 /* ---------- コントロール配線 ---------- */
 /* 難易度セレクタ (案D: 重なったカード)。傾きはカード位置で決定的に決める。
  * 選択中カードの想定時間はカード列の下に1行だけ出す。 */
-var DIFF_TIME_LABELS = { 16: '1〜3分', 36: '3〜8分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 1225: '1〜2日' };
-var DIFF_SUB_LABELS = { 16: 'かんたん', 1225: 'おに' };
+var DIFF_TIME_LABELS = { 16: '1〜3分', 36: '3〜8分', 64: '10〜20分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 1024: '1〜2日' };
+var DIFF_SUB_LABELS = { 16: 'かんたん', 1024: 'おに' };
 var DIFF_TILTS = [-3, -1.2, 2.2, -2, 1.4, -0.6, 2.5];
+/* グループ見出し: その日の箱の包装柄アイコン + 「パズルA / パズルB」だけの
+ * 簡素な表示 (ユーザー指定: 説明文は付けない)。柄はグループごとに違うので、
+ * アイコンがそのまま「別の箱 = 別のパズル」の目印になる */
+function diffGroupHead(g) {
+  var head = document.createElement('div');
+  head.className = 'diff-group-head';
+  var pat = boxPatternForDate(playDate, g);
+  var sw = document.createElement('span');
+  sw.className = 'diff-swatch';
+  sw.innerHTML = '<svg viewBox="0 0 44 30" aria-hidden="true"><defs>' +
+    giftPatternDef(pat.id).replace(/giftPat/g, 'giftPatG' + g) +
+    '</defs><rect x="1" y="1" width="42" height="28" rx="4" fill="url(#giftPatG' + g + ')"/></svg>';
+  head.appendChild(sw);
+  var name = document.createElement('span');
+  name.className = 'diff-group-name';
+  name.textContent = g === 0 ? 'パズルA' : 'パズルB';
+  head.appendChild(name);
+  return head;
+}
 function buildDifficultySeg() {
   var seg = $('difficultySeg');
   seg.innerHTML = '';
+  var lastGroup = -1, row = null;
   DIFFICULTIES.forEach(function (d, i) {
+    var g = difficultyGroup(d);
+    if (g !== lastGroup) {
+      lastGroup = g;
+      seg.appendChild(diffGroupHead(g));
+      row = document.createElement('div');
+      row.className = 'diff-fan';
+      row.setAttribute('role', 'group');
+      seg.appendChild(row);
+    }
     var b = document.createElement('button');
     b.type = 'button';
     b.className = 'diff-card' + (d === difficulty ? ' active' : '');
@@ -4720,10 +4782,11 @@ function buildDifficultySeg() {
       sub.textContent = DIFF_SUB_LABELS[d];
       b.appendChild(sub);
     }
-    if (isUpperTier(d)) { // ペア上位 (上級) のカードには金の ★ を付ける
+    var tier = frameTier(d);
+    if (tier) { // 装飾ティアのカードにはティア色の ★ (最上位は ★★)
       var star = document.createElement('span');
-      star.className = 'diff-star';
-      star.textContent = '★';
+      star.className = 'diff-star ' + tier;
+      star.textContent = tier === 'royal' ? '★★' : '★';
       b.appendChild(star);
     }
     b.setAttribute('aria-pressed', d === difficulty ? 'true' : 'false');
@@ -4735,7 +4798,7 @@ function buildDifficultySeg() {
       saveStore();
       startGame(state.pool);
     });
-    seg.appendChild(b);
+    row.appendChild(b);
   });
   var subLabel = DIFF_SUB_LABELS[difficulty];
   $('difficultyTime').textContent = (subLabel ? subLabel + ' ・ ' : '') + '想定 ' + DIFF_TIME_LABELS[difficulty];

@@ -283,7 +283,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
 /* 10. 最低難易度 36ピース (6×6) */
 {
-  ok(L.DIFFICULTIES.length === 6 && L.DIFFICULTIES[0] === 16 && L.DIFFICULTIES[1] === 36 && L.DIFFICULTIES[5] === 1225 && !L.DIFFICULTIES.includes(2025) && !L.DIFFICULTIES.includes(784), '難易度は6段階: 16追加・2025/784廃止・デフォルト36');
+  ok(L.DIFFICULTIES.length === 7 && L.DIFFICULTIES[0] === 16 && L.DIFFICULTIES[1] === 36 && L.DIFFICULTIES[6] === 1024 && !L.DIFFICULTIES.includes(2025) && !L.DIFFICULTIES.includes(784) && !L.DIFFICULTIES.includes(1225), '難易度は7段階: 16/64/1024追加・2025/784/1225廃止・デフォルト36');
   const e1 = L.generateEdges('2026-11-07', 36);
   const e2 = L.generateEdges('2026-11-07', 36);
   ok(e1.n === 6, '36ピースは 6×6 グリッド');
@@ -1140,40 +1140,40 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(swT.indexOf('desk-textures') === -1, '机: テクスチャは SW プリキャッシュに入れない (ランタイムキャッシュ対象)');
 }
 
-/* 30. 難易度ペア制 (2026-11-08): 784廃止で6段階 / お題は難易度グループごと
- * ([16,36] / [100,225] / [400,1225] が同日内では別画像・ペア内では同じ画像) /
- * ペア上位 (36/225/1225) の記録だけに付く「上級」の差別化 (盤面のコーナーリボン等) */
+/* 30. 難易度2グループ制 (2026-11-08): 7段階 / お題は難易度グループごと
+ * ([16,36,64] / [100,225,400,1024] が同日内では別画像・グループ内では同じ画像) /
+ * グループ内の順位で付く装飾ティア (36/225=銀・64/400=金・1024=特別装飾) */
 {
   const fs2 = require('fs'), path2 = require('path');
   const read2 = (p) => fs2.readFileSync(path2.join(__dirname, p), 'utf8');
   const appSrc2 = read2('app.js'), html2 = read2('index.html'), css2 = read2('style.css');
 
-  // 6段階 (784廃止)
-  ok(eq(L.DIFFICULTIES, [16, 36, 100, 225, 400, 1225]), '難易度: 6段階 [16,36,100,225,400,1225] (784廃止)');
+  // 7段階 (1225廃止・64/1024追加)
+  ok(eq(L.DIFFICULTIES, [16, 36, 64, 100, 225, 400, 1024]), '難易度: 7段階 [16,36,64,100,225,400,1024] (1225廃止)');
+  ok(L.generateEdges('2026-11-08', 64).n === 8 && L.generateEdges('2026-11-08', 1024).n === 32, '難易度: 64 は 8x8・1024 は 32x32 グリッド');
   ok(appSrc2.indexOf('半日〜1日') === -1, '難易度: 想定時間ラベルからも 784 を削除');
   ok(appSrc2.indexOf('DIFFICULTIES.indexOf(store.lastDifficulty)') !== -1, '難易度: 保存済み lastDifficulty が一覧に無ければ 36 に落ちる既存フォールバックがある');
 
-  // グループ対応
-  ok(L.difficultyGroup(16) === 0 && L.difficultyGroup(36) === 0, 'グループ: [16,36] → 0');
-  ok(L.difficultyGroup(100) === 1 && L.difficultyGroup(225) === 1, 'グループ: [100,225] → 1');
-  ok(L.difficultyGroup(400) === 2 && L.difficultyGroup(1225) === 2, 'グループ: [400,1225] → 2');
+  // グループ対応 (2グループ制)
+  ok(L.difficultyGroup(16) === 0 && L.difficultyGroup(36) === 0 && L.difficultyGroup(64) === 0, 'グループ: [16,36,64] → 0');
+  ok(L.difficultyGroup(100) === 1 && L.difficultyGroup(225) === 1 && L.difficultyGroup(400) === 1 && L.difficultyGroup(1024) === 1, 'グループ: [100,225,400,1024] → 1');
+  ok(L.difficultyGroup(1225) === 1, 'グループ: 旧 1225 は 1 (移行互換)');
   ok(L.difficultyGroup(784) === 0 && L.difficultyGroup(999) === 0 && L.difficultyGroup(undefined) === 0, 'グループ: 未知の値は 0');
 
-  // グループ選択: 同日・別グループは別エントリ、ペア内は同じ、同グループは決定的
+  // グループ選択: 同日・別グループは別エントリ、グループ内は同じ、同グループは決定的
   const gpool = { baseDate: '2026-11-07', entries: [11, 22, 33, 44, 55, 66].map(id => ({ type: 'picsum', id: id })) };
   const gentries = L.poolEntries(gpool);
   ok(L.pickPoolEntry('2026-11-07', gpool, 0) === gentries[0] &&
-     L.pickPoolEntry('2026-11-07', gpool, 1) === gentries[1] &&
-     L.pickPoolEntry('2026-11-07', gpool, 2) === gentries[2], 'グループ選択: 基準日はグループ 0/1/2 で別エントリ');
-  ok(L.pickPoolEntry('2026-11-08', gpool, 0) === gentries[3] &&
-     L.pickPoolEntry('2026-11-08', gpool, 1) === gentries[4] &&
-     L.pickPoolEntry('2026-11-08', gpool, 2) === gentries[5], 'グループ選択: 翌日もグループごとに別エントリへずれる');
-  ok(L.pickPoolEntry('2026-11-08', gpool, L.difficultyGroup(16)) === L.pickPoolEntry('2026-11-08', gpool, L.difficultyGroup(36)), 'グループ選択: ペア内 (16と36) は同じお題');
+     L.pickPoolEntry('2026-11-07', gpool, 1) === gentries[1], 'グループ選択: 基準日はグループ 0/1 で別エントリ');
+  ok(L.pickPoolEntry('2026-11-08', gpool, 0) === gentries[2] &&
+     L.pickPoolEntry('2026-11-08', gpool, 1) === gentries[3], 'グループ選択: 翌日もグループごとに別エントリへずれる');
+  ok(L.pickPoolEntry('2026-11-08', gpool, L.difficultyGroup(16)) === L.pickPoolEntry('2026-11-08', gpool, L.difficultyGroup(64)) &&
+     L.pickPoolEntry('2026-11-08', gpool, L.difficultyGroup(100)) === L.pickPoolEntry('2026-11-08', gpool, L.difficultyGroup(1024)), 'グループ選択: グループ内 (16と64 / 100と1024) は同じお題');
   ok(L.pickPoolEntry('2026-11-08', gpool, 1) === L.pickPoolEntry('2026-11-08', gpool, 1), 'グループ選択: 同日・同グループは決定的');
   ok(L.pickPoolEntry('2026-11-08', gpool) === gentries[1] && L.pickPoolEntry('2026-11-07', gpool) === gentries[0], 'グループ省略: 従来の日付のみ選択と一致 (旧挙動不変)');
   const realPool = JSON.parse(read2('data/images.json'));
-  const rp = [0, 1, 2].map(g => L.pickPoolEntry('2026-11-08', realPool, g));
-  ok(rp[0] !== rp[1] && rp[1] !== rp[2] && rp[0] !== rp[2], 'グループ選択: 実プール (758件) でも3グループが別エントリ');
+  const rp = [0, 1].map(g => L.pickPoolEntry('2026-11-08', realPool, g));
+  ok(rp[0] !== rp[1], 'グループ選択: 実プール (758件) でも2グループが別エントリ');
 
   // お題キーの保存/移行の配線 (newGameState / persistProgress)
   ok(appSrc2.indexOf('pickPoolEntry(playDate, pool, difficultyGroup(difficulty))') !== -1, 'お題: 新規開始はグループ選択で引く');
@@ -1183,33 +1183,44 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // 箱の柄は難易度グループで引く (renderStartScreen)
   ok(appSrc2.indexOf('boxPatternForDate(playDate, difficultyGroup(difficulty))') !== -1, '箱の柄: スタート画面は選択中難易度のグループで柄を引く');
 
-  // 上級の対象
-  ok(L.isUpperTier(36) && L.isUpperTier(225) && L.isUpperTier(1225), '上級: 36/225/1225 が対象');
-  ok(!L.isUpperTier(16) && !L.isUpperTier(100) && !L.isUpperTier(400) && !L.isUpperTier(784) && !L.isUpperTier(0), '上級: 16/100/400 等は対象外');
+  // 装飾ティアの対象
+  ok(L.frameTier(36) === 'silver' && L.frameTier(225) === 'silver', 'ティア: 36/225 が銀');
+  ok(L.frameTier(64) === 'gold' && L.frameTier(400) === 'gold' && L.frameTier(1225) === 'gold', 'ティア: 64/400 (と旧1225) が金');
+  ok(L.frameTier(1024) === 'royal', 'ティア: 1024 が特別装飾 (royal)');
+  ok(L.frameTier(16) === null && L.frameTier(100) === null && L.frameTier(784) === null && L.frameTier(0) === null, 'ティア: 16/100 等は対象外');
+  ok(L.isUpperTier(36) && L.isUpperTier(64) && L.isUpperTier(225) && L.isUpperTier(400) && L.isUpperTier(1024), '上級: ティア対象はすべて isUpperTier');
+  ok(!L.isUpperTier(16) && !L.isUpperTier(100) && !L.isUpperTier(784) && !L.isUpperTier(0), '上級: 16/100 等は対象外');
 
-  // 上級の差別化は額の外側4隅に付けるフラットな金の三角キャップ (案F6)。
+  // 装飾ティアは額の外側4隅に付けるフラットな三角キャップ (案F6)。
+  // 銀/金で色が変わり、最上位 (royal) は全周の金ラインが加わる (案B)。
   // 絵 (盤面) の中には何も描かない。額の豪華さは解放報酬の軸と混ざるため使わない
-  ok(appSrc2.indexOf('function drawFrameCornerCaps(') !== -1, '額: 金コーナーキャップの描画部品がある');
+  ok(appSrc2.indexOf('function drawFrameCornerCaps(') !== -1, '額: コーナーキャップの描画部品がある');
+  ok(appSrc2.indexOf('CAP_COLORS') !== -1 && appSrc2.indexOf("silver: { fill: '#b9bfc7'") !== -1, '額: 銀キャップの色定義がある');
+  ok(appSrc2.indexOf("tier === 'royal'") !== -1, '額: 最上位は全周ライン付き (案B)');
   const frameBody = appSrc2.slice(appSrc2.indexOf('function paintFrameUnit('), appSrc2.indexOf('function drawFrameCornerCaps('));
-  ok(frameBody.indexOf('if (upperPieces) drawFrameCornerCaps(') !== -1, '額: paintFrameUnit が上級のときだけ金キャップを描く');
+  ok(frameBody.indexOf('if (upperPieces) drawFrameCornerCaps(') !== -1 && frameBody.indexOf('frameTier(upperPieces)') !== -1, '額: paintFrameUnit がティア対象のときだけティア色キャップを描く');
   ok(appSrc2.indexOf('drawUpperRibbon') === -1 && appSrc2.indexOf('drawCircleUpperRibbon') === -1, '盤面: 絵の中に描く旧リボン (斜め帯) は残っていない');
   ok(appSrc2.indexOf('isUpperTier(rec.pieces)') !== -1, '額: 対象レコード判定を paintWallFrameUnit が行う');
   const circleBody = appSrc2.slice(appSrc2.indexOf('function paintCircleFrameUnit('), appSrc2.indexOf('function buildWallFrameEl('));
-  ok(circleBody.indexOf('drawCircleUpperArc(') !== -1, '額 (円形): リングの左上を金の弧に替える');
+  ok(circleBody.indexOf('drawCircleUpperArc(') !== -1 && circleBody.indexOf('frameTier(upperPieces)') !== -1, '額 (円形): リングの左上をティア色の弧に替える');
   ok(appSrc2.indexOf('upperTierGold') === -1 && appSrc2.indexOf('drawGoldRosette') === -1 && appSrc2.indexOf('drawBrassNameplate') === -1, '旧仕様: 額のピンストライプ/ロゼット/真鍮プレートは残っていない');
 
   // クリア画面の金のリボン風バッジ (既存バッジと縦に並ぶ)
   ok(html2.indexOf('id="resultUpperBadge"') !== -1 && html2.indexOf('>上級クリア<') !== -1, 'クリア画面: 「上級クリア」バッジ要素がある');
   ok(html2.indexOf('id="resultBadge"') < html2.indexOf('id="resultUpperBadge"'), 'クリア画面: 上級バッジは既存バッジの下に並ぶ');
-  ok(appSrc2.indexOf("$('resultUpperBadge').hidden = !isUpperTier(difficulty)") !== -1, 'クリア画面: 上級のときだけバッジを出す');
+  ok(appSrc2.indexOf("$('resultUpperBadge').hidden = !clearTier") !== -1 && appSrc2.indexOf('frameTier(difficulty)') !== -1, 'クリア画面: ティア対象のときだけバッジを出す');
   ok(css2.indexOf('.cert-badge-upper') !== -1, 'クリア画面: 金バッジの CSS がある');
 
-  // スタート画面の難易度カード ★
-  ok(appSrc2.indexOf("star.className = 'diff-star'") !== -1 && appSrc2.indexOf('isUpperTier(d)') !== -1, '難易度カード: 上位に ★ を付ける配線がある');
-  ok(css2.indexOf('.diff-star') !== -1, '難易度カード: ★ の CSS がある');
+  // スタート画面の難易度カード ★ (ティア色・最上位は ★★) とグループ見出し
+  ok(appSrc2.indexOf("star.className = 'diff-star ' + tier") !== -1 && appSrc2.indexOf('frameTier(d)') !== -1, '難易度カード: ティアに ★ を付ける配線がある');
+  ok(appSrc2.indexOf("tier === 'royal' ? '★★' : '★'") !== -1, '難易度カード: 最上位は ★★');
+  ok(css2.indexOf('.diff-star') !== -1 && css2.indexOf('.diff-star.silver') !== -1 && css2.indexOf('.diff-star.royal') !== -1, '難易度カード: ★ の CSS (銀/特別含む) がある');
+  ok(appSrc2.indexOf('function diffGroupHead(') !== -1 && appSrc2.indexOf("'パズルA'") !== -1 && appSrc2.indexOf("'パズルB'") !== -1, '難易度: グループ見出し (パズルA/B) がある');
+  ok(appSrc2.indexOf('diff-swatch') !== -1 && appSrc2.indexOf('giftPatternDef(pat.id)') !== -1, '難易度: 見出しに箱の柄アイコンを出す');
+  ok(css2.indexOf('.diff-group-head') !== -1, '難易度: グループ見出しの CSS がある');
 
-  // コレクション詳細の金のチップ
-  ok(appSrc2.indexOf('upper-chip') !== -1 && appSrc2.indexOf('isUpperTier(r.pieces)') !== -1 && appSrc2.indexOf('上級クリア') !== -1, 'コレクション詳細: 上級の記録に金のチップを出す');
+  // コレクション詳細のチップ (ティア色)
+  ok(appSrc2.indexOf('upper-chip') !== -1 && appSrc2.indexOf('frameTier(r.pieces)') !== -1 && appSrc2.indexOf('上級クリア') !== -1, 'コレクション詳細: ティア対象の記録にチップを出す');
   ok(css2.indexOf('.upper-chip') !== -1, 'コレクション詳細: チップの CSS がある');
 }
 
