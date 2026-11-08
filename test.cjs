@@ -84,26 +84,18 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(offsets.size >= 5, 'ノブ中心位置のずれのバリエーションあり (' + offsets.size + '段階相当)');
 }
 
-/* 4. 完成判定 */
+/* 4. 完成判定 (全部が1つの塊になった瞬間が完成。位置は問わない) */
 {
   const n = 10, pieces = 100;
-  const clusters = [];
-  for (let id = 0; id < pieces; id++) {
-    const h = L.pieceHome(id, n);
-    clusters.push({ pieces: [id], surface: 'mat', gx: h.col, gy: h.row });
-  }
-  ok(L.isComplete(clusters, n) === true, '全セル正解配置で完成判定 = 真');
-  const moved = clusters.map(c => ({ ...c }));
-  moved[42] = { ...moved[42], gx: moved[42].gx + 1 };
-  ok(L.isComplete(moved, n) === false, '1つずらすと完成判定 = 偽');
-  const desk = clusters.map(c => ({ ...c }));
-  desk[0] = { ...desk[0], surface: 'desk' };
-  ok(L.isComplete(desk, n) === true, '面の概念なし: 位置が合っていれば surface 値によらず完成');
-  ok(L.isComplete(clusters.slice(1), n) === false, '1つ欠けると完成判定 = 偽');
-  // 塊 (クラスター) 単位でも正しく判定できる
-  const merged = [{ pieces: clusters.slice(0, 50).flatMap(c => c.pieces), surface: 'mat', gx: 0, gy: 0 }]
-    .concat(clusters.slice(50));
-  ok(L.isComplete(merged, n) === true, '塊にまとまっていても完成判定 = 真');
+  const allIds = [];
+  for (let id = 0; id < pieces; id++) allIds.push(id);
+  ok(L.isComplete([{ pieces: allIds, surface: 'desk', gx: 3, gy: -2 }], n) === true, '全ピースが1つの塊なら完成 (場所はどこでも)');
+  const singles = allIds.map(id => ({ pieces: [id], surface: 'desk', gx: 0, gy: 0 }));
+  ok(L.isComplete(singles, n) === false, 'バラバラでは未完成');
+  const two = [{ pieces: allIds.slice(0, 50), surface: 'desk', gx: 0, gy: 0 }, { pieces: allIds.slice(50), surface: 'desk', gx: 5, gy: 0 }];
+  ok(L.isComplete(two, n) === false, '2つの塊では未完成');
+  ok(L.isComplete([{ pieces: allIds.slice(1), surface: 'desk', gx: 0, gy: 0 }], n) === false, '1つ欠けた塊は未完成');
+  ok(L.isComplete([], n) === false, '塊ゼロは未完成');
 }
 
 /* 5. 日付 → お題エントリが決定的 (厳選プール: picsum + URL エントリ混在) */
@@ -290,17 +282,12 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(eq(e1.h, e2.h) && eq(e1.v, e2.v), '36ピース: 同じ日付で辺形状が完全一致');
   const e3 = L.generateEdges('2026-11-08', 36);
   ok(!eq(e1.h, e3.h), '36ピース: 日付が変わると辺形状も変わる');
-  // 完成判定 (n=6)
+  // 完成判定 (n=6): 全部が1つの塊になったときだけ完成
   const n = 6, pieces = 36;
-  const clusters = [];
-  for (let id = 0; id < pieces; id++) {
-    const h = L.pieceHome(id, n);
-    clusters.push({ pieces: [id], surface: 'mat', gx: h.col, gy: h.row });
-  }
-  ok(L.isComplete(clusters, n) === true, '36ピース: 全セル正解配置で完成判定 = 真');
-  const moved = clusters.map(c => ({ ...c }));
-  moved[7] = { ...moved[7], gy: moved[7].gy + 1 };
-  ok(L.isComplete(moved, n) === false, '36ピース: 1つずらすと完成判定 = 偽');
+  const ids36 = [];
+  for (let id = 0; id < pieces; id++) ids36.push(id);
+  ok(L.isComplete([{ pieces: ids36, surface: 'desk', gx: 0, gy: 0 }], n) === true, '36ピース: 全ピースが1つの塊で完成判定 = 真');
+  ok(L.isComplete(ids36.map(id => ({ pieces: [id], surface: 'desk', gx: 0, gy: 0 })), n) === false, '36ピース: バラバラでは完成判定 = 偽');
   // 散らばり (n=6): 自由配置でも全ピースが領域内に出る
   const s36 = L.initialScatter('2026-11-07', 36);
   const r36 = L.scatterRect(36);

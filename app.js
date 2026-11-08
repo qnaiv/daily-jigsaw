@@ -525,15 +525,11 @@ function boxPatternIndex(dateStr, group) {
 }
 function boxPatternForDate(dateStr, group) { return BOX_PATTERNS[boxPatternIndex(dateStr, group)]; }
 
-/* 完成判定 (内部のみ): 全ピースが盤面上のホーム座標に一致 */
+/* 完成判定 (内部のみ): 全ピースが1つの塊につながった瞬間が完成。
+ * 相対スナップの合体は正しい隣接関係でしか起きないので、1つの塊に
+ * なった時点で絵は正しく組み上がっている (位置は問わない) */
 function isComplete(clusters, n) {
-  var pos = piecePositions(clusters, n);
-  if (pos.size !== n * n) return false;
-  for (var id = 0; id < n * n; id++) {
-    var p = pos.get(id), home = pieceHome(id, n);
-    if (!p || p.gx !== home.col || p.gy !== home.row) return false;
-  }
-  return true;
+  return clusters.length === 1 && clusters[0].pieces.length === n * n;
 }
 function isEdgePiece(id, n) {
   var h = pieceHome(id, n);
@@ -2479,25 +2475,6 @@ function draw() {
   var camKey = v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
   if (lastCamKey === '') lastCamKey = camKey;
   else if (camKey !== lastCamKey) { lastCamKey = camKey; pokeMinimap(); }
-  // 盤面: 机の上に置かれた組み立て場所 ([0,n]×[0,n] セル)。マット色の板と
-  // グリッドを敷き、その上にピースを重ねる (面は机1つだけ)
-  var tl = worldToScreen(0, 0), br = worldToScreen(n * CELL, n * CELL);
-  sctx.fillStyle = THEMES[uiTheme].mat;
-  sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-  sctx.fillStyle = 'rgba(0,0,0,0.12)';
-  sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-  sctx.strokeStyle = 'rgba(255,255,255,0.75)';
-  sctx.lineWidth = 2;
-  sctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-  sctx.strokeStyle = 'rgba(255,255,255,0.16)';
-  sctx.lineWidth = 1;
-  sctx.beginPath();
-  for (var g = 1; g < n; g++) {
-    var gp = worldToScreen(g * CELL, g * CELL);
-    sctx.moveTo(tl.x, gp.y); sctx.lineTo(br.x, gp.y);
-    sctx.moveTo(gp.x, tl.y); sctx.lineTo(gp.x, br.y);
-  }
-  sctx.stroke();
   // 表示範囲のカリング: 画面内にある塊だけ描く
   var wTl = screenToWorld(0, 0), wBr = screenToWorld(stageW, stageH);
   var ordered = state.clusters.slice();
@@ -3019,10 +2996,9 @@ setInterval(function () {
   if (state.started && !state.paused && !state.cleared && Math.floor(Date.now() / 5000) !== Math.floor((Date.now() - 500) / 5000)) persistProgress();
 }, 500);
 function updateProgressUI() {
-  var pos = piecePositions(state.clusters, state.n);
-  var onBoard = 0, n = state.n;
-  pos.forEach(function (p) { if (p.gx >= 0 && p.gx < n && p.gy >= 0 && p.gy < n) onBoard++; });
-  $('progressText').textContent = '盤面 ' + onBoard + ' / ' + difficulty + ' ・ 塊 ' + state.clusters.length;
+  var max = 0;
+  state.clusters.forEach(function (c) { if (c.pieces.length > max) max = c.pieces.length; });
+  $('progressText').textContent = '最大の塊 ' + max + ' / ' + difficulty + ' ・ 塊 ' + state.clusters.length;
   $('timerText').textContent = formatTime(currentElapsed());
 }
 
@@ -5501,10 +5477,9 @@ function renderStartScreen() {
       var best = rec ? rec.bestTimeSec : currentElapsed();
       $('resumeInfo').textContent = difficulty + 'ピース ・ クリア済み ・ ベストタイム ' + formatTime(best);
     } else {
-      var pos = piecePositions(state.clusters, state.n);
-      var onBoard = 0, nn = state.n;
-      pos.forEach(function (p) { if (p.gx >= 0 && p.gx < nn && p.gy >= 0 && p.gy < nn) onBoard++; });
-      $('resumeInfo').textContent = difficulty + 'ピース ・ 盤面に置いたピース ' + onBoard + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
+      var max = 0;
+      state.clusters.forEach(function (c) { if (c.pieces.length > max) max = c.pieces.length; });
+      $('resumeInfo').textContent = difficulty + 'ピース ・ 最大の塊 ' + max + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
     }
   }
   updateStartWallRow();
