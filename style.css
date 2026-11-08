@@ -1,6 +1,6 @@
-/* テーマ: A ウォルナット (既定) / B 北欧ペーパー / C ダーク・アトリエ
+/* テーマ: ウォルナット (既定) / ライトオーク / グリーンマット / リネン
  * 配色はすべて CSS 変数経由。テーマ切替は <html data-theme="..."> で行う。
- * Canvas 側 (木目・マット・箱の色) は app.js の THEMES が同じパレットを持つ。 */
+ * Canvas 側 (机テクスチャ・マット・箱の色) は app.js の THEMES が同じパレットを持つ。 */
 :root, :root[data-theme="walnut"] {
   --accent: #33523f;          /* 深緑: 主ボタン */
   --accent-dark: #27402f;
@@ -28,65 +28,94 @@
   --danger: #8c3b34; --danger-line: #d8a49e;
   --praise-bg: #f3e5bd; --praise-ink: #7a5c14;
   --badge-bg: #eadfc6;
-  --desk-fallback: #6b4a2a;
+  --desk-fallback: #7e5c38;
 }
-:root[data-theme="nordic"] {
+:root[data-theme="oak"] {
   --accent: #cf6f4f;          /* テラコッタ */
   --accent-dark: #b5573a;
   --accent-ink: #fff8f0;
   --brass: #c99b3f;
   --mat: #9db89a;             /* セージ (app.js THEMES と一致) */
   --mat-ink: #2f4030;
-  --paper: #fdfcf9;           /* スタート画面の紙面: 白 */
-  --paper-ink: #3d3830;
-  --paper-dim: #978b74;
-  --ink: #3d3830;
-  --muted: #978b74;
-  --line: #e0d7bf;
-  --panel: #fbfaf7;
-  --screen-bg: #f2ecdd;
-  --screen-ink: #4c4132;
-  --glass: rgba(251,250,247,.92);
-  --glass-ink: #3d3830;
-  --desk-grad-1: #e8cf9f; --desk-grad-2: #d9b98c; --desk-grad-3: #c9a76f;
+  --paper: #fbf3e2;           /* スタート画面の紙面: 暖かい生成り */
+  --paper-ink: #43331d;
+  --paper-dim: #97835e;
+  --ink: #43331d;
+  --muted: #97835e;
+  --line: #e3d3ac;
+  --panel: #fdf8ec;
+  --screen-bg: #efe2c6;
+  --screen-ink: #4c3a20;
+  --glass: rgba(253,248,236,.92);
+  --glass-ink: #43331d;
+  --desk-grad-1: #d3b183; --desk-grad-2: #c0a071; --desk-grad-3: #a9885c;
   --grain-dark: rgba(120,86,40,.08); --grain-light: rgba(255,255,255,.12);
   --desk-vig: rgba(120,84,32,.10);
-  --on-desk: #4c4132; --on-desk-dim: rgba(76,65,50,.78); --on-desk-shadow: rgba(255,255,255,.4);
+  --on-desk: #43331d; --on-desk-dim: rgba(67,51,29,.78); --on-desk-shadow: rgba(255,255,255,.4);
   --shadow: rgba(110,84,40,.28); --shadow-soft: rgba(110,84,40,.14);
   --warn-bg: #fdf3d8; --warn-line: #e5cf8a; --warn-ink: #6b5518;
   --danger: #b3543f; --danger-line: #e3b3a4;
   --praise-bg: #f7e8c8; --praise-ink: #7a5c14;
-  --badge-bg: #f0ead8;
-  --desk-fallback: #d9b98c;
+  --badge-bg: #f0e6cc;
+  --desk-fallback: #c0a071;
 }
-:root[data-theme="atelier"] {
-  --accent: #b08d4f;          /* アンティーク金 */
-  --accent-dark: #97743c;
-  --accent-ink: #2e2118;
-  --brass: #b08d4f;
-  --mat: #5e2f35;             /* ボルドー (app.js THEMES と一致) */
-  --mat-ink: #f0e6d2;
-  --paper: #2b211a;           /* スタート画面の紙面: 暗めの紙 */
-  --paper-ink: #ece1c9;
-  --paper-dim: #b3a284;
-  --ink: #33291f;
-  --muted: #8d7c66;
+:root[data-theme="greenmat"] {
+  --accent: #c9a227;          /* 真鍮ゴールド (濃い緑の紙面に映える) */
+  --accent-dark: #a9861d;
+  --accent-ink: #2a2118;
+  --brass: #c9a227;
+  --mat: #7a4038;             /* 深いブリック (app.js THEMES と一致) */
+  --mat-ink: #f5efe4;
+  --paper: #23402f;           /* スタート画面の紙面: 深緑の紙 */
+  --paper-ink: #eef0e0;
+  --paper-dim: #a9bfa5;
+  --ink: #2e2a1e;
+  --muted: #8d8266;
   --line: #c9b48c;
-  --panel: #e8ddc8;           /* 生成り (暗い机に明るい紙) */
-  --screen-bg: #221812;
-  --screen-ink: #ece1c9;
-  --glass: rgba(232,221,200,.93);
-  --glass-ink: #33291f;
-  --desk-grad-1: #46352a; --desk-grad-2: #3a2c22; --desk-grad-3: #291d16;
-  --grain-dark: rgba(0,0,0,.20); --grain-light: rgba(232,221,200,.05);
-  --desk-vig: rgba(0,0,0,.38);
-  --on-desk: #ece1c9; --on-desk-dim: rgba(232,221,200,.72); --on-desk-shadow: rgba(0,0,0,.55);
+  --panel: #ece4cf;           /* 生成り (濃い画面に明るい紙) */
+  --screen-bg: #1c3324;
+  --screen-ink: #eef0e0;
+  --glass: rgba(236,228,207,.93);
+  --glass-ink: #2e2a1e;
+  --desk-grad-1: #3c5c47; --desk-grad-2: #335240; --desk-grad-3: #274434;
+  --grain-dark: rgba(0,0,0,.18); --grain-light: rgba(230,255,235,.05);
+  --desk-vig: rgba(8,18,12,.30);
+  --on-desk: #eef0e0; --on-desk-dim: rgba(238,240,224,.72); --on-desk-shadow: rgba(0,0,0,.5);
   --shadow: rgba(0,0,0,.45); --shadow-soft: rgba(0,0,0,.30);
   --warn-bg: #57451f; --warn-line: #8a6f35; --warn-ink: #f3e5bb;
   --danger: #9c4438; --danger-line: #c08a80;
   --praise-bg: #57451f; --praise-ink: #e9cf8f;
   --badge-bg: #dccdaa;
-  --desk-fallback: #3a2c22;
+  --desk-fallback: #335240;
+}
+:root[data-theme="linen"] {
+  --accent: #476b4f;          /* 柔らかい深緑 */
+  --accent-dark: #38543d;
+  --accent-ink: #f7f4e8;
+  --brass: #b8862e;
+  --mat: #aebf9c;             /* 淡いセージ (app.js THEMES と一致) */
+  --mat-ink: #33402a;
+  --paper: #fdfaf1;           /* スタート画面の紙面: 明るい生成り */
+  --paper-ink: #40382a;
+  --paper-dim: #978d74;
+  --ink: #40382a;
+  --muted: #978d74;
+  --line: #ddd2b8;
+  --panel: #fbf7ec;
+  --screen-bg: #ece1c8;
+  --screen-ink: #4c4230;
+  --glass: rgba(251,247,236,.92);
+  --glass-ink: #40382a;
+  --desk-grad-1: #eee4cc; --desk-grad-2: #e8ddc7; --desk-grad-3: #d9cba6;
+  --grain-dark: rgba(120,100,60,.07); --grain-light: rgba(255,255,255,.14);
+  --desk-vig: rgba(120,100,60,.10);
+  --on-desk: #4c4230; --on-desk-dim: rgba(76,66,48,.78); --on-desk-shadow: rgba(255,255,255,.4);
+  --shadow: rgba(110,95,55,.26); --shadow-soft: rgba(110,95,55,.13);
+  --warn-bg: #fdf3d8; --warn-line: #e5cf8a; --warn-ink: #6b5518;
+  --danger: #b3543f; --danger-line: #e3b3a4;
+  --praise-bg: #f7e8c8; --praise-ink: #7a5c14;
+  --badge-bg: #efe7d2;
+  --desk-fallback: #e8ddc7;
 }
 html, body { height: 100%; }
 body {
@@ -295,9 +324,10 @@ button { font: inherit; cursor: pointer; }
   width: 14px; height: 14px; border-radius: 50%; flex: none;
   border: 1px solid rgba(0,0,0,.20); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25);
 }
-.sw-walnut { background: linear-gradient(135deg, #7a5636, #5d3f27); }
-.sw-nordic { background: linear-gradient(135deg, #e8cf9f, #d9b98c); }
-.sw-atelier { background: linear-gradient(135deg, #46352a, #291d16); }
+.sw-walnut { background: linear-gradient(135deg, #8a6844, #7e5c38); }
+.sw-oak { background: linear-gradient(135deg, #d3b183, #c0a071); }
+.sw-greenmat { background: linear-gradient(135deg, #3c5c47, #335240); }
+.sw-linen { background: linear-gradient(135deg, #f0e7d0, #e8ddc7); }
 .theme-opt.active {
   color: var(--paper-ink);
   text-decoration: underline; text-decoration-color: var(--brass);

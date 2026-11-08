@@ -526,8 +526,8 @@ function detailRenderPlan(pieces) {
     perSeg: n >= 28 ? 6 : 10
   };
 }
-/* ---- 机の木目タイル敷き (描画オフセット計算) ----
- * 木目タイルはワールド座標に固定して敷く (パン/ズームで机の上を動く感触)。
+/* ---- 机テクスチャのタイル敷き (描画オフセット計算) ----
+ * テクスチャタイルはワールド座標に固定して敷く (パン/ズームで机の上を動く感触)。
  * CanvasPattern.setTransform には頼らない: パターンの変換行列は CTM (dpr) との
  * 合成や再ラスタライズの扱いがブラウザごとに異なり、マットでカメラを動かした
  * あと机に戻るとタイルの実効スケールがずれて継ぎ目が太く崩れて見える事故が
@@ -1143,6 +1143,15 @@ function sanitizeClearTime(elapsed, moves, savedSec) {
   return 0;
 }
 
+/* ---------- UIテーマ ----------
+ * テーマは机テクスチャの4案がそのままテーマになったもの (2026-11-08 刷新)。
+ * 旧テーマ (A/B/C・旧英語ID) は廃止し、保存値が旧値・未知値なら
+ * 既定の 'walnut' に落とす (後継マッピングはしない)。 */
+var UI_THEME_IDS = ['walnut', 'oak', 'greenmat', 'linen'];
+function normalizeUiTheme(value) {
+  return UI_THEME_IDS.indexOf(value) >= 0 ? value : 'walnut';
+}
+
 var GAME_URL = 'https://daily-jigsaw.pages.dev';
 /* 結果の共有文 (文字共有・クリップボード共通)。ゲーム URL と
  * ハッシュタグ #まいにちジグソー を必ず含む。 */
@@ -1172,6 +1181,7 @@ var PureLogic = {
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   elapsedSeconds: elapsedSeconds, sanitizeClearTime: sanitizeClearTime,
   GAME_URL: GAME_URL, buildShareText: buildShareText,
+  UI_THEME_IDS: UI_THEME_IDS, normalizeUiTheme: normalizeUiTheme,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   boxTapAction: boxTapAction,
   WALL_CATALOG: WALL_CATALOG,
@@ -1226,22 +1236,26 @@ function loadStore() {
   return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true };
 }
 var store = loadStore();
+store.uiTheme = normalizeUiTheme(store.uiTheme); // 旧テーマ値は無効値として既定 'walnut' に落とす
 store.wall = normalizeWall(store.wall); // 壁インテリア (旧データには無いので空で作る。旧 store.rewards は読み捨て)
 function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 容量超過などは無視 */ }
 }
 
-/* ---------- テーマ (A ウォルナット / B 北欧ペーパー / C ダーク・アトリエ) ----------
+/* ---------- テーマ (机テクスチャ4種: ウォルナット / ライトオーク / グリーンマット / リネン) ----------
  * UI の配色は CSS 変数 (style.css の [data-theme] ) で切り替える。
- * ここでは Canvas 側 (机の木目・マット色・紙吹雪) と箱の包装紙の色を持つ。
- * 選択は store.uiTheme に保存する (旧保存データに無ければ 'walnut')。 */
-var THEME_NAMES = ['walnut', 'nordic', 'atelier'];
+ * ここでは Canvas 側 (机テクスチャ・マット色・真鍮色・紙吹雪) と箱の包装紙の色を持つ。
+ * 机の絵柄は手続き描画ではなく、承認済みモックと同じ生成コードで作った
+ * テクスチャ画像 (desk-textures/tex-*.jpg) をそのまま使う。desk.base は
+ * テクスチャの平均色で、読み込み前/失敗時のフォールバックと地色に使う。
+ * 選択は store.uiTheme に保存する (旧値・未知値は normalizeUiTheme で 'walnut')。 */
+var THEME_NAMES = UI_THEME_IDS;
 var THEMES = {
   walnut: {
     mat: '#33523f',
     brass: '#c9a227', // 範囲選択ハイライト (CSS の --brass と一致)
-    wood: { stops: ['#7a5636', '#64452a', '#7a5636'], grain: [70, 105, 45, 68, 18, 30], seamDark: 'rgba(43,26,10,0.40)', seamLight: 'rgba(255,238,200,0.10)', knot: '60,38,16', fallback: '#6b4a2a', vigLight: 'rgba(255,240,210,0.06)', vigDark: 'rgba(30,17,4,0.22)' },
+    desk: { tex: 'desk-textures/tex-walnut.jpg', base: '#7e5c38', vigLight: 'rgba(255,240,210,0.06)', vigDark: 'rgba(30,17,4,0.22)', sheen: null },
     confetti: ['#33523f', '#c9a227', '#f5efe4', '#7a3b3a', '#8a6d3b'],
     box: {
       'dots-red': { bg: '#efe6d0', fg: '#33523f', fg2: '#c9a227' },
@@ -1252,10 +1266,10 @@ var THEMES = {
       'floral-retro': { bg: '#a9603f', fg: '#f3e3c2', fg2: '#33523f' }
     }
   },
-  nordic: {
+  oak: {
     mat: '#9db89a',
-    brass: '#c99b3f',
-    wood: { stops: ['#dec294', '#d2af7e', '#dec294'], grain: [150, 182, 114, 140, 68, 96], seamDark: 'rgba(146,110,58,0.32)', seamLight: 'rgba(255,255,255,0.22)', knot: '150,112,62', fallback: '#d9b98c', vigLight: 'rgba(255,255,255,0.10)', vigDark: 'rgba(120,84,32,0.12)' },
+    brass: '#c99b3f', // CSS の --brass と一致
+    desk: { tex: 'desk-textures/tex-oak.jpg', base: '#c0a071', vigLight: 'rgba(255,255,255,0.10)', vigDark: 'rgba(120,84,32,0.12)', sheen: null },
     confetti: ['#cf6f4f', '#9db89a', '#fbfaf7', '#d9a441', '#7d9bb3'],
     box: {
       'dots-red': { bg: '#fbfaf7', fg: '#9db89a', fg2: '#cf6f4f' },
@@ -1266,11 +1280,11 @@ var THEMES = {
       'floral-retro': { bg: '#dfa184', fg: '#fdf6ec', fg2: '#9db89a' }
     }
   },
-  atelier: {
-    mat: '#5e2f35',
-    brass: '#b08d4f',
-    wood: { stops: ['#413125', '#352820', '#413125'], grain: [10, 26, 7, 18, 4, 12], seamDark: 'rgba(0,0,0,0.50)', seamLight: 'rgba(232,221,200,0.07)', knot: '10,7,4', fallback: '#3a2c22', vigLight: 'rgba(232,221,200,0.04)', vigDark: 'rgba(0,0,0,0.35)' },
-    confetti: ['#b08d4f', '#5e2f35', '#e8ddc8', '#33523f', '#8a6d3b'],
+  greenmat: {
+    mat: '#7a4038',
+    brass: '#c9a227', // CSS の --brass と一致
+    desk: { tex: 'desk-textures/tex-greenmat.jpg', base: '#335240', vigLight: 'rgba(225,255,230,0.05)', vigDark: 'rgba(8,18,12,0.30)', sheen: 'rgba(255,255,240,0.10)' },
+    confetti: ['#c9a227', '#ece4cf', '#7a4038', '#8aa873', '#f5efe4'],
     box: {
       'dots-red': { bg: '#2e2620', fg: '#b08d4f', fg2: '#5e2f35' },
       'stripes-mint': { bg: '#5e2f35', fg: '#e8ddc8', fg2: '#b08d4f' },
@@ -1279,17 +1293,31 @@ var THEMES = {
       'confetti': { bg: '#33291f', fg: '#b08d4f', fg2: '#5e2f35' },
       'floral-retro': { bg: '#5e2f35', fg: '#d9b98c', fg2: '#b08d4f' }
     }
+  },
+  linen: {
+    mat: '#aebf9c',
+    brass: '#b8862e', // CSS の --brass と一致
+    desk: { tex: 'desk-textures/tex-linen.jpg', base: '#e8ddc7', vigLight: 'rgba(255,255,255,0.10)', vigDark: 'rgba(120,100,60,0.10)', sheen: null },
+    confetti: ['#476b4f', '#c9a227', '#fbf7ec', '#cf8f7a', '#8aa873'],
+    box: {
+      'dots-red': { bg: '#f7efdb', fg: '#476b4f', fg2: '#b8862e' },
+      'stripes-mint': { bg: '#476b4f', fg: '#f7efdb', fg2: '#b8862e' },
+      'stars-navy': { bg: '#44506b', fg: '#e8ddc8', fg2: '#b8862e' },
+      'gingham-pink': { bg: '#f3e3da', fg: '#b98a7a', fg2: '#b98a7a' },
+      'confetti': { bg: '#faf3e0', fg: '#b8862e', fg2: '#476b4f' },
+      'floral-retro': { bg: '#b98a5e', fg: '#faf0da', fg2: '#476b4f' }
+    }
   }
 };
-var uiTheme = THEME_NAMES.indexOf(store.uiTheme) >= 0 ? store.uiTheme : 'walnut';
+var uiTheme = normalizeUiTheme(store.uiTheme);
 document.documentElement.setAttribute('data-theme', uiTheme);
 function applyTheme() {
   document.documentElement.setAttribute('data-theme', uiTheme);
   document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
     b.classList.toggle('active', b.getAttribute('data-theme-opt') === uiTheme);
   });
-  invalidateDeskBackdrop(); // 木目・マット色が変わるので背景レイヤーを作り直す
-  if (state) { renderStartScreen(); draw(); } // 箱の色と Canvas (木目/マット) を新テーマで描き直す
+  invalidateDeskBackdrop(); // 机テクスチャ・マット色が変わるので背景レイヤーを作り直す
+  if (state) { renderStartScreen(); draw(); } // 箱の色と Canvas (机/マット) を新テーマで描き直す
   if (typeof detailRecord !== 'undefined' && detailRecord && !$('detailModal').hidden) renderDetailPuzzle(detailRecord); // 詳細のマット色も追従
 }
 function setUiTheme(name) {
@@ -2131,141 +2159,58 @@ function view() { return state.views[state.surface]; }
 function worldToScreen(wx, wy) { var v = view(); return { x: wx * v.scale + v.tx, y: wy * v.scale + v.ty }; }
 function screenToWorld(sx, sy) { var v = view(); return { x: (sx - v.tx) / v.scale, y: (sy - v.ty) / v.scale }; }
 
-/* ---------- 机の木目テクスチャ ----------
- * 木目タイルを一度だけオフスクリーンに描き、ワールド座標に固定して敷く
- * (パン/ズームに追随するので「机の上を動いている」感触になる)。
- * 敷き方は CanvasPattern ではなく drawImage の明示タイル敷き: 共有パターン
- * オブジェクトの setTransform はブラウザ差で実効スケールがずれることがあり
- * (マットでピンチを繰り返したあと机の継ぎ目が太く崩れるバグの原因)、
- * テクスチャ側に可変状態を持たせないことで机とマットの状態干渉も断つ。
- * タイルのキャンバス自体はテーマごとにキャッシュし、読み取り専用で共有する。
- *
- * タイルの中身は「横長の板の並び」として手続き描画する (ピース厚みプレビュー
- * の机の絵柄に合わせた描法): 板ごとに基準トーンを穏やかに変え、板の中は
- * 上がわずかに明るく下へ柔らかく落ちる縦グラデーション、木目は少なく薄く、
- * 板の境目は硬い線でなく柔らかい影の帯で表す。板の高さの合計はタイル寸法
- * 512 に一致させ、上下の継ぎ目でも板のリズムが切れないようにする。 */
-var woodTiles = {}; // テーマごとに生成してキャッシュ (模様の配置は全テーマ共通シード)
-/* パレットの hex 色を混ぜる/明暗を付けるための小さなヘルパー */
-function woodHexRgb(hex) {
-  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
-}
-function woodMixRgb(a, b, t) {
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-}
-function woodShadeStr(rgb, f, alpha) {
-  var r = Math.max(0, Math.min(255, Math.round(rgb[0] * f)));
-  var g = Math.max(0, Math.min(255, Math.round(rgb[1] * f)));
-  var b = Math.max(0, Math.min(255, Math.round(rgb[2] * f)));
-  return alpha == null ? 'rgb(' + r + ',' + g + ',' + b + ')' : 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
-}
-/* 3ストップのグラデーション (従来タイルの色づけ) を位置 t (0..1) でサンプルする */
-function woodSampleStops(stopsRgb, t) {
-  return t < 0.5 ? woodMixRgb(stopsRgb[0], stopsRgb[1], t * 2) : woodMixRgb(stopsRgb[1], stopsRgb[2], (t - 0.5) * 2);
-}
-function getWoodTile() {
-  var key = uiTheme;
-  if (woodTiles[key]) return woodTiles[key];
-  var pal = THEMES[key].wood;
-  var cv = document.createElement('canvas');
-  cv.width = 512; cv.height = 512;
-  var c = cv.getContext('2d');
-  var rng = rngFromString('woodplanks-v1');
-  var stopsRgb = pal.stops.map(woodHexRgb);
-  var gr = pal.grain;
-  var rows = [128, 104, 152, 128]; // 板の高さ (合計 512 = タイル寸法)
-  var seamYs = [];
-  var y = 0;
-  for (var ri = 0; ri < rows.length; ri++) {
-    var ph = rows[ri];
-    seamYs.push(y);
-    // 板ごとの基準トーン: 全体の色グラデーションを板の中心でサンプルし、
-    // シード付きで穏やかにばらつかせる (±5%)
-    var base = woodSampleStops(stopsRgb, (y + ph / 2) / 512);
-    var tone = 0.95 + rng() * 0.10;
-    // 板内の陰影: 上がわずかに明るく、下へ向けて柔らかく落ちる
-    var grad = c.createLinearGradient(0, y, 0, y + ph);
-    grad.addColorStop(0, woodShadeStr(base, tone * 1.07));
-    grad.addColorStop(0.55, woodShadeStr(base, tone));
-    grad.addColorStop(1, woodShadeStr(base, tone * 0.90));
-    c.fillStyle = grad;
-    c.fillRect(0, y, 512, ph);
-    c.save();
-    c.beginPath(); c.rect(0, y, 512, ph); c.clip();
-    // 木目: 横に流れる柔らかい波線 (少なく・薄く)。周期は 512 の約数にして
-    // 横方向のタイル継ぎ目でも線がつながるようにする。
-    // 本数は板あたり4本まで、濃さも抑えめに留める: 細い線が多いと実機の
-    // 高倍率表示 (353%等) で密な横縞 (モアレ状) に見えるため、高周波成分を
-    // 減らす (2026-11-08 実機指摘への穏当な対策)。
-    for (var i = 0; i < 4; i++) {
-      var gy = y + rng() * ph, amp = 0.8 + rng() * 2.4;
-      var per = 512 / (2 + Math.floor(rng() * 4)), phase = rng() * 6.28;
-      c.beginPath();
-      for (var x = 0; x <= 512; x += 8) {
-        var yy = gy + Math.sin(x / per * 6.28 + phase) * amp;
-        if (x === 0) c.moveTo(x, yy); else c.lineTo(x, yy);
-      }
-      c.strokeStyle = 'rgba(' + (gr[0] + (rng() * (gr[1] - gr[0])) | 0) + ',' + (gr[2] + (rng() * (gr[3] - gr[2])) | 0) + ',' + (gr[4] + (rng() * (gr[5] - gr[4])) | 0) + ',' + (0.025 + rng() * 0.045).toFixed(3) + ')';
-      c.lineWidth = 1.2 + rng() * 2.0;
-      c.stroke();
-    }
-    // 幅の広い柔らかい色の流れ (絵画的なムラ) を板ごとに1本、薄く入れる
-    var sy = y + rng() * ph, sh = 10 + rng() * 22, sf = rng() < 0.6 ? 0.82 : 1.14, sa = 0.05 + rng() * 0.05;
-    var sg = c.createLinearGradient(0, sy - sh / 2, 0, sy + sh / 2);
-    sg.addColorStop(0, woodShadeStr(base, sf, 0));
-    sg.addColorStop(0.5, woodShadeStr(base, sf, sa));
-    sg.addColorStop(1, woodShadeStr(base, sf, 0));
-    c.fillStyle = sg;
-    c.fillRect(0, y, 512, ph);
-    // 板の縦継ぎ (突き付け): 長い板のつなぎ目を板ごとに1か所、柔らかい影で
-    var jx = 48 + rng() * 416;
-    var jg = c.createLinearGradient(jx - 3, 0, jx + 3, 0);
-    jg.addColorStop(0, woodShadeStr(base, 0.72, 0));
-    jg.addColorStop(0.5, woodShadeStr(base, 0.72, 0.28));
-    jg.addColorStop(1, woodShadeStr(base, 0.72, 0));
-    c.fillStyle = jg;
-    c.fillRect(jx - 3, y, 6, ph);
-    c.restore();
-    y += ph;
+/* ---------- 机のテクスチャ (承認済み画像をそのまま敷く) ----------
+ * 机の絵柄は、モック生成と同じコードで作ったテクスチャ画像
+ * (desk-textures/tex-<テーマ>.jpg, 1200x1200・継ぎ目なくタイル可能) を
+ * そのまま使う。Canvas の手続き描画で近似するとモックと実機で質感が
+ * ずれるため、画像のピクセルを加工せずに敷く (2026-11-08 ユーザー指定)。
+ * 1タイル = 512 ワールド単位で、位相はワールド原点に固定して敷くので
+ * パン/ズームに追随して「机の上を動いている」感触になる (縮尺はモックの
+ * ピース 218px : テクスチャ 1200px とほぼ一致する)。
+ * 敷き方は CanvasPattern ではなく drawImage の明示タイル敷き: パターンの
+ * setTransform はブラウザ差で実効スケールがずれることがあり (マットで
+ * ピンチを繰り返したあと机の継ぎ目が太く崩れるバグの原因)、テクスチャ側に
+ * 可変状態を持たせないことで机とマットの状態干渉も断つ。
+ * 読み込み前/失敗時はテーマの地色 (テクスチャの平均色) で塗る。
+ * グリーンマットの「柔らかい光沢」だけはテクスチャに焼き込まれていない
+ * ので、drawDeskVignette が画面固定の薄い光を別途重ねる (モックでも
+ * 画面基準の光だったため、見え方は同等になる)。 */
+var DESK_TEX_WORLD = 1024; // テクスチャ1タイルのワールド寸法
+var deskTexState = {}; // テーマキー -> { img: 読み込み済み Image | null, failed: bool }
+/* テーマのテクスチャ画像を返す (読み込み開始は初回アクセス時)。
+ * 読み込みが終わったら、地色ベタで作られた背景キャッシュを捨てて
+ * テクスチャで描き直すよう通知する。 */
+function getDeskTexture(key) {
+  var st = deskTexState[key];
+  if (!st) {
+    st = { img: null, failed: false };
+    deskTexState[key] = st;
+    try {
+      var im = new Image();
+      im.onload = function () {
+        st.img = im;
+        deskBgWorld = null; // 世界空間キャッシュを作り直す (キーは不変だが中身が地色→画像になる)
+        invalidateDeskBackdrop(); // マット背景の机レイヤーも作り直す
+        if (state) draw();
+      };
+      im.onerror = function () { st.failed = true; };
+      im.src = THEMES[key].desk.tex;
+    } catch (e) { st.failed = true; }
   }
-  // 板と板の継ぎ目: 硬い線ではなく、境目を中心にした柔らかい影の帯 + 下側に細い光。
-  // y=512 は y=0 と同じ継ぎ目の続き (タイルの上下がつながるため両端に描く)
-  seamYs.push(512);
-  seamYs.forEach(function (sy2) {
-    var seam = c.createLinearGradient(0, sy2 - 4, 0, sy2 + 4);
-    seam.addColorStop(0, woodShadeStr(stopsRgb[1], 1, 0));
-    seam.addColorStop(0.5, pal.seamDark);
-    seam.addColorStop(1, woodShadeStr(stopsRgb[1], 1, 0));
-    c.fillStyle = seam;
-    c.fillRect(0, sy2 - 4, 512, 8);
-    c.fillStyle = pal.seamLight; c.fillRect(0, sy2 + 1, 512, 1);
-  });
-  // 節 (ふし): 控えめに2つ
-  for (var k = 0; k < 2; k++) {
-    var kx = 60 + rng() * 390, ky = 60 + rng() * 390;
-    for (var r = 9; r > 1; r -= 2) {
-      c.beginPath();
-      c.ellipse(kx, ky, r * 1.5, r, 0.3, 0, 6.29);
-      c.strokeStyle = 'rgba(' + pal.knot + ',' + (0.08 + (9 - r) * 0.016).toFixed(3) + ')';
-      c.lineWidth = 1.4;
-      c.stroke();
-    }
-  }
-  woodTiles[key] = cv;
-  return cv;
+  return st.img;
 }
 /* 机の背景を ctx に描く (w, h は CSS px の描画領域)。メイン画面とマット背景の
  * 「ぼんやりした机」レイヤーの両方から使う。タイルはワールド固定で敷く:
  * 1タイル = 512ワールド単位、画面上は 512 * v.scale px になり、開始位置は
  * woodTileOrigin でワールド原点に位相を合わせる。 */
 function drawDeskBackgroundOn(ctx, v, w, h) {
-  var pal = THEMES[uiTheme].wood;
-  ctx.fillStyle = pal.fallback;
+  var pal = THEMES[uiTheme].desk;
+  ctx.fillStyle = pal.base;
   ctx.fillRect(0, 0, w, h);
   var tile = null;
-  try { tile = getWoodTile(); } catch (e) { tile = null; }
+  try { tile = getDeskTexture(uiTheme); } catch (e) { tile = null; }
   if (tile) {
-    var ts = 512 * v.scale; // タイルの画面サイズ (CSS px)
+    var ts = DESK_TEX_WORLD * v.scale; // タイルの画面サイズ (CSS px)
     if (ts >= 2) {
       var ox = woodTileOrigin(v.tx, ts), oy = woodTileOrigin(v.ty, ts);
       // +1 は隣接タイル間のサブピクセルの隙間を埋めるための重なり (下地色で保険済み)
@@ -2281,28 +2226,37 @@ function drawDeskBackgroundOn(ctx, v, w, h) {
 /* 机全体にゆるい陰影 (ビネット) をつけて天板らしくする。ビネットは
  * 画面空間で決まるので、世界空間キャッシュには焼かず毎回上に描く。 */
 function drawDeskVignette(ctx, w, h) {
-  var pal = THEMES[uiTheme].wood;
+  var pal = THEMES[uiTheme].desk;
   var vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
   vg.addColorStop(0, pal.vigLight);
   vg.addColorStop(1, pal.vigDark);
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, w, h);
+  // テーマによっては画面固定の柔らかい光を重ねる (グリーンマットの光沢:
+  // テクスチャには焼き込まれていない要素で、モックでも画面基準の光)
+  if (pal.sheen) {
+    var sg = ctx.createRadialGradient(w * 0.3, h * 0.12, 0, w * 0.3, h * 0.12, Math.max(w, h) * 0.72);
+    sg.addColorStop(0, pal.sheen);
+    sg.addColorStop(1, 'rgba(255,255,240,0)');
+    ctx.fillStyle = sg;
+    ctx.fillRect(0, 0, w, h);
+  }
 }
 /* 世界座標に変換済みの ctx へ、ワールド矩形 rect の範囲だけ下地色 +
- * 木目タイルを敷く (机背景の世界空間キャッシュ生成用)。タイルの位相は
- * ワールド原点基準 (512 の倍数) で、画面空間版 (drawDeskBackgroundOn の
+ * テクスチャタイルを敷く (机背景の世界空間キャッシュ生成用)。タイルの位相は
+ * ワールド原点基準 (DESK_TEX_WORLD の倍数) で、画面空間版 (drawDeskBackgroundOn の
  * woodTileOrigin) と一致する。ビネットは含まない。 */
 function paintDeskTiles(ctx, rect) {
-  var pal = THEMES[uiTheme].wood;
-  ctx.fillStyle = pal.fallback;
+  var pal = THEMES[uiTheme].desk;
+  ctx.fillStyle = pal.base;
   ctx.fillRect(rect.x0, rect.y0, rect.w, rect.h);
   var tile = null;
-  try { tile = getWoodTile(); } catch (e) { tile = null; }
+  try { tile = getDeskTexture(uiTheme); } catch (e) { tile = null; }
   if (!tile) return;
-  var x0 = Math.floor(rect.x0 / 512) * 512, y0 = Math.floor(rect.y0 / 512) * 512;
-  for (var x = x0; x < rect.x0 + rect.w; x += 512) {
-    for (var y = y0; y < rect.y0 + rect.h; y += 512) {
-      ctx.drawImage(tile, x, y, 512, 512);
+  var x0 = Math.floor(rect.x0 / DESK_TEX_WORLD) * DESK_TEX_WORLD, y0 = Math.floor(rect.y0 / DESK_TEX_WORLD) * DESK_TEX_WORLD;
+  for (var x = x0; x < rect.x0 + rect.w; x += DESK_TEX_WORLD) {
+    for (var y = y0; y < rect.y0 + rect.h; y += DESK_TEX_WORLD) {
+      ctx.drawImage(tile, x, y, DESK_TEX_WORLD, DESK_TEX_WORLD);
     }
   }
 }
@@ -2346,8 +2300,8 @@ function drawDeskBackground(v) {
   if (!blit) { drawDeskBackgroundOn(sctx, v, stageW, stageH); return; }
   // 転写はソース整数矩形 → 等倍率デスト矩形のみ (deskBgBlit)。端数の
   // ズレで端に隙間が出ても、下地色を先に全面へ敷くので透けはしない。
-  var pal = THEMES[uiTheme].wood;
-  sctx.fillStyle = pal.fallback;
+  var pal = THEMES[uiTheme].desk;
+  sctx.fillStyle = pal.base;
   sctx.fillRect(0, 0, stageW, stageH);
   sctx.drawImage(bg.canvas, blit.sx, blit.sy, blit.sw, blit.sh, blit.dx, blit.dy, blit.dw, blit.dh);
   drawDeskVignette(sctx, stageW, stageH);
@@ -2583,7 +2537,7 @@ function drawClusterOn(ctx, v, cl, wTl, wBr) {
 }
 
 /* ---------- マット画面の背景: 机をぼんやり見せる ----------
- * マット盤の外側には、机 (木目 + 机上の塊) を薄いベール越しに見せる。
+ * マット盤の外側には、机 (テクスチャ + 机上の塊) を薄いベール越しに見せる。
  * 机レイヤーはオフスクリーンに描いて使い回す: マット表示中は机側のカメラも
  * 塊も変わらないので、盤の状態が変わったとき (afterBoardChange 等) だけ
  * 再描画すればよい。ぼかし専用処理はせず、0.6倍の低解像度で描いて拡大する

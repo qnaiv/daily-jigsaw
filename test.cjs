@@ -1112,5 +1112,25 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(buildImgBody.indexOf("measureText('クリア')") !== -1 && buildImgBody.indexOf('statShift') !== -1, '共有画像バッジ: 見出し実測幅で配置し、下行配置時は記録行を下げて重ねない');
 }
 
+/* 29. UIテーマ刷新 (2026-11-08): 机テクスチャ4種がテーマに。旧テーマは廃止し、
+ * 保存値が旧値・未知値なら既定 'walnut' に落ちる。机は手続き描画ではなく
+ * 承認済みテクスチャ画像 (desk-textures/) をそのまま敷く。 */
+{
+  const fsT = require('fs'), pathT = require('path');
+  const readT = (p) => fsT.readFileSync(pathT.join(__dirname, p), 'utf8');
+  const appSrcT = readT('app.js'), htmlT = readT('index.html'), cssT = readT('style.css'), swT = readT('sw.js');
+  ok(eq(L.UI_THEME_IDS, ['walnut', 'oak', 'greenmat', 'linen']), 'テーマ: 新テーマは4種 (walnut/oak/greenmat/linen)');
+  ok(L.UI_THEME_IDS.every(id => L.normalizeUiTheme(id) === id), 'テーマ: 有効なIDはそのまま通る');
+  ok(['A', 'B', 'C', 'nordic', 'atelier', 'bogus', '', null, undefined].every(v => L.normalizeUiTheme(v) === 'walnut'), 'テーマ: 旧値・未知値は既定 walnut に落ちる (後継マッピングなし)');
+  ok(L.UI_THEME_IDS.every(id => appSrcT.indexOf("tex: 'desk-textures/tex-" + id + ".jpg'") !== -1), 'テーマ: 全テーマにテクスチャ画像パスがある');
+  ok(L.UI_THEME_IDS.every(id => fsT.existsSync(pathT.join(__dirname, 'desk-textures', 'tex-' + id + '.jpg'))), 'テーマ: テクスチャ画像ファイルが4種揃っている');
+  ok(L.UI_THEME_IDS.every(id => (htmlT.match(new RegExp('data-theme-opt="' + id + '"', 'g')) || []).length >= 2), 'テーマ: 切替UI (スタート画面+設定シート) に4種が名前で並ぶ');
+  ok(L.UI_THEME_IDS.every(id => cssT.indexOf('[data-theme="' + id + '"]') !== -1), 'テーマ: CSS変数ブロックが4種ある');
+  ok(appSrcT.indexOf('nordic') === -1 && appSrcT.indexOf('atelier') === -1 && htmlT.indexOf('nordic') === -1 && htmlT.indexOf('atelier') === -1 && cssT.indexOf('nordic') === -1 && cssT.indexOf('atelier') === -1, 'テーマ: 旧テーマ (nordic/atelier) の残存なし');
+  ok(appSrcT.indexOf('getWoodTile') === -1 && appSrcT.indexOf('function getDeskTexture(') !== -1, '机: 手続き木目タイルは廃止し、テクスチャ画像ローダーに置換');
+  ok(appSrcT.indexOf('deskBgWorld = null;') !== -1, '机: テクスチャ読み込み完了で世界空間キャッシュを作り直す');
+  ok(swT.indexOf('desk-textures') === -1, '机: テクスチャは SW プリキャッシュに入れない (ランタイムキャッシュ対象)');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
