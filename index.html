@@ -133,6 +133,8 @@
   <div class="wall-actions">
     <button id="wallFrameBtn" class="btn" type="button">額装する</button>
     <span id="wallFrameCount" class="wall-frame-count"></span>
+    <button id="wallPaperBtn" class="btn" type="button">壁紙</button>
+    <span id="wallPaperInfo" class="wall-frame-count"></span>
   </div>
   <div id="wallTray"></div>
 </section>
@@ -297,6 +299,16 @@
   </div>
   <p id="framePickerEmpty" class="empty" hidden>まだクリア記録がありません。パズルをクリアすると額装できます</p>
   <div id="framePickerGrid"></div>
+</section>
+
+<!-- 壁紙ピッカー: 全画面グリッド。スウォッチは壁紙＋巾木＋床の小さな壁プレビュー。
+     未解放は「N回クリアで解放」と表示して選択不可 -->
+<section id="paperPickerView" hidden>
+  <div class="collection-header">
+    <button id="paperPickerBack" class="btn" type="button">← 戻る</button>
+    <h2>壁紙を選ぶ</h2>
+  </div>
+  <div id="paperPickerGrid"></div>
 </section>
 
 <!-- 全データリセットの確認 -->

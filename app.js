@@ -908,6 +908,53 @@ function applyFrameUnlocks(wall, totalClears) {
   });
   return ids;
 }
+/* 壁紙 (wallpaper-design.md の 20 種)。フレームと並ぶ解放報酬の第 2 系統で、
+ * 解放は unlockAt (累計クリア回数)、初期は kinari / sage の 2 種。
+ * 描画はデータ駆動: kind ごとに UI 側のペインター (paintWallpaperRegion)
+ * が小さな描画関数で描く。base は地色、accent は柄色 (必要な種別だけ)。
+ * 柄はすべてトーンオントーンで弱く付け、飾りの邪魔をしない。 */
+var WALLPAPERS = [
+  { id: 'kinari',     name: '生成り',              unlockAt: 0,   kind: 'solid',    base: '#F3E9D3' },
+  { id: 'sage',       name: 'セージグリーン',      unlockAt: 0,   kind: 'solid',    base: '#CBD4C0' },
+  { id: 'pink',       name: 'ダスティピンク',      unlockAt: 3,   kind: 'solid',    base: '#ECD5CD' },
+  { id: 'stripe',     name: '細ストライプ',        unlockAt: 5,   kind: 'stripe',   base: '#F3E9D3', accent: '#D6C6A8' },
+  { id: 'blue',       name: 'ダスティブルー',      unlockAt: 8,   kind: 'solid',    base: '#C5D1DC' },
+  { id: 'dot',        name: '小さなドット',        unlockAt: 12,  kind: 'dot',      base: '#F3E9D3', accent: '#CEBA94' },
+  { id: 'mint',       name: 'ミントグリーン',      unlockAt: 16,  kind: 'solid',    base: '#C4DED2' },
+  { id: 'floral',     name: '小花柄',              unlockAt: 20,  kind: 'floral',   base: '#F6ECDC', accent: '#E9B7BE', leaf: '#A9BE9C' },
+  { id: 'lemon',      name: 'レモンイエロー',      unlockAt: 25,  kind: 'solid',    base: '#F2E3B3' },
+  { id: 'gingham',    name: 'ギンガムチェック',    unlockAt: 30,  kind: 'gingham',  base: '#F3E9D3', accent: '#B9C6A9' },
+  { id: 'wood',       name: '木目パネル',          unlockAt: 40,  kind: 'wood',     base: '#D2AC80', accent: '#96703F' },
+  { id: 'lavender',   name: 'ラベンダー',          unlockAt: 50,  kind: 'solid',    base: '#D5CBE4' },
+  { id: 'brick',      name: 'レンガ',              unlockAt: 60,  kind: 'brick',    base: '#EFE4CE', accent: '#D9A58C' },
+  { id: 'terracotta', name: 'テラコッタ',          unlockAt: 75,  kind: 'solid',    base: '#DCA98C' },
+  { id: 'starry',     name: '星空',                unlockAt: 90,  kind: 'starry',   base: '#2C3954', accent: '#F0D68C' },
+  { id: 'forest',     name: 'ディープフォレスト',  unlockAt: 110, kind: 'solid',    base: '#47624F' },
+  { id: 'gray',       name: 'ウォームグレー',      unlockAt: 130, kind: 'solid',    base: '#CFC8BC' },
+  { id: 'wine',       name: 'ワインレッド',        unlockAt: 155, kind: 'solid',    base: '#9E5B5B' },
+  { id: 'gold',       name: 'アンティークゴールド', unlockAt: 180, kind: 'microdot', base: '#BE9E57', accent: '#D8BE82' },
+  { id: 'moonlit',    name: '月夜',                unlockAt: 210, kind: 'moonlit',  base: '#232F4A', sub: '#3A4A6B', accent: '#F0D68C' }
+];
+function wallpaperById(id) {
+  for (var i = 0; i < WALLPAPERS.length; i++) if (WALLPAPERS[i].id === id) return WALLPAPERS[i];
+  return null;
+}
+/* 累計クリア回数で新しく解放される壁紙 id (未解放のものだけ・表の順) */
+function newPaperUnlocks(wall, totalClears) {
+  return WALLPAPERS.filter(function (p) {
+    return p.unlockAt > 0 && totalClears >= p.unlockAt && wall.paperUnlocks.indexOf(p.id) < 0;
+  }).map(function (p) { return p.id; });
+}
+/* 解放を wall に反映する: paperUnlocks に加え、未通知分として
+ * pendingPaperUnlocks にも積む。戻り値: 今回解放した壁紙 id の配列。 */
+function applyPaperUnlocks(wall, totalClears) {
+  var ids = newPaperUnlocks(wall, totalClears);
+  ids.forEach(function (id) {
+    wall.paperUnlocks.push(id);
+    if (wall.pendingPaperUnlocks.indexOf(id) < 0) wall.pendingPaperUnlocks.push(id);
+  });
+  return ids;
+}
 /* アイテムの表示幅 (壁の幅に対する比率) の目安: カタログのサイズ感から決める */
 var WALL_SIZE_RATIO = { S: 0.20, M: 0.28, L: 0.40 };
 function wallItemById(id) {
@@ -918,7 +965,7 @@ function wallItemWidthRatio(item) {
   return (item && WALL_SIZE_RATIO[item.size]) || WALL_SIZE_RATIO.M;
 }
 function emptyWall() {
-  return { owned: [], seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], lastDate: null, history: {} };
+  return { owned: [], seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], lastDate: null, history: {} };
 }
 /* 保存データの形が崩れていても使える形に寄せる (旧データには wall 自体がない)。
  * placed は配列順 = 重なり順を保ち、同じアイテム/記録の重複は先勝ちで落とす。 */
@@ -974,6 +1021,21 @@ function normalizeWall(w) {
       return !!st && st.unlockAt > 0;
     });
   }
+  // 壁紙 (旧セーブには無いので初期値で補完する)
+  if (Array.isArray(w.paperUnlocks)) {
+    out.paperUnlocks = w.paperUnlocks.filter(function (id, idx) { return !!wallpaperById(id) && w.paperUnlocks.indexOf(id) === idx; });
+  }
+  ['kinari', 'sage'].forEach(function (id) { // 初期の壁紙は常時使える
+    if (out.paperUnlocks.indexOf(id) < 0) out.paperUnlocks.push(id);
+  });
+  if (Array.isArray(w.pendingPaperUnlocks)) {
+    out.pendingPaperUnlocks = w.pendingPaperUnlocks.filter(function (id) {
+      var p = wallpaperById(id);
+      return !!p && p.unlockAt > 0;
+    });
+  }
+  // 適用中の壁紙は実在し、かつ解放済みでなければ生成りに戻す
+  out.paper = (typeof w.paper === 'string' && wallpaperById(w.paper) && out.paperUnlocks.indexOf(w.paper) >= 0) ? w.paper : 'kinari';
   // 未解放スタイルで保存されている額はウォルナットに落とす (選択肢に出ない値を持たせない)
   out.frames.forEach(function (f) {
     if (out.frameUnlocks.indexOf(f.color) < 0) f.color = 'walnut';
@@ -1111,6 +1173,8 @@ var PureLogic = {
   hexToRgb: hexToRgb, shadeRgb: shadeRgb, shadeColor: shadeColor,
   rainbowColorAt: rainbowColorAt, frameGeometry: frameGeometry,
   frameStyleById: frameStyleById, newFrameUnlocks: newFrameUnlocks, applyFrameUnlocks: applyFrameUnlocks,
+  WALLPAPERS: WALLPAPERS, wallpaperById: wallpaperById,
+  newPaperUnlocks: newPaperUnlocks, applyPaperUnlocks: applyPaperUnlocks,
   RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
   wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
   emptyWall: emptyWall, normalizeWall: normalizeWall,
@@ -3142,6 +3206,7 @@ function runConfetti() {
  * 付与はクリア時に確定する。届いた分は wall.pending に積み、スタート画面の
  * 通知から開くリビールで確認すると解消する (壁画面を開いても解消)。
  * フレームの解放も同じ作法で wall.pendingUnlocks に積み、通知から伝える。
+ * 壁紙の解放 (第 2 系統) も同じ作法で wall.pendingPaperUnlocks に積む。
  * 小物の画像は wall-items/<id>.webp (壁用フラットイラスト・透過済み)。
  * プレイ中の机にはインテリアを一切描かない (旧・装飾レイヤーは廃止)。 */
 /* クリア時に報酬を確定させる。その日の初回クリアだけ抽選対象で冪等。
@@ -3160,11 +3225,12 @@ function processRewardsOnClear() {
     wall.lastDate = playDate;
   }
   var unlocked = applyFrameUnlocks(wall, store.records.length);
+  var paperUnlocked = applyPaperUnlocks(wall, store.records.length);
   if (grants.length) {
     recordWallHistory(wall, playDate, grants);
     grants.forEach(function (id) { if (wall.pending.indexOf(id) < 0) wall.pending.push(id); });
   }
-  if (grants.length || unlocked.length) saveStore();
+  if (grants.length || unlocked.length || paperUnlocked.length) saveStore();
   return grants;
 }
 /* 記録 → エントリ解決 (額装・コレクション共通)。picsum はキーから
@@ -3213,15 +3279,16 @@ function closeRewardReveal() {
     updateStartWallRow();
   }
 }
-/* ---- フレーム解放の通知 (スタート画面の通知から開く) ---- */
+/* ---- フレーム / 壁紙 解放の通知 (スタート画面の通知から開く。
+ * 両系統を 1 つのモーダルに合わせて出す) ---- */
 function showUnlockNotice() {
   var list = $('unlockList');
   list.innerHTML = '';
-  var names = [];
+  var fNames = [], pNames = [];
   store.wall.pendingUnlocks.forEach(function (id) {
     var st = frameStyleById(id);
     if (!st) return;
-    names.push(st.name);
+    fNames.push(st.name);
     var row = document.createElement('div');
     row.className = 'unlock-row';
     row.innerHTML = '<span class="unlock-swatch" style="background:' + (st.gradient || st.color) + '"></span>' +
@@ -3229,15 +3296,40 @@ function showUnlockNotice() {
       '<span class="unlock-cond">累計 ' + st.unlockAt + ' 回クリアで解放</span>';
     list.appendChild(row);
   });
-  $('unlockTitle').textContent = names.length === 1
-    ? '新しいフレーム『' + names[0] + '』が使えるようになりました'
-    : '新しいフレームが使えるようになりました';
+  store.wall.pendingPaperUnlocks.forEach(function (id) {
+    var p = wallpaperById(id);
+    if (!p) return;
+    pNames.push(p.name);
+    var row = document.createElement('div');
+    row.className = 'unlock-row';
+    var cv = document.createElement('canvas');
+    cv.className = 'unlock-swatch unlock-swatch-paper';
+    row.appendChild(cv);
+    var nm = document.createElement('span');
+    nm.className = 'unlock-name';
+    nm.textContent = p.name;
+    row.appendChild(nm);
+    var cond = document.createElement('span');
+    cond.className = 'unlock-cond';
+    cond.textContent = '累計 ' + p.unlockAt + ' 回クリアで解放';
+    row.appendChild(cond);
+    list.appendChild(row);
+    paintPaperPreview(cv, p, 104, 80);
+  });
+  var title;
+  if (fNames.length && pNames.length) title = '新しいフレームと壁紙が使えるようになりました';
+  else if (pNames.length === 1) title = '新しい壁紙『' + pNames[0] + '』が使えるようになりました';
+  else if (pNames.length > 1) title = '新しい壁紙が使えるようになりました';
+  else if (fNames.length === 1) title = '新しいフレーム『' + fNames[0] + '』が使えるようになりました';
+  else title = '新しいフレームが使えるようになりました';
+  $('unlockTitle').textContent = title;
   $('unlockModal').hidden = false;
 }
 function closeUnlockNotice() {
   $('unlockModal').hidden = true;
-  if (store.wall.pendingUnlocks.length) {
+  if (store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length) {
     store.wall.pendingUnlocks = [];
+    store.wall.pendingPaperUnlocks = [];
     saveStore();
     updateStartWallRow();
   }
@@ -3261,9 +3353,10 @@ function showWall(from) {
   wallSelected = null;
   wallDrag = null;
   // 壁を開いたら未確認のごほうび/解放は確認済み扱いにする
-  if (store.wall.pending.length || store.wall.pendingUnlocks.length) {
+  if (store.wall.pending.length || store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length) {
     store.wall.pending = [];
     store.wall.pendingUnlocks = [];
+    store.wall.pendingPaperUnlocks = [];
     saveStore();
   }
   applyVisibility();
@@ -3288,8 +3381,11 @@ function wallFrameEntry(key) {
 function renderWall() {
   var stage = $('wallStage');
   stage.innerHTML = '';
+  paintWallBackdrop(); // 背景 Canvas (壁紙 + 床 + 巾木) を一番奥に敷く
   store.wall.frames.forEach(function (f) { stage.appendChild(buildWallFrameEl(f)); });
   store.wall.placed.forEach(function (p) { stage.appendChild(buildWallItemEl(p)); });
+  var paper = wallpaperById(store.wall.paper);
+  $('wallPaperInfo').textContent = paper ? paper.name : '';
   renderWallTray();
   updateWallSelBar();
 }
@@ -4033,15 +4129,281 @@ function openFramePicker() {
 function closeFramePicker() {
   $('framePickerView').hidden = true;
 }
+
+/* ---------- 壁の背景: 壁紙 + 床 + 巾木 (A 案 wall-feel-a) ----------
+ * ステージ全面を 1 枚の背景 Canvas に描く。壁紙は巾木より上だけに適用し、
+ * 下端に白い巾木とフローリングを描いて「部屋の壁」感を出す。床は見た目の
+ * 追加のみで、配置データ (比率座標) は変わらない。描き直しは壁を開いた
+ * 時・壁紙変更・ステージのリサイズ時だけ。柄の乱数は壁紙 id で固定する。 */
+var WALL_FLOOR_RATIO = 0.115; // 床の高さ (ステージ高さ比)
+var WALL_SKIRT_RATIO = 0.018; // 巾木の高さ (ステージ高さ比)
+
+/* 4 点の星 (星空 / 月夜用。中心＋上下左右の尖り) */
+function traceSparkStar(ctx, cx, cy, r) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r); ctx.quadraticCurveTo(cx, cy, cx + r, cy);
+  ctx.quadraticCurveTo(cx, cy, cx, cy + r); ctx.quadraticCurveTo(cx, cy, cx - r, cy);
+  ctx.quadraticCurveTo(cx, cy, cx, cy - r);
+  ctx.closePath();
+}
+/* 壁紙 1 種の描画 (領域 x,y,w,h の中だけ)。kind ごとの小さな描画に分ける */
+function paintWallpaperRegion(ctx, x, y, w, h, def) {
+  var rng = rngFromString('paper:' + def.id);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.fillStyle = def.base;
+  ctx.fillRect(x, y, w, h);
+  var acc = def.accent ? hexToRgb(def.accent) : null;
+  if (def.kind === 'stripe' && acc) {
+    var gap = 46;
+    ctx.fillStyle = rgbCss(acc, 1);
+    for (var sx = 0; sx < w; sx += gap) ctx.fillRect(x + sx, y, 4, h);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    for (var sx2 = gap / 2; sx2 < w; sx2 += gap) ctx.fillRect(x + sx2, y, 1.5, h);
+  } else if (def.kind === 'dot' && acc) {
+    var dg = 52, drr = 3.4;
+    ctx.fillStyle = rgbCss(acc, 1);
+    for (var ry = 0, rowI = 0; ry < h + dg; ry += dg * 0.86, rowI++) {
+      for (var cx = (rowI % 2) * dg / 2; cx < w + dg; cx += dg) {
+        ctx.beginPath(); ctx.arc(x + cx, y + ry, drr, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  } else if (def.kind === 'microdot' && acc) {
+    var mg = 24;
+    ctx.fillStyle = rgbCss(acc, 1);
+    for (var my = mg / 2, mRow = 0; my < h + mg; my += mg, mRow++) {
+      for (var mx = (mRow % 2) * mg / 2 + mg / 2; mx < w + mg; mx += mg) {
+        ctx.beginPath(); ctx.arc(x + mx, y + my, 1.6, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  } else if (def.kind === 'gingham' && acc) {
+    var gb = 44;
+    ctx.fillStyle = rgbCss(acc, 0.32);
+    for (var gx = 0; gx < w; gx += gb * 2) ctx.fillRect(x + gx, y, gb, h);
+    for (var gy = 0; gy < h; gy += gb * 2) ctx.fillRect(x, y + gy, w, gb);
+  } else if (def.kind === 'floral' && acc) {
+    var fg = 132, leaf = hexToRgb(def.leaf || '#A9BE9C');
+    for (var fy2 = 0, fRow = 0; fy2 < h + fg; fy2 += fg, fRow++) {
+      for (var fx = (fRow % 2) * fg / 2; fx < w + fg; fx += fg) {
+        var cx2 = x + fx + rng() * 26, cy2 = y + fy2 + rng() * 26;
+        ctx.fillStyle = rgbCss(leaf, 0.85);
+        ctx.beginPath(); ctx.ellipse(cx2 + 7, cy2 + 8, 5, 2.4, 0.8, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx2 - 7, cy2 + 7, 5, 2.4, -0.8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgbCss(acc, 1);
+        for (var pi = 0; pi < 5; pi++) {
+          var pa = (pi / 5) * Math.PI * 2 - Math.PI / 2;
+          ctx.beginPath();
+          ctx.arc(cx2 + Math.cos(pa) * 4.6, cy2 + Math.sin(pa) * 4.6, 3.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = '#EFC65E';
+        ctx.beginPath(); ctx.arc(cx2, cy2, 2.4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  } else if (def.kind === 'wood' && acc) {
+    var bw = 118;
+    ctx.fillStyle = rgbCss(acc, 0.3);
+    for (var wx = bw; wx < w; wx += bw) ctx.fillRect(x + wx, y, 2.5, h);
+    ctx.strokeStyle = rgbCss(acc, 0.22);
+    ctx.lineWidth = 1.4;
+    var streaks = Math.round((w * h) / 5200);
+    for (var si = 0; si < streaks; si++) {
+      var boardX = Math.floor(rng() * Math.ceil(w / bw)) * bw;
+      var gx2 = x + boardX + 8 + rng() * (bw - 16), len = 26 + rng() * 62, gy2 = y + rng() * h;
+      ctx.beginPath(); ctx.moveTo(gx2, gy2); ctx.lineTo(gx2 + (rng() - 0.5) * 2.5, gy2 + len); ctx.stroke();
+    }
+  } else if (def.kind === 'brick' && acc) {
+    var bh = 36, bl = 92, mortar = 5;
+    ctx.fillStyle = rgbCss(acc, 1);
+    for (var by = 0, bRow = 0; by < h + bh; by += bh + mortar, bRow++) {
+      for (var bx = (bRow % 2) * -(bl / 2); bx < w + bl; bx += bl + mortar) {
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x + bx, y + by, bl, bh, 3); else ctx.rect(x + bx, y + by, bl, bh);
+        ctx.fill();
+      }
+    }
+    var bShade = shadeColor(def.accent, 0.94);
+    ctx.fillStyle = rgbCss(bShade, 0.5);
+    for (var by2 = 0, bRow2 = 0; by2 < h + bh; by2 += bh + mortar, bRow2++) {
+      for (var bx2 = (bRow2 % 2) * -(bl / 2); bx2 < w + bl; bx2 += bl + mortar) {
+        ctx.fillRect(x + bx2 + 2, y + by2 + bh - 5, bl - 4, 3);
+      }
+    }
+  } else if ((def.kind === 'starry' || def.kind === 'moonlit') && acc) {
+    var stars = Math.round((w * h) / 2600);
+    for (var ti = 0; ti < stars; ti++) {
+      var tx = x + rng() * w, ty = y + rng() * h, tr = 2.4 + rng() * 5.2;
+      ctx.fillStyle = rgbCss(acc, 0.35 + rng() * 0.6);
+      traceSparkStar(ctx, tx, ty, tr);
+      ctx.fill();
+    }
+    var dots = Math.round((w * h) / 1500);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    for (var di = 0; di < dots; di++) {
+      ctx.beginPath(); ctx.arc(x + rng() * w, y + rng() * h, 1 + rng() * 1.3, 0, Math.PI * 2); ctx.fill();
+    }
+    if (def.kind === 'moonlit') {
+      var moonX = x + w * 0.76, moonY = y + h * 0.22, moonR = Math.min(w, h) * 0.085;
+      ctx.fillStyle = 'rgba(240,214,140,0.16)';
+      ctx.beginPath(); ctx.arc(moonX, moonY, moonR * 1.9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#F4E3AE';
+      ctx.beginPath(); ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = def.base;
+      ctx.beginPath(); ctx.arc(moonX + moonR * 0.42, moonY - moonR * 0.16, moonR * 0.86, 0, Math.PI * 2); ctx.fill();
+      var sub = hexToRgb(def.sub || '#3A4A6B');
+      ctx.fillStyle = rgbCss(sub, 0.85);
+      ctx.beginPath();
+      ctx.moveTo(x, y + h);
+      ctx.lineTo(x, y + h * 0.88);
+      ctx.quadraticCurveTo(x + w * 0.3, y + h * 0.8, x + w * 0.58, y + h * 0.9);
+      ctx.quadraticCurveTo(x + w * 0.8, y + h * 0.97, x + w, y + h * 0.9);
+      ctx.lineTo(x + w, y + h);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+/* 床 (フローリング) と白い巾木を壁の下端に描く。wallH = 壁紙の下端 y */
+function paintWallFloorAndSkirt(ctx, W, H, wallH) {
+  var skirtH = Math.max(4, Math.round(H * WALL_SKIRT_RATIO));
+  var floorH = H - wallH - skirtH;
+  if (floorH <= 0) return;
+  var fy = wallH + skirtH;
+  var rng = rngFromString('wall:floor');
+  // 床: 上が明るく下へ少し濃くなる
+  var gr = ctx.createLinearGradient(0, fy, 0, H);
+  gr.addColorStop(0, '#C49E70');
+  gr.addColorStop(1, '#A8865E');
+  ctx.fillStyle = gr;
+  ctx.fillRect(0, fy, W, floorH);
+  // 板の継ぎ目 (横) と木目
+  var rows = 3;
+  ctx.fillStyle = 'rgba(120,88,55,0.45)';
+  for (var r = 1; r < rows; r++) ctx.fillRect(0, fy + (floorH * r) / rows, W, Math.max(1, H * 0.0016));
+  ctx.fillStyle = 'rgba(120,88,55,0.35)';
+  for (var r2 = 0; r2 < rows; r2++) {
+    var jx = rng() * W;
+    ctx.fillRect(jx, fy + (floorH * r2) / rows, Math.max(1, H * 0.0016), floorH / rows);
+  }
+  ctx.lineWidth = 1;
+  var streakN = Math.round((W * floorH) / 2400);
+  for (var gi = 0; gi < streakN; gi++) {
+    var gy3 = fy + rng() * floorH, gl = 24 + rng() * 70, gx3 = rng() * W;
+    ctx.strokeStyle = rng() > 0.5 ? 'rgba(140,105,62,0.12)' : 'rgba(255,240,214,0.10)';
+    ctx.beginPath(); ctx.moveTo(gx3, gy3); ctx.lineTo(gx3 + gl, gy3 + (rng() - 0.5) * 2); ctx.stroke();
+  }
+  // 床の上端に落ちる影 (巾木の直下)
+  var sh = ctx.createLinearGradient(0, fy, 0, fy + floorH * 0.2);
+  sh.addColorStop(0, 'rgba(90,66,38,0.30)');
+  sh.addColorStop(1, 'rgba(90,66,38,0)');
+  ctx.fillStyle = sh;
+  ctx.fillRect(0, fy, W, floorH * 0.2);
+  // 白い巾木: 本体 + 上面ハイライト + 下端の影
+  ctx.fillStyle = '#FAF6EC';
+  ctx.fillRect(0, wallH, W, skirtH);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, wallH, W, Math.max(1, skirtH * 0.16));
+  ctx.fillStyle = 'rgba(190,175,145,0.6)';
+  ctx.fillRect(0, wallH + skirtH * 0.3, W, 1);
+  ctx.fillStyle = 'rgba(105,84,55,0.25)';
+  ctx.fillRect(0, wallH + skirtH - Math.max(1, skirtH * 0.22), W, Math.max(1, skirtH * 0.22));
+}
+/* 壁 1 枚の描画 (壁紙 → 巾木 → 床)。プレビュー (ピッカー/解放通知) と共用 */
+function paintWallBase(ctx, W, H, def) {
+  var floorH = Math.round(H * WALL_FLOOR_RATIO);
+  var skirtH = Math.max(4, Math.round(H * WALL_SKIRT_RATIO));
+  var wallH = Math.max(0, H - floorH - skirtH);
+  paintWallpaperRegion(ctx, 0, 0, W, wallH, def);
+  paintWallFloorAndSkirt(ctx, W, H, wallH);
+}
+/* ステージの背景 Canvas を (再) 描画する。壁を開いた時・壁紙変更・
+ * リサイズ時にだけ呼ぶ (ドラッグ中は再描画しない) */
+function paintWallBackdrop() {
+  var stage = $('wallStage');
+  var cv = stage.querySelector('canvas.wall-bg');
+  if (!cv) {
+    cv = document.createElement('canvas');
+    cv.className = 'wall-bg';
+    cv.setAttribute('aria-hidden', 'true');
+    stage.insertBefore(cv, stage.firstChild);
+  }
+  var W = stage.clientWidth, H = stage.clientHeight;
+  if (!W || !H) return;
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  var ctx = cv.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  paintWallBase(ctx, W, H, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
+}
+/* 壁紙の小さな壁プレビューを Canvas に描く (ピッカー / 解放通知用) */
+function paintPaperPreview(cv, def, w, h) {
+  cv.width = w;
+  cv.height = h;
+  var ctx = cv.getContext('2d');
+  if (ctx) paintWallBase(ctx, w, h, def);
+}
+
+/* ---- 壁紙ピッカー (額装ピッカーと同じ様式の全画面グリッド) ---- */
+function openPaperPicker() {
+  var grid = $('paperPickerGrid');
+  grid.innerHTML = '';
+  WALLPAPERS.forEach(function (p) {
+    var unlocked = store.wall.paperUnlocks.indexOf(p.id) >= 0;
+    var applied = store.wall.paper === p.id;
+    var cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'paper-cell' + (unlocked ? '' : ' locked') + (applied ? ' applied' : '');
+    cell.disabled = !unlocked;
+    cell.setAttribute('aria-label', unlocked ? p.name + ' の壁紙にする' : p.name + ' (' + p.unlockAt + '回クリアで解放)');
+    var cv = document.createElement('canvas');
+    cv.className = 'paper-cell-canvas';
+    cell.appendChild(cv);
+    var nm = document.createElement('span');
+    nm.className = 'paper-cell-name';
+    nm.textContent = p.name;
+    cell.appendChild(nm);
+    var st = document.createElement('span');
+    st.className = 'paper-cell-state';
+    st.textContent = applied ? '使用中' : (!unlocked ? p.unlockAt + '回クリアで解放' : '');
+    cell.appendChild(st);
+    paintPaperPreview(cv, p, 264, 330);
+    if (unlocked) {
+      cell.addEventListener('click', function () {
+        if (store.wall.paper !== p.id) {
+          store.wall.paper = p.id;
+          saveStore();
+        }
+        closePaperPicker();
+        renderWall(); // 背景の再描画もここで起きる
+      });
+    }
+    grid.appendChild(cell);
+  });
+  $('paperPickerView').hidden = false;
+}
+function closePaperPicker() {
+  $('paperPickerView').hidden = true;
+}
 /* スタート画面の「壁の小物」行 (所持数と、未確認のごほうび/フレーム解放の通知) */
 function updateStartWallRow() {
   var wall = store.wall;
   if (!wall) return;
   $('wallItemsInfo').textContent = '壁の小物 ' + wall.owned.length + ' / ' + WALL_CATALOG.length;
   $('rewardBtn').hidden = !wall.pending.length;
-  var pendU = wall.pendingUnlocks;
-  $('unlockBtn').hidden = !pendU.length;
-  if (pendU.length === 1) {
+  var pendU = wall.pendingUnlocks, pendP = wall.pendingPaperUnlocks;
+  $('unlockBtn').hidden = !(pendU.length || pendP.length);
+  if (pendU.length && pendP.length) {
+    $('unlockBtn').textContent = '🖼 新しいフレームと壁紙が使えるようになりました →';
+  } else if (pendP.length === 1) {
+    var pp = wallpaperById(pendP[0]);
+    $('unlockBtn').textContent = '🖼 新しい壁紙『' + (pp ? pp.name : '') + '』が使えるようになりました →';
+  } else if (pendP.length > 1) {
+    $('unlockBtn').textContent = '🖼 新しい壁紙が ' + pendP.length + ' 種使えるようになりました →';
+  } else if (pendU.length === 1) {
     var ust = frameStyleById(pendU[0]);
     $('unlockBtn').textContent = '🖼 新しいフレーム『' + (ust ? ust.name : '') + '』が使えるようになりました →';
   } else if (pendU.length > 1) {
@@ -4452,6 +4814,10 @@ function wireControls() {
   $('wallUnplaceBtn').addEventListener('click', function () { unplaceWallSelected(); });
   $('wallFrameBtn').addEventListener('click', function () { openFramePicker(); });
   $('framePickerBack').addEventListener('click', function () { closeFramePicker(); });
+  $('wallPaperBtn').addEventListener('click', function () { openPaperPicker(); });
+  $('paperPickerBack').addEventListener('click', function () { closePaperPicker(); });
+  // 画面リサイズで壁ステージの大きさが変わったら背景だけ描き直す
+  window.addEventListener('resize', function () { if (uiWall) paintWallBackdrop(); });
   $('wallStage').addEventListener('pointerdown', function (ev) {
     if (ev.target === $('wallStage')) selectWall(null); // 壁の何もない所をタップで選択解除
   });

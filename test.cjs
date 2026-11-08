@@ -1031,5 +1031,51 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.GAME_URL === 'https://daily-jigsaw.pages.dev', '共有: GAME_URL は公開URL');
 }
 
+/* 28. 壁紙 (wallpaper-design.md の 20 種): カタログ健全性 + 解放 + 保存移行
+ * + 壁の土台 (床/巾木) とピッカーの配線チェック */
+{
+  // カタログの健全性と解放順
+  ok(L.WALLPAPERS.length === 20, '壁紙: 20 種');
+  ok(eq(L.WALLPAPERS.map(p => p.id), ['kinari', 'sage', 'pink', 'stripe', 'blue', 'dot', 'mint', 'floral', 'lemon', 'gingham', 'wood', 'lavender', 'brick', 'terracotta', 'starry', 'forest', 'gray', 'wine', 'gold', 'moonlit']), '壁紙: 解放順が仕様どおり');
+  ok(eq(L.WALLPAPERS.map(p => p.unlockAt), [0, 0, 3, 5, 8, 12, 16, 20, 25, 30, 40, 50, 60, 75, 90, 110, 130, 155, 180, 210]), '壁紙: 解放回数が仕様どおり');
+  ok(L.WALLPAPERS.every(p => p.name && /^#[0-9a-f]{6}$/i.test(p.base)), '壁紙: 全種に名前と地色がある');
+  ok(L.WALLPAPERS.every(p => ['solid', 'stripe', 'dot', 'floral', 'gingham', 'wood', 'brick', 'starry', 'moonlit', 'microdot'].includes(p.kind)), '壁紙: 種別は定義済みのものだけ');
+  ok(L.WALLPAPERS.filter(p => p.kind === 'solid').length === 11, '壁紙: 無地は 11 種');
+  ok(L.WALLPAPERS.filter(p => p.kind !== 'solid').every(p => !!p.accent), '壁紙: 柄物には柄色 (accent) がある');
+  ok(L.wallpaperById('moonlit').unlockAt === 210 && L.wallpaperById('nope') === null, '壁紙: wallpaperById は実在のみ・未知は null');
+  ok(L.wallpaperById('kinari').base === '#F3E9D3', '壁紙: 生成りは現行の壁色 #F3E9D3');
+
+  // 初期状態と解放判定
+  const pw = L.emptyWall();
+  ok(pw.paper === 'kinari' && eq(pw.paperUnlocks, ['kinari', 'sage']) && eq(pw.pendingPaperUnlocks, []), '壁紙: 初期は 生成り 適用・kinari/sage 解放・通知なし');
+  ok(eq(L.newPaperUnlocks(pw, 2), []) && eq(L.newPaperUnlocks(pw, 3), ['pink']), '壁紙: 3 回で ダスティピンク 解放');
+  ok(eq(L.newPaperUnlocks(pw, 12), ['pink', 'stripe', 'blue', 'dot']), '壁紙: 12 回までの解放が表順に並ぶ');
+  ok(L.newPaperUnlocks(pw, 210).length === 18, '壁紙: 210 回で全 18 種解放');
+  const pw2 = L.emptyWall();
+  const addedP = L.applyPaperUnlocks(pw2, 30);
+  ok(addedP.length === 8 && eq(pw2.pendingPaperUnlocks, addedP) && pw2.paperUnlocks.length === 10, '壁紙: 解放が paperUnlocks と通知待ち (pendingPaperUnlocks) に反映');
+  ok(eq(L.applyPaperUnlocks(pw2, 30), []) && eq(L.applyPaperUnlocks(pw2, 5), []), '壁紙: 解放は冪等 (再適用・巻き戻しなし)');
+
+  // 保存形式の移行: 壁紙フィールドを持たない旧セーブは初期値で補完される
+  const legacy = L.normalizeWall({ owned: ['w001'], placed: [], frames: [] });
+  ok(legacy.paper === 'kinari' && eq(legacy.paperUnlocks, ['kinari', 'sage']) && eq(legacy.pendingPaperUnlocks, []), '壁紙移行: 旧セーブは 生成り + 初期解放で補完');
+  const kept = L.normalizeWall({ paper: 'starry', paperUnlocks: ['starry', 'kinari', 'sage', 'starry', 'nope'], pendingPaperUnlocks: ['moonlit', 'kinari', 'nope'] });
+  ok(kept.paper === 'starry' && eq(kept.paperUnlocks, ['starry', 'kinari', 'sage']) && eq(kept.pendingPaperUnlocks, ['moonlit']), '壁紙移行: 解放済みの適用は保持・重複/未知は落ち・初期種は通知待ちから外れる');
+  const unapplied = L.normalizeWall({ paper: 'starry', paperUnlocks: ['kinari', 'sage'] });
+  ok(unapplied.paper === 'kinari', '壁紙移行: 未解放の壁紙が適用されていたら 生成り に戻す');
+  const badPaper = L.normalizeWall({ paper: 'nope', paperUnlocks: 'garbage', pendingPaperUnlocks: 42 });
+  ok(badPaper.paper === 'kinari' && eq(badPaper.paperUnlocks, ['kinari', 'sage']) && eq(badPaper.pendingPaperUnlocks, []), '壁紙移行: 壊れた値は初期値に落ちる');
+
+  // 配線: index.html / app.js / style.css が壁紙 UI を持つ
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
+  ok(html.indexOf('id="wallPaperBtn"') !== -1 && html.indexOf('id="paperPickerView"') !== -1 && html.indexOf('id="paperPickerGrid"') !== -1 && html.indexOf('id="paperPickerBack"') !== -1, '壁紙配線: index.html に 壁紙ボタンとピッカーがある');
+  ok(appSrc.indexOf('paintWallBackdrop') !== -1 && appSrc.indexOf('paintWallpaperRegion') !== -1 && appSrc.indexOf('openPaperPicker') !== -1, '壁紙配線: app.js に背景ペインターとピッカーがある');
+  ok(css.indexOf('.wall-bg') !== -1 && css.indexOf('#paperPickerGrid') !== -1 && css.indexOf('#wallStage::after') === -1, '壁紙配線: style.css に背景 Canvas とピッカーの様式があり、旧 ::after 巾木は撤去');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

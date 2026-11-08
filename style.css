@@ -645,14 +645,14 @@ button { font: inherit; cursor: pointer; }
   position: relative; margin-top: 12px;
   aspect-ratio: 4 / 5; max-height: 62vh; width: 100%; max-width: 560px;
   margin-left: auto; margin-right: auto;
-  background: linear-gradient(#F6EDD8, #F3E9D3 70%, #EFE2C8);
+  background: #F3E9D3; /* 背景は Canvas (.wall-bg) が描く。これは読み込み前の地色 */
   border: 1px solid var(--line); border-radius: 10px;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.4), 0 2px 8px var(--shadow-soft);
   overflow: hidden; touch-action: none;
 }
-#wallStage::after { /* 巾木 */
-  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3.2%;
-  background: #E4D3AC; border-top: 1px solid #CBB27F; pointer-events: none;
+/* 壁の背景 Canvas: 壁紙 + 白い巾木 + フローリング (A 案)。一番奥に敷く */
+#wallStage .wall-bg {
+  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
 }
 .wall-el {
   position: absolute; transform: translate(-50%, -50%);
@@ -712,6 +712,35 @@ button { font: inherit; cursor: pointer; }
 @media (min-width: 760px) {
   #framePickerGrid { grid-template-columns: repeat(8, 1fr); }
 }
+/* 壁紙ピッカー: 額装ピッカーと同じ全画面様式。セルは壁プレビュー＋名前 */
+#paperPickerView {
+  position: fixed; inset: 0; z-index: 40; overflow-y: auto; overflow-x: hidden;
+  background: var(--screen-bg); padding: 12px; box-sizing: border-box;
+}
+#paperPickerView[hidden] { display: none; }
+#paperPickerView > * { max-width: 960px; margin-left: auto; margin-right: auto; }
+#paperPickerGrid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 12px;
+}
+@media (min-width: 760px) {
+  #paperPickerGrid { grid-template-columns: repeat(4, 1fr); }
+}
+.paper-cell {
+  display: flex; flex-direction: column; gap: 4px; padding: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: left;
+}
+.paper-cell-canvas {
+  display: block; width: 100%; height: auto; border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, .12);
+}
+.paper-cell.locked { cursor: default; opacity: .75; }
+.paper-cell.locked .paper-cell-canvas { filter: grayscale(.45); opacity: .6; }
+.paper-cell.applied { outline: 2px solid var(--brass); outline-offset: 1px; }
+.paper-cell-name { font-weight: 700; font-size: 13.5px; color: var(--screen-ink); }
+.paper-cell-state { font-size: 11.5px; color: var(--screen-ink); opacity: .65; min-height: 1em; }
+/* 解放通知の壁紙スウォッチ (Canvas の小さな壁プレビュー) */
+.unlock-swatch-paper { width: 52px; height: 40px; }
 .frame-thumb {
   position: relative; display: block; width: 100%; aspect-ratio: 1;
   padding: 0; border: none; border-radius: 6px; overflow: hidden;
