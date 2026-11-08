@@ -5005,10 +5005,9 @@ function renderDetailPuzzle(r) {
 
 /* ---------- コントロール配線 ---------- */
 /* 難易度セレクタ (2026-11-08 再設計): 箱カルーセルでグループを切り替え、
- * 表示中の箱のグループのピース数だけをコンパクトなチップで出す。
- * 選択中のチップは緑に広がり、想定時間もその中に出す (別行の表示は廃止) */
-var DIFF_TIME_LABELS = { 16: '1〜3分', 36: '3〜8分', 64: '10〜20分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 1024: '1〜2日' };
-var DIFF_SUB_LABELS = { 16: 'かんたん', 1024: 'おに' };
+ * 表示中の箱のグループの難易度だけをコンパクトなチップで出す。
+ * チップは「Nピース」表記 (数字だけではピース数と伝わらないため)。
+ * 目安時間は出さない (ユーザー指定) */
 function buildDifficultySeg() {
   var seg = $('difficultySeg');
   seg.innerHTML = '';
@@ -5021,9 +5020,7 @@ function buildDifficultySeg() {
     b.className = 'diff-chip' + (sel ? ' active' : '');
     var num = document.createElement('span');
     num.className = 'diff-num';
-    num.textContent = sel
-      ? d + ' ・ ' + (DIFF_SUB_LABELS[d] ? DIFF_SUB_LABELS[d] + ' ・ ' : '') + DIFF_TIME_LABELS[d]
-      : String(d);
+    num.textContent = d + 'ピース';
     b.appendChild(num);
     var tier = frameTier(d);
     if (tier) { // 装飾ティアのチップにはティア色の ★ (最上位は ★★)

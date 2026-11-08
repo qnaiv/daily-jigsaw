@@ -1238,7 +1238,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // 「パズルA/B」の文言は出さず、箱の柄そのものでグループを区別する
   ok(html2.indexOf('id="boxCarousel"') !== -1 && html2.indexOf('id="boxDots"') !== -1 && appSrc2.indexOf('function syncBoxCarousel(') !== -1 && appSrc2.indexOf('function onBoxGroupChanged(') !== -1, '箱カルーセル: 2箱のスワイプ切替とドットがある');
   ok(appSrc2.indexOf("'パズルA'") === -1 && appSrc2.indexOf("'パズルB'") === -1 && html2.indexOf('パズルA') === -1, '箱カルーセル: 「パズルA/B」の文言は出さない');
-  ok(appSrc2.indexOf("'diff-chip'") !== -1 && css2.indexOf('.diff-chip') !== -1 && css2.indexOf('.box-carousel') !== -1, '難易度チップ: ピース数は箱の下にコンパクトなチップで出す');
+  ok(appSrc2.indexOf("'diff-chip'") !== -1 && appSrc2.indexOf("d + 'ピース'") !== -1 && appSrc2.indexOf('DIFF_TIME_LABELS') === -1 && css2.indexOf('.diff-chip') !== -1 && css2.indexOf('.box-carousel') !== -1, '難易度チップ: 「Nピース」表記で箱の下にコンパクトに出し、目安時間は出さない');
   ok(css2.indexOf('.gift-box.rippling') !== -1 && css2.indexOf('scale(1.45)') !== -1, '箱の波紋: 手前の箱だけに大きく濃い波紋を出す');
   ok(html2.indexOf('class="nav-btn"') !== -1 && css2.indexOf('.nav-btn') !== -1, 'スタート導線: コレクション/壁はボタンらしい見た目');
 
