@@ -821,35 +821,76 @@ var WALL_CATALOG = [
 ];
 /* 額装パズルのフレームスタイル (frame-design.md の 20 種)。
  * 描画はデータ駆動: color (枠色) / width (枠幅の比率) / mat (マットの色、
- * 無ければ null) / ornament (装飾タイプ) / shape (rect | circle)。
- * rainbow は color の代わりに gradient を使う (color はスウォッチ用の代表色)。
+ * 無ければ null) / ornament (装飾タイプ) / shape (rect | circle) /
+ * material (wood | metal | enamel | rainbow: 帯の質感表現)。
+ * line は「内側の細線」の色 (lineDouble は二重線)。rainbow は color の
+ * 代わりに RAINBOW_COLORS で帯を塗り、gradient はスウォッチ用の代表色。
  * 解放は unlockAt (累計クリア回数) で、初期は oak / walnut の 2 種。 */
 var FRAME_STYLES = [
-  { id: 'oak',     name: 'ナチュラルオーク',    unlockAt: 0,   color: '#C8A165', width: 0.06, mat: '#F5EFE0', ornament: 'none',    shape: 'rect' },
-  { id: 'walnut',  name: 'ウォルナット',        unlockAt: 0,   color: '#6E4C2C', width: 0.06, mat: '#F5EFE0', ornament: 'none',    shape: 'rect' },
-  { id: 'black',   name: 'ブラック',            unlockAt: 3,   color: '#33302C', width: 0.05, mat: null,       ornament: 'none',    shape: 'rect' },
-  { id: 'ribbon',  name: 'リボンフレーム',      unlockAt: 5,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'ribbon',  shape: 'rect' },
-  { id: 'white',   name: 'ホワイト',            unlockAt: 8,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect' },
-  { id: 'circle',  name: 'まるフレーム',        unlockAt: 12,  color: '#6E4C2C', width: 0.06, mat: null,       ornament: 'none',    shape: 'circle' },
-  { id: 'pink',    name: 'パステルピンク',      unlockAt: 16,  color: '#E7B7C5', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
-  { id: 'gold',    name: 'ゴールド',            unlockAt: 20,  color: '#C4A24B', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect' },
-  { id: 'flower',  name: 'お花フレーム',        unlockAt: 25,  color: '#F1EAD8', width: 0.07, mat: null,       ornament: 'flowers', shape: 'rect' },
-  { id: 'sky',     name: 'スカイブルー',        unlockAt: 30,  color: '#A8C6D8', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
-  { id: 'antique', name: 'アンティークゴールド', unlockAt: 40,  color: '#A67C2E', width: 0.07, mat: null,       ornament: 'corners', shape: 'rect' },
-  { id: 'silver',  name: 'シルバー',            unlockAt: 50,  color: '#B9BDC4', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect' },
-  { id: 'cherry',  name: 'チェリーウッド',      unlockAt: 60,  color: '#8A4A38', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
-  { id: 'starry',  name: '星空フレーム',        unlockAt: 75,  color: '#26314E', width: 0.07, mat: null,       ornament: 'stars',   shape: 'rect' },
-  { id: 'green',   name: 'ディープグリーン',    unlockAt: 90,  color: '#3E5C4B', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
-  { id: 'bronze',  name: 'ブロンズ',            unlockAt: 110, color: '#8C6A3F', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
-  { id: 'navy',    name: 'ネイビー',            unlockAt: 130, color: '#2F4057', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
-  { id: 'rainbow', name: 'レインボーフレーム',  unlockAt: 155, color: '#D9A7A0', width: 0.07, mat: null,       ornament: 'none',    shape: 'rect',
+  { id: 'oak',     name: 'ナチュラルオーク',    unlockAt: 0,   color: '#C8A165', width: 0.06, mat: '#F7F1E2', ornament: 'none',    shape: 'rect',   material: 'wood' },
+  { id: 'walnut',  name: 'ウォルナット',        unlockAt: 0,   color: '#6E4C2C', width: 0.06, mat: '#F7F1E2', ornament: 'none',    shape: 'rect',   material: 'wood' },
+  { id: 'black',   name: 'ブラック',            unlockAt: 3,   color: '#33302C', width: 0.05, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'ribbon',  name: 'リボンフレーム',      unlockAt: 5,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'ribbon',  shape: 'rect',   material: 'enamel' },
+  { id: 'white',   name: 'ホワイト',            unlockAt: 8,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect',   material: 'enamel', line: '#BEB6A8', lineDouble: true },
+  { id: 'circle',  name: 'まるフレーム',        unlockAt: 12,  color: '#6E4C2C', width: 0.06, mat: null,       ornament: 'none',    shape: 'circle', material: 'wood' },
+  { id: 'pink',    name: 'パステルピンク',      unlockAt: 16,  color: '#E7B7C5', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'gold',    name: 'ゴールド',            unlockAt: 20,  color: '#C4A24B', width: 0.06, mat: '#F7F1E2', ornament: 'line',    shape: 'rect',   material: 'metal',  line: '#F0D68C' },
+  { id: 'flower',  name: 'お花フレーム',        unlockAt: 25,  color: '#F6F0DE', width: 0.07, mat: null,       ornament: 'flowers', shape: 'rect',   material: 'enamel' },
+  { id: 'sky',     name: 'スカイブルー',        unlockAt: 30,  color: '#A8C6D8', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'antique', name: 'アンティークゴールド', unlockAt: 40,  color: '#A67C2E', width: 0.07, mat: null,       ornament: 'corners', shape: 'rect',   material: 'metal' },
+  { id: 'silver',  name: 'シルバー',            unlockAt: 50,  color: '#B9BDC4', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect',   material: 'metal',  line: '#EBEEF2' },
+  { id: 'cherry',  name: 'チェリーウッド',      unlockAt: 60,  color: '#8A4A38', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'wood' },
+  { id: 'starry',  name: '星空フレーム',        unlockAt: 75,  color: '#26314E', width: 0.07, mat: null,       ornament: 'stars',   shape: 'rect',   material: 'enamel' },
+  { id: 'green',   name: 'ディープグリーン',    unlockAt: 90,  color: '#3E5C4B', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'bronze',  name: 'ブロンズ',            unlockAt: 110, color: '#8C6A3F', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'metal' },
+  { id: 'navy',    name: 'ネイビー',            unlockAt: 130, color: '#2F4057', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'rainbow', name: 'レインボーフレーム',  unlockAt: 155, color: '#D9A7A0', width: 0.07, mat: null,       ornament: 'none',    shape: 'rect',   material: 'rainbow',
     gradient: 'linear-gradient(135deg, #D9A7A0, #E5C39A, #B5C49A, #9AB8C4, #B0A3C4)' },
-  { id: 'pearl',   name: 'パールフレーム',      unlockAt: 180, color: '#F6F1E7', width: 0.07, mat: null,       ornament: 'pearl',   shape: 'rect' },
-  { id: 'royal',   name: 'ロイヤルゴールド',    unlockAt: 210, color: '#B8912F', width: 0.09, mat: null,       ornament: 'crown',   shape: 'rect' }
+  { id: 'pearl',   name: 'パールフレーム',      unlockAt: 180, color: '#F3F0EB', width: 0.07, mat: null,       ornament: 'pearl',   shape: 'rect',   material: 'enamel' },
+  { id: 'royal',   name: 'ロイヤルゴールド',    unlockAt: 210, color: '#B28A2C', width: 0.09, mat: null,       ornament: 'crown',   shape: 'rect',   material: 'metal',  line: '#F0D68C' }
 ];
 function frameStyleById(id) {
   for (var i = 0; i < FRAME_STYLES.length; i++) if (FRAME_STYLES[i].id === id) return FRAME_STYLES[i];
   return null;
+}
+/* ---- 額装フレーム描画の純粋ヘルパー (承認済みレシピの数値部分) ----
+ * 実際の Canvas 描画は UI 側の paintFrameUnit が担い、ここは色計算と
+ * 寸法決めだけを切り出してテスト可能にする。レシピの正本は
+ * room-samples/wall-mock-final.png を作った描画手順。 */
+/* 額ユニット Canvas の余白率: 落影 (右下) と枠外にはみ出す装飾
+ * (王冠・リボン) を収めるため、ユニット外周に幅比でこの分だけ足す */
+var FRAME_PAD_RATIO = 0.16;
+/* レインボーフレームの帯色 (くすみパステル 6 色・帯の周囲を一周する) */
+var RAINBOW_COLORS = [[227, 169, 169], [240, 203, 160], [247, 231, 169], [183, 214, 176], [164, 196, 214], [186, 178, 216]];
+function hexToRgb(hex) {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+/* [r,g,b] に明暗係数を掛けて 0..255 に丸める (枠の面ごとの陰影用) */
+function shadeRgb(rgb, f) {
+  return rgb.map(function (c) {
+    var v = Math.round(c * f);
+    return v < 0 ? 0 : v > 255 ? 255 : v;
+  });
+}
+function shadeColor(hex, f) { return shadeRgb(hexToRgb(hex), f); }
+/* 帯の周囲位置 t (0..1: 上辺左端から時計回り) における虹色 [r,g,b] */
+function rainbowColorAt(t) {
+  t = ((t % 1) + 1) % 1;
+  var seg = t * RAINBOW_COLORS.length;
+  var i = Math.floor(seg);
+  var fr = seg - i;
+  var a = RAINBOW_COLORS[i % RAINBOW_COLORS.length];
+  var b = RAINBOW_COLORS[(i + 1) % RAINBOW_COLORS.length];
+  return [0, 1, 2].map(function (k) { return Math.round(a[k] + (b[k] - a[k]) * fr); });
+}
+/* 額ユニットの寸法 (CSS px): U = 枠外形の一辺。
+ * bw = 枠帯の幅、matW = マット幅 (帯幅の 0.7 倍)、board = 盤面の一辺、
+ * pad = Canvas 余白、size = Canvas の一辺。 */
+function frameGeometry(U, st) {
+  var bw = Math.max(2, U * st.width);
+  var matW = st.mat ? bw * 0.7 : 0;
+  var pad = U * FRAME_PAD_RATIO;
+  return { bw: bw, matW: matW, board: U - 2 * (bw + matW), pad: pad, size: U + 2 * pad };
 }
 /* 累計クリア回数で新しく解放されるスタイル id (未解放のものだけ・表の順) */
 function newFrameUnlocks(wall, totalClears) {
@@ -1025,6 +1066,9 @@ var PureLogic = {
   boxTapAction: boxTapAction,
   WALL_CATALOG: WALL_CATALOG,
   FRAME_STYLES: FRAME_STYLES, WALL_SIZE_RATIO: WALL_SIZE_RATIO,
+  FRAME_PAD_RATIO: FRAME_PAD_RATIO, RAINBOW_COLORS: RAINBOW_COLORS,
+  hexToRgb: hexToRgb, shadeRgb: shadeRgb, shadeColor: shadeColor,
+  rainbowColorAt: rainbowColorAt, frameGeometry: frameGeometry,
   frameStyleById: frameStyleById, newFrameUnlocks: newFrameUnlocks, applyFrameUnlocks: applyFrameUnlocks,
   RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
   wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
@@ -3018,8 +3062,9 @@ function closeUnlockNotice() {
  * 所持アイテムと額装パズルを壁に自由配置する専用画面。配置は比率座標
  * (中心) で store.wall.placed / frames に保存し、placed の配列順が
  * アイテム同士の重なり順 (額は常にアイテムより奥に描く)。
- * 額の中身はコレクション詳細と同じ「実ピース形状」の完成盤面レンダラーで
- * 描く (paintWallFrame)。フレーム色は解放済みスタイルだけが選べる。 */
+ * 額はユニット全体を 1 枚の Canvas に描く (paintWallFrameUnit)。中身は
+ * コレクション詳細と同じ「実ピース形状」の完成盤面レンダラーで描く
+ * (renderWallBoardCanvas)。フレーム色は解放済みスタイルだけが選べる。 */
 var uiWall = false;
 var wallBackToHome = true;
 var wallSelected = null; // { kind: 'item' | 'frame', key: id | recordKey }
@@ -3080,79 +3125,467 @@ function buildWallItemEl(p) {
   attachWallDrag(el, 'item', p.id);
   return el;
 }
-/* フレームの装飾 (ornament) を SVG 文字列で返す小さな描画関数群。
- * 座標系は 100x100 (額は正方形)。ribbon / crown は枠の外にはみ出す
- * (svg に overflow: visible を付けている)。 */
-function svgStarPoints(cx, cy, r) {
-  var pts = [];
-  for (var i = 0; i < 10; i++) {
-    var rad = (i % 2 === 0) ? r : r * 0.45;
-    var a = -Math.PI / 2 + i * Math.PI / 5;
-    pts.push((cx + rad * Math.cos(a)).toFixed(1) + ',' + (cy + rad * Math.sin(a)).toFixed(1));
-  }
-  return pts.join(' ');
+/* ---------- 額装フレームの Canvas 描画 (承認済みレシピ) ----------
+ * 額ユニット全体 (落影・枠帯・マット・盤面・装飾) を 1 枚の Canvas に描く。
+ * レシピの正本は room-samples/wall-mock-final.png の描画手順: マイター
+ * (斜め継ぎ) の帯に面ごとの陰影 (光は左上から) と素材の質感を重ね、
+ * 内側に面取りとマット、装飾は陰影つきで描く。Canvas は配置・スタイル
+ * 変更・壁の再描画のときにだけ生成し、ドラッグ中は要素ごと移動する。 */
+function rgbCss(rgb, a) {
+  return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + (a === undefined ? 1 : a) + ')';
 }
-var ORNAMENT_SVG = {
-  line: function () {
-    return '<svg viewBox="0 0 100 100"><rect x="9.5" y="9.5" width="81" height="81" fill="none" stroke="rgba(60,45,20,0.45)" stroke-width="1.1"/></svg>';
-  },
-  corners: function () {
-    var s = '<svg viewBox="0 0 100 100">' +
-      '<rect x="9" y="9" width="82" height="82" fill="none" stroke="rgba(70,50,10,0.55)" stroke-width="1.2"/>' +
-      '<rect x="13.5" y="13.5" width="73" height="73" fill="none" stroke="rgba(70,50,10,0.4)" stroke-width="0.8"/>';
-    [[13.5, 13.5], [86.5, 13.5], [13.5, 86.5], [86.5, 86.5]].forEach(function (p) {
-      s += '<rect x="' + (p[0] - 2.4) + '" y="' + (p[1] - 2.4) + '" width="4.8" height="4.8" transform="rotate(45 ' + p[0] + ' ' + p[1] + ')" fill="#7A5A1E"/>';
-    });
-    return s + '</svg>';
-  },
-  ribbon: function () {
-    return '<svg viewBox="0 0 100 100"><g transform="translate(84 4)">' +
-      '<path d="M-2 6 L-8 15 L-3 16 L-1 9 Z" fill="#E7A6BC" stroke="#C97F9C" stroke-width="1"/>' +
-      '<path d="M3 6 L8 15 L3 16 L1 9 Z" fill="#E7A6BC" stroke="#C97F9C" stroke-width="1"/>' +
-      '<ellipse cx="-7" cy="1" rx="7" ry="4.6" transform="rotate(-24)" fill="#F0BFD2" stroke="#C97F9C" stroke-width="1"/>' +
-      '<ellipse cx="7" cy="1" rx="7" ry="4.6" transform="rotate(24)" fill="#F0BFD2" stroke="#C97F9C" stroke-width="1"/>' +
-      '<circle cx="0" cy="2" r="3" fill="#E7A6BC" stroke="#C97F9C" stroke-width="1"/></g></svg>';
-  },
-  stars: function () {
-    var pts = [[16, 5], [50, 3.5], [84, 6], [5, 50], [95, 46], [30, 95.5], [68, 94.5], [90, 89]];
-    var s = '<svg viewBox="0 0 100 100">';
-    pts.forEach(function (p) { s += '<polygon points="' + svgStarPoints(p[0], p[1], 3) + '" fill="#E8C86A"/>'; });
-    return s + '</svg>';
-  },
-  flowers: function () {
-    function flower(cx, cy, petal) {
-      var s = '';
-      for (var i = 0; i < 5; i++) {
-        var a = i * Math.PI * 2 / 5 - Math.PI / 2;
-        s += '<circle cx="' + (cx + 2.2 * Math.cos(a)).toFixed(1) + '" cy="' + (cy + 2.2 * Math.sin(a)).toFixed(1) + '" r="1.9" fill="' + petal + '"/>';
-      }
-      return s + '<circle cx="' + cx + '" cy="' + cy + '" r="1.3" fill="#E8B84B"/>';
+function tracePoly(ctx, pts) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+}
+function fillPoly(ctx, pts, style) {
+  tracePoly(ctx, pts);
+  ctx.fillStyle = style;
+  ctx.fill();
+}
+/* 帯の形 (外矩形 − 内矩形) でクリップする */
+function frameBandClip(ctx, X0, Y0, U, bw) {
+  var p = new Path2D();
+  p.rect(X0, Y0, U, U);
+  p.rect(X0 + bw, Y0 + bw, U - 2 * bw, U - 2 * bw);
+  ctx.clip(p, 'evenodd');
+}
+/* 木目: 帯の各辺に、その辺の向きに沿った細いストリークを散らす */
+function drawFrameGrainSide(ctx, poly, horizontal, rng, U) {
+  ctx.save();
+  tracePoly(ctx, poly);
+  ctx.clip();
+  var xs = poly.map(function (p) { return p[0]; });
+  var ys = poly.map(function (p) { return p[1]; });
+  var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+  var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+  var along = horizontal ? (maxX - minX) : (maxY - minY);
+  var across = horizontal ? (maxY - minY) : (maxX - minX);
+  var n = Math.max(4, Math.round(along / (U * 0.055)));
+  ctx.lineCap = 'round';
+  for (var i = 0; i < n; i++) {
+    var dark = rng() < 0.6;
+    var a = 0.05 + rng() * 0.075;
+    ctx.strokeStyle = dark ? 'rgba(40,24,10,' + a.toFixed(3) + ')' : 'rgba(255,236,200,' + (a * 0.85).toFixed(3) + ')';
+    ctx.lineWidth = rng() < 0.75 ? 1 : 1.6;
+    var t = 0.12 + rng() * 0.76;
+    var s0 = rng() * 0.55;
+    var sl = 0.16 + rng() * 0.30;
+    var wob = (rng() - 0.5) * Math.max(1.5, U * 0.008);
+    ctx.beginPath();
+    if (horizontal) {
+      var y = minY + t * across;
+      ctx.moveTo(minX + s0 * along, y);
+      ctx.lineTo(minX + (s0 + sl) * along, y + wob);
+    } else {
+      var x = minX + t * across;
+      ctx.moveTo(x, minY + s0 * along);
+      ctx.lineTo(x + wob, minY + (s0 + sl) * along);
     }
-    var cols = ['#E7B7C5', '#FBF8F1', '#EFE3A0'];
-    var s = '<svg viewBox="0 0 100 100">';
-    [14, 38, 62, 86].forEach(function (x, i) { s += flower(x, 5, cols[i % 3]); });
-    [14, 38, 62, 86].forEach(function (x, i) { s += flower(x, 95, cols[(i + 1) % 3]); });
-    return s + '</svg>';
-  },
-  pearl: function () {
-    var s = '<svg viewBox="0 0 100 100">';
-    var inset = 8.5, dot = '<circle r="1.8" fill="#FFFDF6" stroke="rgba(170,150,110,0.7)" stroke-width="0.5" cx="';
-    for (var k = 0; k <= 8; k++) {
-      var t = (inset + 10.2 * k).toFixed(1);
-      s += dot + t + '" cy="' + inset + '"/>' + dot + t + '" cy="' + (100 - inset) + '"/>' +
-           dot + inset + '" cy="' + t + '"/>' + dot + (100 - inset) + '" cy="' + t + '"/>';
-    }
-    return s + '</svg>';
-  },
-  crown: function () {
-    return '<svg viewBox="0 0 100 100"><g transform="translate(50 -3)">' +
-      '<path d="M-12 8 L-12 -4 L-5.5 1.5 L0 -7 L5.5 1.5 L12 -4 L12 8 Z" fill="#C4A24B" stroke="#8A6D1F" stroke-width="1.2" stroke-linejoin="round"/>' +
-      '<circle cx="-12" cy="-5" r="1.8" fill="#C4A24B" stroke="#8A6D1F" stroke-width="0.8"/>' +
-      '<circle cx="0" cy="-8.5" r="1.8" fill="#C4A24B" stroke="#8A6D1F" stroke-width="0.8"/>' +
-      '<circle cx="12" cy="-5" r="1.8" fill="#C4A24B" stroke="#8A6D1F" stroke-width="0.8"/>' +
-      '<rect x="-12" y="9.5" width="24" height="2.6" fill="#C4A24B" stroke="#8A6D1F" stroke-width="0.8"/></g></svg>';
+    ctx.stroke();
   }
-};
+  ctx.restore();
+}
+/* 金属帯の斜めの光沢 (左上→右下の柔らかい帯状ハイライト) */
+function drawFrameMetalSheen(ctx, X0, Y0, U) {
+  var gr = ctx.createLinearGradient(X0, Y0, X0 + U, Y0 + U);
+  gr.addColorStop(0, 'rgba(255,246,214,0)');
+  gr.addColorStop(0.23, 'rgba(255,246,214,0.07)');
+  gr.addColorStop(0.393, 'rgba(255,246,214,0.27)');
+  gr.addColorStop(0.555, 'rgba(255,246,214,0.07)');
+  gr.addColorStop(0.718, 'rgba(255,246,214,0)');
+  gr.addColorStop(1, 'rgba(255,246,214,0)');
+  ctx.fillStyle = gr;
+  ctx.fillRect(X0, Y0, U, U);
+}
+/* エナメル/紙の柔らかな gloss (上ほど明るい) */
+function drawFrameGloss(ctx, X0, Y0, U, peak) {
+  var gr = ctx.createLinearGradient(0, Y0, 0, Y0 + U);
+  gr.addColorStop(0, 'rgba(255,255,255,' + peak + ')');
+  gr.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gr;
+  ctx.fillRect(X0, Y0, U, U);
+}
+/* 虹色の帯: 辺ごとに、その辺が受け持つ周囲位置 t の範囲で補間する */
+function fillRainbowSide(ctx, poly, x0, y0, x1, y1, t0, t1, f) {
+  var gr = ctx.createLinearGradient(x0, y0, x1, y1);
+  [0, 0.25, 0.5, 0.75, 1].forEach(function (s) {
+    gr.addColorStop(s, rgbCss(shadeRgb(rainbowColorAt(t0 + (t1 - t0) * s), f)));
+  });
+  fillPoly(ctx, poly, gr);
+}
+/* マット内側の影: 盤面の縁からマット側へ薄れる 4 辺のグラデーション */
+function drawMatInnerShadow(ctx, bx, by, B, w) {
+  var A = 'rgba(70,50,30,0.28)', Z = 'rgba(70,50,30,0)';
+  var g;
+  g = ctx.createLinearGradient(0, by - w, 0, by);
+  g.addColorStop(0, Z); g.addColorStop(1, A);
+  ctx.fillStyle = g; ctx.fillRect(bx, by - w, B, w);
+  g = ctx.createLinearGradient(0, by + B, 0, by + B + w);
+  g.addColorStop(0, A); g.addColorStop(1, Z);
+  ctx.fillStyle = g; ctx.fillRect(bx, by + B, B, w);
+  g = ctx.createLinearGradient(bx - w, 0, bx, 0);
+  g.addColorStop(0, Z); g.addColorStop(1, A);
+  ctx.fillStyle = g; ctx.fillRect(bx - w, by, w, B);
+  g = ctx.createLinearGradient(bx + B, 0, bx + B + w, 0);
+  g.addColorStop(0, A); g.addColorStop(1, Z);
+  ctx.fillStyle = g; ctx.fillRect(bx + B, by, w, B);
+}
+/* 内側の細線 (白は二重線) */
+function drawFrameLine(ctx, st, X0, Y0, U, bw) {
+  ctx.strokeStyle = st.line;
+  ctx.lineWidth = Math.max(1, U * 0.006);
+  var d = bw * 0.72;
+  ctx.strokeRect(X0 + d, Y0 + d, U - 2 * d, U - 2 * d);
+  if (st.lineDouble) {
+    var d2 = bw * 0.35;
+    ctx.strokeRect(X0 + d2, Y0 + d2, U - 2 * d2, U - 2 * d2);
+  }
+}
+/* アンティークの四隅飾り (金の三角 + 点) */
+function drawFrameCorners(ctx, X0, Y0, U) {
+  var tri = U * 0.103, d = U * 0.034, r = Math.max(1.5, U * 0.013);
+  [[X0, Y0, 1, 1], [X0 + U, Y0, -1, 1], [X0, Y0 + U, 1, -1], [X0 + U, Y0 + U, -1, -1]].forEach(function (c) {
+    fillPoly(ctx, [[c[0], c[1]], [c[0] + c[2] * tri, c[1]], [c[0], c[1] + c[3] * tri]], 'rgb(244,220,150)');
+    ctx.beginPath();
+    ctx.arc(c[0] + c[2] * d, c[1] + c[3] * d, r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgb(255,236,180)';
+    ctx.fill();
+  });
+}
+/* リボン: 結び目・折り目のハイライト・垂れる尾まで陰影つきで描く */
+function drawFrameBow(ctx, cx, cy, s) {
+  var pink = 'rgb(238,168,188)', dark = 'rgb(196,116,146)', light = 'rgb(250,205,218)';
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = Math.max(1, s * 0.06);
+  [[0, 0, -s, -s * 0.6, -s * 0.92, s * 0.5], [0, 0, s, -s * 0.6, s * 0.92, s * 0.5]].forEach(function (p) {
+    tracePoly(ctx, [[p[0], p[1]], [p[2], p[3]], [p[4], p[5]]]);
+    ctx.fillStyle = pink; ctx.fill(); ctx.stroke();
+  });
+  ctx.strokeStyle = light;
+  ctx.lineWidth = Math.max(1, s * 0.07);
+  ctx.beginPath(); ctx.moveTo(-s * 0.75, -s * 0.28); ctx.lineTo(-s * 0.15, 0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(s * 0.75, -s * 0.28); ctx.lineTo(s * 0.15, 0); ctx.stroke();
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = Math.max(1, s * 0.06);
+  [[-s * 0.16, s * 0.18, -s * 0.40, s * 0.85, -s * 0.02, s * 0.66],
+   [s * 0.16, s * 0.18, s * 0.40, s * 0.85, s * 0.02, s * 0.66]].forEach(function (p) {
+    tracePoly(ctx, [[p[0], p[1]], [p[2], p[3]], [p[4], p[5]]]);
+    ctx.fillStyle = pink; ctx.fill(); ctx.stroke();
+  });
+  ctx.beginPath();
+  ctx.arc(0, 0, s * 0.24, 0, Math.PI * 2);
+  ctx.fillStyle = pink; ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+/* 小花 (2 トーンの花びら + 芯) と葉 */
+function drawFrameFlower(ctx, cx, cy, r, petal, center) {
+  for (var k = 0; k < 5; k++) {
+    var ang = k * Math.PI * 2 / 5 - Math.PI / 2;
+    var px = cx + r * 0.8 * Math.cos(ang), py = cy + r * 0.8 * Math.sin(ang);
+    ctx.beginPath();
+    ctx.arc(px, py, r * 0.52, 0, Math.PI * 2);
+    ctx.fillStyle = rgbCss(shadeRgb(petal, 0.94));
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px - r * 0.02, py - r * 0.10, r * 0.34, 0, Math.PI * 2);
+    ctx.fillStyle = rgbCss(petal);
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.30, 0, Math.PI * 2);
+  ctx.fillStyle = rgbCss(center);
+  ctx.fill();
+}
+function drawFrameLeaf(ctx, cx, cy, r) {
+  fillPoly(ctx, [[cx - r, cy + r * 0.6], [cx, cy - r], [cx + r, cy + r * 0.6], [cx, cy + r * 0.25]], 'rgb(126,160,110)');
+}
+function drawFrameFlowers(ctx, X0, Y0, U, inset) {
+  var m = inset / 2; // 帯 (+マット) の中線に沿って並べる
+  var spots = [];
+  var i;
+  for (i = 0; i < 7; i++) spots.push([X0 + U * (i + 0.5) / 7, Y0 + m]);
+  for (i = 0; i < 7; i++) spots.push([X0 + U * (i + 0.5) / 7, Y0 + U - m]);
+  for (i = 0; i < 5; i++) spots.push([X0 + m, Y0 + U * (i + 0.5) / 5]);
+  for (i = 0; i < 5; i++) spots.push([X0 + U - m, Y0 + U * (i + 0.5) / 5]);
+  var pink = [240, 186, 200], white = [250, 246, 236], center = [243, 203, 110];
+  spots.forEach(function (s, idx) {
+    if (idx % 3 === 2) drawFrameLeaf(ctx, s[0], s[1], U * 0.043);
+    else drawFrameFlower(ctx, s[0], s[1], U * 0.048, idx % 2 ? white : pink, center);
+  });
+}
+/* 四芒星 (キラキラ型) のパス */
+function sparklePath(ctx, cx, cy, r) {
+  ctx.beginPath();
+  for (var i = 0; i < 8; i++) {
+    var ang = -Math.PI / 2 + i * Math.PI / 4;
+    var rr = i % 2 === 0 ? r : r * 0.36;
+    var x = cx + rr * Math.cos(ang), y = cy + rr * Math.sin(ang);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+/* 星空: 金の四芒星を帯の中線に散らし、柔らかいグローを下に敷く */
+function drawFrameStars(ctx, X0, Y0, U, inset, rng) {
+  var m = inset / 2;
+  var spots = [];
+  for (var i = 0; i < 12; i++) {
+    var side = Math.floor(rng() * 4);
+    var along = 0.04 + rng() * 0.92;
+    var r = U * (0.020 + rng() * 0.013);
+    var sx, sy;
+    if (side === 0) { sx = X0 + along * U; sy = Y0 + m; }
+    else if (side === 1) { sx = X0 + along * U; sy = Y0 + U - m; }
+    else if (side === 2) { sx = X0 + m; sy = Y0 + along * U; }
+    else { sx = X0 + U - m; sy = Y0 + along * U; }
+    spots.push({ x: sx, y: sy, r: r });
+  }
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,220,130,0.85)';
+  ctx.shadowBlur = Math.max(2, U * 0.03);
+  ctx.fillStyle = 'rgb(255,220,130)';
+  spots.forEach(function (s) { sparklePath(ctx, s.x, s.y, s.r); ctx.fill(); });
+  ctx.restore();
+  ctx.fillStyle = 'rgb(255,226,140)';
+  spots.forEach(function (s) { sparklePath(ctx, s.x, s.y, s.r); ctx.fill(); });
+}
+/* 真珠ドット (左上にハイライト・下に陰) */
+function drawFramePearlDot(ctx, cx, cy, r) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgb(243,240,235)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgb(198,190,178)';
+  ctx.lineWidth = Math.max(0.75, r * 0.12);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.88, Math.PI / 9, Math.PI * 7 / 9);
+  ctx.strokeStyle = 'rgb(214,206,196)';
+  ctx.lineWidth = Math.max(0.75, r * 0.22);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(cx - r * 0.18, cy - r * 0.30, r * 0.28, r * 0.25, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fill();
+}
+function drawFramePearls(ctx, X0, Y0, U, inset) {
+  var m = inset / 2;
+  var step = U * 0.079, r = U * 0.024;
+  var x, y;
+  for (x = X0 + step / 2; x < X0 + U; x += step) {
+    drawFramePearlDot(ctx, x, Y0 + m, r);
+    drawFramePearlDot(ctx, x, Y0 + U - m, r);
+  }
+  for (y = Y0 + step; y < Y0 + U; y += step) {
+    drawFramePearlDot(ctx, X0 + m, y, r);
+    drawFramePearlDot(ctx, X0 + U - m, y, r);
+  }
+}
+/* 王冠 (宝石つき): 上部中央に帯へまたがせて描く */
+function drawFrameCrown(ctx, cx, cy, s) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  var gold = 'rgb(226,182,80)', dark = 'rgb(150,110,30)', lite = 'rgb(246,220,140)';
+  tracePoly(ctx, [[-s, s * 0.5], [-s, -s * 0.45], [-s * 0.5, -s * 0.05], [0, -s * 0.62], [s * 0.5, -s * 0.05], [s, -s * 0.45], [s, s * 0.5]]);
+  ctx.fillStyle = gold; ctx.fill();
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = Math.max(1, s * 0.06);
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+  ctx.fillStyle = lite;
+  ctx.fillRect(-s, s * 0.32, 2 * s, s * 0.18);
+  [[-s * 0.55, 'rgb(214,110,110)'], [0, 'rgb(110,150,214)'], [s * 0.55, 'rgb(214,110,110)']].forEach(function (j) {
+    ctx.beginPath();
+    ctx.ellipse(j[0], s * 0.17, s * 0.12, s * 0.12, 0, 0, Math.PI * 2);
+    ctx.fillStyle = j[1];
+    ctx.fill();
+  });
+  [[-s, -s * 0.45], [0, -s * 0.62], [s, -s * 0.45]].forEach(function (p) {
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], s * 0.10, 0, Math.PI * 2);
+    ctx.fillStyle = lite;
+    ctx.fill();
+  });
+  ctx.restore();
+}
+/* 盤面プレースホルダ (ロード中/記録なし) */
+function drawFrameBoardPlaceholder(ctx, bx, by, B, U, state) {
+  ctx.fillStyle = '#DED5BF';
+  ctx.fillRect(bx, by, B, B);
+  ctx.fillStyle = 'rgba(90,70,40,0.65)';
+  ctx.font = '600 ' + Math.max(11, Math.round(U * 0.045)) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(state === 'missing' ? '記録がありません' : '読み込み中…', bx + B / 2, by + B / 2);
+}
+/* 額ユニット 1 点を ctx に描く。座標は Canvas の CSS px で、ユニット
+ * 外形の左上は (pad, pad)。board は完成盤面の Canvas (null の間は
+ * boardState のプレースホルダ)。木目・星の乱数は seedKey で固定し、
+ * 盤面ロード後の描き直しでも見た目が変わらないようにする。 */
+function paintFrameUnit(ctx, st, U, board, boardState, seedKey) {
+  var geo = frameGeometry(U, st);
+  var bw = geo.bw, matW = geo.matW, B = geo.board;
+  var X0 = geo.pad, Y0 = geo.pad, X1 = X0 + U, Y1 = Y0 + U;
+  var rng = rngFromString('frame:' + st.id + ':' + seedKey);
+  if (st.shape === 'circle') {
+    paintCircleFrameUnit(ctx, st, U, board, boardState, seedKey, geo);
+    return;
+  }
+  var base = hexToRgb(st.color);
+  var ix0 = X0 + bw, iy0 = Y0 + bw, ix1 = X1 - bw, iy1 = Y1 - bw;
+  var top = [[X0, Y0], [X1, Y0], [ix1, iy0], [ix0, iy0]];
+  var bottom = [[X0, Y1], [ix0, iy1], [ix1, iy1], [X1, Y1]];
+  var left = [[X0, Y0], [ix0, iy0], [ix0, iy1], [X0, Y1]];
+  var right = [[X1, Y0], [X1, Y1], [ix1, iy1], [ix1, iy0]];
+  // 1. 落影 (右下へ柔らかく)
+  ctx.save();
+  ctx.shadowColor = 'rgba(60,40,20,0.37)';
+  ctx.shadowBlur = Math.max(2, U * 0.028);
+  ctx.shadowOffsetX = U * 0.027;
+  ctx.shadowOffsetY = U * 0.040;
+  ctx.fillStyle = rgbCss(base);
+  ctx.fillRect(X0, Y0, U, U);
+  ctx.restore();
+  // 2. 帯 (マイター継ぎ + 面ごとの陰影: 上 1.13 / 左 1.04 / 右 0.90 / 下 0.82)
+  if (st.material === 'rainbow') {
+    fillRainbowSide(ctx, top, X0, Y0, X1, Y0, 0, 0.25, 1.13);
+    fillRainbowSide(ctx, right, X1, Y0, X1, Y1, 0.25, 0.5, 0.90);
+    fillRainbowSide(ctx, bottom, X1, Y1, X0, Y1, 0.5, 0.75, 0.82);
+    fillRainbowSide(ctx, left, X0, Y1, X0, Y0, 0.75, 1, 1.04);
+    ctx.save();
+    frameBandClip(ctx, X0, Y0, U, bw);
+    drawFrameGloss(ctx, X0, Y0, U, 0.10);
+    ctx.restore();
+  } else {
+    fillPoly(ctx, top, rgbCss(shadeRgb(base, 1.13)));
+    fillPoly(ctx, bottom, rgbCss(shadeRgb(base, 0.82)));
+    fillPoly(ctx, left, rgbCss(shadeRgb(base, 1.04)));
+    fillPoly(ctx, right, rgbCss(shadeRgb(base, 0.90)));
+    // 3. 素材の質感 (帯にクリップして重ねる)
+    ctx.save();
+    frameBandClip(ctx, X0, Y0, U, bw);
+    if (st.material === 'wood') {
+      drawFrameGrainSide(ctx, top, true, rng, U);
+      drawFrameGrainSide(ctx, bottom, true, rng, U);
+      drawFrameGrainSide(ctx, left, false, rng, U);
+      drawFrameGrainSide(ctx, right, false, rng, U);
+    } else if (st.material === 'metal') {
+      drawFrameMetalSheen(ctx, X0, Y0, U);
+    } else {
+      drawFrameGloss(ctx, X0, Y0, U, 0.14);
+    }
+    ctx.restore();
+  }
+  // 4. 面取り (外周の暗線 + 内周のハイライト/影)
+  var lw = Math.max(1, U * 0.007);
+  var rainbow = st.material === 'rainbow';
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = rainbow ? 'rgba(96,74,52,0.8)' : rgbCss(shadeRgb(base, 0.55));
+  ctx.strokeRect(X0 + lw / 2, Y0 + lw / 2, U - lw, U - lw);
+  function bevelLine(xa, ya, xb, yb, style) {
+    ctx.strokeStyle = style;
+    ctx.beginPath();
+    ctx.moveTo(xa, ya);
+    ctx.lineTo(xb, yb);
+    ctx.stroke();
+  }
+  bevelLine(ix0, iy0, ix1, iy0, rainbow ? 'rgba(255,255,255,0.55)' : rgbCss(shadeRgb(base, 1.28)));
+  bevelLine(ix0, iy0, ix0, iy1, rainbow ? 'rgba(255,255,255,0.45)' : rgbCss(shadeRgb(base, 1.20)));
+  bevelLine(ix0, iy1, ix1, iy1, rainbow ? 'rgba(96,74,52,0.40)' : rgbCss(shadeRgb(base, 0.60)));
+  bevelLine(ix1, iy0, ix1, iy1, rainbow ? 'rgba(96,74,52,0.32)' : rgbCss(shadeRgb(base, 0.70)));
+  // 5. マット + 盤面側へ落ちる影
+  var bx = X0 + bw + matW, by = Y0 + bw + matW;
+  if (matW > 0) {
+    ctx.fillStyle = st.mat;
+    ctx.fillRect(ix0, iy0, U - 2 * bw, U - 2 * bw);
+    drawMatInnerShadow(ctx, bx, by, B, Math.max(3, U * 0.027));
+  }
+  // 6. 盤面
+  if (board) ctx.drawImage(board, bx, by, B, B);
+  else drawFrameBoardPlaceholder(ctx, bx, by, B, U, boardState);
+  // 7. 細線と装飾 (陰影つき)
+  if (st.line) drawFrameLine(ctx, st, X0, Y0, U, bw);
+  if (st.ornament === 'ribbon') drawFrameBow(ctx, bx + B - U * 0.038, Y0 - U * 0.01, U * 0.145);
+  else if (st.ornament === 'flowers') drawFrameFlowers(ctx, X0, Y0, U, bw + matW);
+  else if (st.ornament === 'stars') drawFrameStars(ctx, X0, Y0, U, bw + matW, rng);
+  else if (st.ornament === 'corners') drawFrameCorners(ctx, X0, Y0, U);
+  else if (st.ornament === 'pearl') drawFramePearls(ctx, X0, Y0, U, bw + matW);
+  else if (st.ornament === 'crown') drawFrameCrown(ctx, X0 + U / 2, Y0 - U * 0.017, U * 0.147);
+}
+/* まるフレーム: 木目のリング + 面取り (弧のハイライト) + 円形の盤面 */
+function paintCircleFrameUnit(ctx, st, U, board, boardState, seedKey, geo) {
+  var bw = geo.bw, pad = geo.pad;
+  var cx = pad + U / 2, cy = pad + U / 2;
+  var R = U / 2, rIn = R - bw;
+  var base = hexToRgb(st.color);
+  var rng = rngFromString('frame:' + st.id + ':' + seedKey);
+  // 落影
+  ctx.save();
+  ctx.shadowColor = 'rgba(60,40,20,0.37)';
+  ctx.shadowBlur = Math.max(2, U * 0.028);
+  ctx.shadowOffsetX = U * 0.027;
+  ctx.shadowOffsetY = U * 0.040;
+  ctx.fillStyle = rgbCss(base);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  // リング本体
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fillStyle = rgbCss(shadeRgb(base, 1.05));
+  ctx.fill();
+  // 木目 (リングにクリップ)
+  ctx.save();
+  var ring = new Path2D();
+  ring.arc(cx, cy, R, 0, Math.PI * 2);
+  ring.arc(cx, cy, rIn, 0, Math.PI * 2);
+  ctx.clip(ring, 'evenodd');
+  ctx.lineCap = 'round';
+  var n = Math.max(12, Math.round(U * 0.16));
+  for (var i = 0; i < n; i++) {
+    var dark = rng() < 0.6;
+    var a = 0.04 + rng() * 0.06;
+    ctx.strokeStyle = dark ? 'rgba(40,24,10,' + a.toFixed(3) + ')' : 'rgba(255,236,200,' + (a * 0.85).toFixed(3) + ')';
+    ctx.lineWidth = rng() < 0.75 ? 1 : 1.6;
+    var sx = cx - R + rng() * U * 0.5;
+    var sy = cy - R + rng() * U;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + U * (0.16 + rng() * 0.30), sy + (rng() - 0.5) * Math.max(1.5, U * 0.008));
+    ctx.stroke();
+  }
+  ctx.restore();
+  // 面取り: 外周の暗線・内周のハイライト・弧のハイライト
+  var lw = Math.max(1, U * 0.007);
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = rgbCss(shadeRgb(base, 0.55));
+  ctx.beginPath();
+  ctx.arc(cx, cy, R - lw / 2, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = rgbCss(shadeRgb(base, 1.30));
+  ctx.beginPath();
+  ctx.arc(cx, cy, rIn + lw / 2, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = Math.max(2, U * 0.018);
+  ctx.strokeStyle = rgbCss(shadeRgb(base, 1.35), 0.63);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R - lw, Math.PI * 100 / 180, Math.PI * 200 / 180);
+  ctx.stroke();
+  // 盤面 (円形クリップ)
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, rIn, 0, Math.PI * 2);
+  ctx.clip();
+  if (board) ctx.drawImage(board, cx - rIn, cy - rIn, rIn * 2, rIn * 2);
+  else drawFrameBoardPlaceholder(ctx, cx - rIn, cy - rIn, rIn * 2, U, boardState);
+  ctx.restore();
+}
 function buildWallFrameEl(f) {
   var rec = recordByWallKey(f.recordKey);
   var st = frameStyleById(f.color) || frameStyleById('walnut');
@@ -3163,64 +3596,51 @@ function buildWallFrameEl(f) {
   el.style.left = (f.x * 100) + '%';
   el.style.top = (f.y * 100) + '%';
   el.style.width = (f.w * 100) + '%';
-  var stage = $('wallStage');
-  var stageW = (stage && stage.clientWidth) || 360;
-  var framePx = Math.max(3, Math.round(stageW * f.w * st.width));
-  var box = document.createElement('div');
-  box.className = 'frame-box' + (st.shape === 'circle' ? ' circle' : '');
-  box.style.padding = framePx + 'px';
-  box.style.background = st.gradient || st.color;
-  var inner = document.createElement('div');
-  inner.className = 'frame-inner';
-  if (st.mat) {
-    inner.style.background = st.mat;
-    inner.style.padding = Math.max(3, Math.round(framePx * 0.85)) + 'px';
-  }
-  if (rec) {
-    var cv = document.createElement('canvas');
-    inner.appendChild(cv);
-    paintWallFrame(cv, rec);
-  } else {
-    var miss = document.createElement('span');
-    miss.className = 'wall-frame-missing';
-    miss.textContent = '記録がありません';
-    inner.appendChild(miss);
-  }
-  box.appendChild(inner);
-  var ornFn = ORNAMENT_SVG[st.ornament];
-  if (ornFn) {
-    var ov = document.createElement('div');
-    ov.className = 'frame-ornaments';
-    ov.innerHTML = ornFn(st);
-    box.appendChild(ov);
-  }
-  el.appendChild(box);
+  var cv = document.createElement('canvas');
+  cv.className = 'frame-canvas';
+  el.appendChild(cv);
+  paintWallFrameUnit(cv, f, rec, st);
   attachWallDrag(el, 'frame', f.recordKey);
   return el;
 }
-/* 壁の額装パズル: コレクション詳細 (paintDetailBoard) と同じ辺生成・
- * 輪郭パスを使い、余白なしで額いっぱいに完成盤面を描く。ピースの形と数は
- * レコードの日付×難易度で決まる実物と一致する。 */
-function paintWallFrame(cv, rec) {
-  var plan = detailRenderPlan(rec.pieces);
-  var n = plan.n;
-  var sizePx = plan.sizePx;
-  cv.width = sizePx;
-  cv.height = sizePx;
+/* 額ユニットの Canvas を生成する。盤面の読み込みが終わったら同じ手順で
+ * 描き直す (乱数はシード固定なので枠の見た目は変わらない)。 */
+function paintWallFrameUnit(cv, f, rec, st) {
+  var stage = $('wallStage');
+  var stageW = (stage && stage.clientWidth) || 360;
+  var U = Math.max(24, stageW * f.w);
+  var geo = frameGeometry(U, st);
+  var scale = 2; // 解像度倍率 (CSS px に対して 2 倍で描いて滲みを防ぐ)
+  var px = Math.round(geo.size * scale);
+  cv.width = px;
+  cv.height = px;
   var ctx = cv.getContext('2d');
-  ctx.fillStyle = '#ded5bf';
-  ctx.fillRect(0, 0, sizePx, sizePx);
-  ctx.fillStyle = 'rgba(90,70,40,0.65)';
-  ctx.font = '600 ' + Math.max(14, Math.round(sizePx * 0.03)) + 'px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('読み込み中…', sizePx / 2, sizePx / 2);
-  loadDetailSource(rec).then(function (src) {
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  paintFrameUnit(ctx, st, U, null, rec ? 'loading' : 'missing', f.recordKey);
+  if (!rec) return;
+  renderWallBoardCanvas(rec).then(function (board) {
     if (!cv.isConnected) return; // 壁を作り直していたら古い描画は捨てる
-    var layout = { n: n, cellPx: sizePx / n, ox: 0, oy: 0, boardPx: sizePx };
+    var c2 = cv.getContext('2d');
+    c2.setTransform(scale, 0, 0, scale, 0, 0);
+    c2.clearRect(0, 0, geo.size, geo.size);
+    paintFrameUnit(c2, st, U, board, 'ready', f.recordKey);
+  });
+}
+/* 壁の額装パズル: コレクション詳細 (paintDetailBoard) と同じ辺生成・
+ * 輪郭パスで、完成盤面をオフスクリーン Canvas に描く。ピースの形と数は
+ * レコードの日付×難易度で決まる実物と一致する。 */
+function renderWallBoardCanvas(rec) {
+  var plan = detailRenderPlan(rec.pieces);
+  var sizePx = plan.sizePx;
+  var bcv = document.createElement('canvas');
+  bcv.width = sizePx;
+  bcv.height = sizePx;
+  return loadDetailSource(rec).then(function (src) {
+    var ctx = bcv.getContext('2d');
+    var layout = { n: plan.n, cellPx: sizePx / plan.n, ox: 0, oy: 0, boardPx: sizePx };
     var edges = generateEdges(rec.date, rec.pieces);
-    ctx.clearRect(0, 0, sizePx, sizePx);
-    for (var id = 0; id < n * n; id++) {
-      var home = pieceHome(id, n);
+    for (var id = 0; id < plan.n * plan.n; id++) {
+      var home = pieceHome(id, plan.n);
       var path = detailPiecePath(edges, home.col, home.row, layout, plan.perSeg);
       ctx.save();
       ctx.clip(path);
@@ -3231,8 +3651,10 @@ function paintWallFrame(cv, rec) {
       ctx.lineWidth = Math.max(1, layout.cellPx * 0.02);
       ctx.stroke(path);
     }
+    return bcv;
   });
 }
+
 /* 壁要素のドラッグ (移動) とタップ (選択)。アイテムは掴んだ順に最前面へ */
 function attachWallDrag(el, kind, key) {
   el.addEventListener('pointerdown', function (ev) {

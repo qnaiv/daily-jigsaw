@@ -890,6 +890,18 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(eq(L.FRAME_STYLES.map(s => s.id), ['oak', 'walnut', 'black', 'ribbon', 'white', 'circle', 'pink', 'gold', 'flower', 'sky', 'antique', 'silver', 'cherry', 'starry', 'green', 'bronze', 'navy', 'rainbow', 'pearl', 'royal']), 'フレーム: 解放順が仕様どおり');
   ok(L.FRAME_STYLES.every(s => s.color && s.width > 0 && ['none', 'line', 'corners', 'ribbon', 'stars', 'flowers', 'pearl', 'crown'].includes(s.ornament) && ['rect', 'circle'].includes(s.shape)), 'フレーム: 全種に色・枠幅・装飾・形がある (データ駆動)');
   ok(L.frameStyleById('circle').shape === 'circle' && L.FRAME_STYLES.filter(s => s.shape === 'circle').length === 1, 'フレーム: 円形は まるフレーム だけ');
+  ok(L.FRAME_STYLES.every(s => ['wood', 'metal', 'enamel', 'rainbow'].includes(s.material)), 'フレーム: 全種に素材 (wood/metal/enamel/rainbow) がある');
+  ok(L.FRAME_STYLES.filter(s => s.ornament === 'line').every(s => !!s.line), 'フレーム: 細線の装飾には線色がある');
+  ok(L.frameStyleById('gold').mat === '#F7F1E2' && L.frameStyleById('walnut').mat === '#F7F1E2' && L.frameStyleById('black').mat === null, 'フレーム: マットは生成り #F7F1E2 (oak/walnut/gold のみ)');
+  // 描画ヘルパー (承認済みレシピの数値部分)
+  ok(eq(L.shadeColor('#6E4C2C', 1), [110, 76, 44]) && eq(L.shadeColor('#6E4C2C', 0), [0, 0, 0]), 'フレーム描画: shadeColor は係数を掛ける');
+  ok(eq(L.shadeColor('#FFFFFF', 1.13), [255, 255, 255]) && eq(L.shadeColor('#26314E', 0.82), [31, 40, 64]), 'フレーム描画: shadeColor は 255 で丸める');
+  ok(eq(L.rainbowColorAt(0), [227, 169, 169]) && eq(L.rainbowColorAt(1), L.rainbowColorAt(0)) && eq(L.rainbowColorAt(-0.5), L.rainbowColorAt(0.5)), 'フレーム描画: 虹色は周囲を一周して戻る');
+  ok(L.rainbowColorAt(0.25).every(v => v >= 0 && v <= 255), 'フレーム描画: 虹色の補間値は範囲内');
+  const geoW = L.frameGeometry(200, L.frameStyleById('walnut'));
+  ok(Math.abs(geoW.bw - 12) < 1e-9 && Math.abs(geoW.matW - 8.4) < 1e-9 && Math.abs(geoW.board - 159.2) < 1e-9 && Math.abs(geoW.pad - 32) < 1e-9 && Math.abs(geoW.size - 264) < 1e-9, 'フレーム描画: 寸法 (帯/マット/盤面/余白) がレシピどおり');
+  const geoB = L.frameGeometry(200, L.frameStyleById('black'));
+  ok(geoB.matW === 0 && Math.abs(geoB.board - 180) < 1e-9, 'フレーム描画: マットなしは盤面が帯の内側いっぱい');
   const fw = L.emptyWall();
   ok(eq(fw.frameUnlocks, ['oak', 'walnut']), 'フレーム: 初期解放は oak / walnut の 2 種');
   ok(eq(L.newFrameUnlocks(fw, 2), []) && eq(L.newFrameUnlocks(fw, 3), ['black']), 'フレーム: 3 回で ブラック 解放');
