@@ -2955,7 +2955,8 @@ function onClear() {
   state.elapsedBase = elapsed;
   lastClearResult = {
     date: playDate, pieces: difficulty, timeSec: elapsed, moves: state.moves,
-    imageId: state.imageId, imageKey: state.imageKey
+    imageId: state.imageId, imageKey: state.imageKey,
+    previewViewed: state.previewViewed
   };
   var prev = findRecord(playDate, difficulty);
   var rec = {
@@ -2971,25 +2972,32 @@ function onClear() {
   persistProgress();
   $('streakNum').textContent = computeStreak();
   runConfetti();
-  $('resultText').textContent = playDate + ' ・ ' + difficulty + 'ピース ・ タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
+  // 記録証 (C案): 額装した完成盤面 + 記録2行 + 完成図未確認バッジ
+  var dp = playDate.split('-');
+  $('resultDateLine').textContent = Number(dp[0]) + '年' + Number(dp[1]) + '月' + Number(dp[2]) + '日 ・ ' + difficulty + 'ピース';
+  $('resultStatLine').textContent = 'タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
+  var boardHost = $('resultBoard');
+  boardHost.innerHTML = '';
+  renderBoardCanvasAt(rec, 288).then(function (cv) {
+    if (!cv) return;
+    boardHost.innerHTML = '';
+    boardHost.appendChild(cv);
+  });
   // クリア報酬: その日の初回クリアでランダム抽選 1 点 (+ フレーム解放判定)
   var grants = processRewardsOnClear();
   if (grants.length) {
-    $('resultRewardLine').textContent = '壁の小物が届きました：' +
-      grants.map(function (id) {
-        var it = wallItemById(id);
-        return (it ? it.name : id) + (it ? ' ' + rarityLabel(it) : '');
-      }).join('、');
-    $('resultRewardLine').hidden = false;
     $('resultRewardItems').innerHTML = grants.map(function (id) {
       var it = wallItemById(id);
-      return it ? '<span class="result-reward-thumb"><img src="wall-items/' + it.id + '.webp" alt="' + it.name + '"></span>' : '';
+      if (!it) return '';
+      return '<div class="cert-reward"><img src="wall-items/' + it.id + '.webp" alt="' + it.name + '">' +
+        '<div class="cert-reward-text"><span class="cert-reward-label">ごほうび</span>' +
+        '<span class="cert-reward-name">' + it.name + '</span></div></div>';
     }).join('');
     $('resultRewardItems').hidden = false;
   } else {
-    $('resultRewardLine').hidden = true;
     $('resultRewardItems').hidden = true;
+    $('resultRewardItems').innerHTML = '';
   }
   $('resultModal').hidden = false;
 }
@@ -3048,8 +3056,24 @@ function buildShareImage(res) {
     ctx.font = '800 58px sans-serif';
     ctx.fillText('まいにちジグソー', tx, 168);
     ctx.fillStyle = '#7a3b3a';
-    ctx.font = '800 96px sans-serif';
-    ctx.fillText('クリア！', tx, 292);
+    ctx.font = '700 96px "Hiragino Mincho ProN", "Hiragino Mincho Pro", "Yu Mincho", "YuMincho", "Noto Serif JP", serif';
+    ctx.fillText('クリア', tx, 292);
+    // 完成図を見ずにクリアした場合は見出しの横に小さく明記する
+    if (!res.previewViewed) {
+      var badgeText = '完成図未確認';
+      ctx.font = '600 25px sans-serif';
+      var bw2 = ctx.measureText(badgeText).width + 32;
+      var bh2 = 40, bx2 = tx + 224, by2 = 256;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(bx2, by2, bw2, bh2, bh2 / 2);
+      else ctx.rect(bx2, by2, bw2, bh2);
+      ctx.fillStyle = '#f3e5bd';
+      ctx.fill();
+      ctx.fillStyle = '#7a5c14';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(badgeText, bx2 + 16, by2 + bh2 / 2 + 1);
+      ctx.textBaseline = 'alphabetic';
+    }
     ctx.fillStyle = '#3a3230';
     ctx.font = '600 42px sans-serif';
     ctx.fillText(res.date, tx, 388);

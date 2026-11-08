@@ -220,17 +220,22 @@
 
 <div id="resultModal" class="modal" hidden>
   <div class="modal-backdrop"></div>
-  <div class="modal-body result-body">
-    <h2>クリア！</h2>
-    <p id="resultText"></p>
-    <p id="resultBadge" class="praise" hidden>完成図を見ずにクリア！すごい！</p>
-    <p id="resultRewardLine" class="reward-line" hidden></p>
-    <div id="resultRewardItems" class="reward-choices" hidden></div>
-    <div class="result-actions">
-      <button id="resultShareBtn" class="btn" type="button">結果を共有</button>
-      <button id="resultWallBtn" class="btn" type="button">壁をかざる</button>
-      <button id="resultCollectionBtn" class="btn" type="button">コレクションを見る</button>
-      <button id="resultCloseBtn" class="btn btn-underline" type="button">閉じる</button>
+  <div class="modal-body result-body cert-body">
+    <div id="resultBoard" class="cert-board"></div>
+    <h2 class="cert-title">クリア</h2>
+    <div class="cert-records">
+      <p id="resultDateLine"></p>
+      <p id="resultStatLine"></p>
+    </div>
+    <p id="resultBadge" class="cert-badge" hidden>完成図未確認</p>
+    <div id="resultRewardItems" class="cert-rewards" hidden></div>
+    <div class="cert-actions">
+      <button id="resultWallBtn" class="btn cert-primary" type="button">壁をかざる</button>
+      <div class="cert-sub-actions">
+        <button id="resultShareBtn" class="btn cert-secondary" type="button">結果を共有</button>
+        <button id="resultCollectionBtn" class="btn cert-secondary" type="button">コレクションを見る</button>
+      </div>
+      <button id="resultCloseBtn" class="btn btn-underline cert-close" type="button">閉じる</button>
     </div>
   </div>
 </div>
