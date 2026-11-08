@@ -227,9 +227,23 @@
     <p id="resultRewardLine" class="reward-line" hidden></p>
     <div id="resultRewardItems" class="reward-choices" hidden></div>
     <div class="result-actions">
-      <button id="resultCopyBtn" class="btn" type="button">結果をコピー</button>
+      <button id="resultShareBtn" class="btn" type="button">結果を共有</button>
+      <button id="resultWallBtn" class="btn" type="button">壁をかざる</button>
       <button id="resultCollectionBtn" class="btn" type="button">コレクションを見る</button>
       <button id="resultCloseBtn" class="btn btn-underline" type="button">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 結果の共有方法の選択 (文字 / 画像) -->
+<div id="shareChoiceModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body result-body">
+    <h2>結果を共有</h2>
+    <div class="result-actions">
+      <button id="shareTextBtn" class="btn" type="button">文字で共有</button>
+      <button id="shareImageBtn" class="btn" type="button">画像で共有</button>
+      <button id="shareCancelBtn" class="btn btn-underline" type="button">キャンセル</button>
     </div>
   </div>
 </div>
@@ -269,15 +283,16 @@
   </div>
 </div>
 
-<!-- 額装するコレクション記録の選択 -->
-<div id="framePickerModal" class="modal" hidden>
-  <div class="modal-backdrop"></div>
-  <div class="modal-body reward-body">
-    <h2>額装するパズルを選ぶ</h2>
-    <div id="framePickerList"></div>
-    <button id="framePickerClose" class="btn btn-underline" type="button">閉じる</button>
+<!-- 額装ピッカー: 全画面・サムネイルだけのグリッド (カメラロール風)。
+     日付・難易度などの文字情報は出さない -->
+<section id="framePickerView" hidden>
+  <div class="collection-header">
+    <button id="framePickerBack" class="btn" type="button">← 戻る</button>
+    <h2>額装するパズル</h2>
   </div>
-</div>
+  <p id="framePickerEmpty" class="empty" hidden>まだクリア記録がありません。パズルをクリアすると額装できます</p>
+  <div id="framePickerGrid"></div>
+</section>
 
 <!-- 全データリセットの確認 -->
 <div id="resetConfirmModal" class="modal" hidden>

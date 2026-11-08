@@ -986,5 +986,50 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
     'PWA: app.js に Service Worker の登録コードがある');
 }
 
+/* 27. タイマー累積 (elapsedSeconds) とクリアタイムの保険、結果の共有文
+ * 実機バグ「39手クリアなのにタイム 00:00」の回帰テスト。
+ * 原因は onClear が state.cleared を立ててから経過を読んでいたこと:
+ * cleared が立つと走行中セグメントが切り捨てられ、elapsedBase は
+ * 一時停止時にしか畳み込まれないため、開始から一度も一時停止して
+ * いないゲームでは記録が 0 秒になっていた。 */
+{
+  const t0 = 1000000;
+  ok(L.elapsedSeconds({ base: 30, started: false, paused: false, cleared: false, timerStart: 0 }, t0) === 30,
+    'タイマー: 未開始なら base のみ');
+  ok(L.elapsedSeconds({ base: 30, started: true, paused: false, cleared: false, timerStart: t0 }, t0 + 65000) === 95,
+    'タイマー: 走行中は base + 経過秒');
+  ok(L.elapsedSeconds({ base: 30, started: true, paused: true, cleared: false, timerStart: t0 }, t0 + 65000) === 30,
+    'タイマー: 一時停止中は増えない');
+  ok(L.elapsedSeconds({ base: 95, started: true, paused: false, cleared: true, timerStart: t0 }, t0 + 65000) === 95,
+    'タイマー: クリア済みは base のみ (クリア後に増えない)');
+  ok(L.elapsedSeconds({ base: 0, started: true, paused: false, cleared: false, timerStart: 0 }, t0 + 65000) === 0,
+    'タイマー: timerStart 不正 (0) では走行分を加えない');
+  // クリア確定の正しい手順: cleared を立てる前に確定 → その後は固定
+  const st = { base: 0, started: true, paused: false, cleared: false, timerStart: t0 };
+  const atClear = L.elapsedSeconds(st, t0 + 125000);
+  st.cleared = true; st.base = atClear;
+  ok(atClear === 125 && L.elapsedSeconds(st, t0 + 999000) === 125,
+    'タイマー: クリア確定は走行分 (125秒) を含み、その後増えない');
+  // 旧バグの手順 (cleared 先行) では走行分が落ちて 0 になることの仕様確認
+  ok(L.elapsedSeconds({ base: 0, started: true, paused: false, cleared: true, timerStart: t0 }, t0 + 125000) === 0,
+    'タイマー: cleared 先行だと走行分が落ちる (旧バグの再現)');
+  // 再開 (保存済み base + 新規セグメント) でも累積が失われない
+  ok(L.elapsedSeconds({ base: 200, started: true, paused: false, cleared: false, timerStart: t0 }, t0 + 30000) === 230,
+    'タイマー: 再開時は保存済み base に続きが加わる');
+  // クリアタイムの保険
+  ok(L.sanitizeClearTime(0, 39, 47) === 47, 'クリアタイム保険: 0秒+手数ありは保存済み進行から復元');
+  ok(L.sanitizeClearTime(0, 39, 0) === 1, 'クリアタイム保険: 保存値も無ければ最低1秒');
+  ok(L.sanitizeClearTime(83, 39, 47) === 83, 'クリアタイム保険: 正常な値はそのまま');
+  ok(L.sanitizeClearTime(0, 0, 47) === 0, 'クリアタイム保険: 手数0なら0のまま');
+  // 共有文: 結果 + ゲームURL + ハッシュタグを必ず含む
+  const txt = L.buildShareText({ date: '2026-11-08', pieces: 36, timeSec: 205, moves: 58 });
+  ok(txt.indexOf('https://daily-jigsaw.pages.dev') !== -1, '共有文: ゲームURLを含む');
+  ok(txt.indexOf('#まいにちジグソー') !== -1, '共有文: ハッシュタグ #まいにちジグソー を含む');
+  ok(txt.indexOf('2026-11-08') !== -1 && txt.indexOf('36ピース') !== -1 &&
+     txt.indexOf('03:25') !== -1 && txt.indexOf('58手') !== -1,
+    '共有文: 日付・難易度・タイム・手数を含む');
+  ok(L.GAME_URL === 'https://daily-jigsaw.pages.dev', '共有: GAME_URL は公開URL');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

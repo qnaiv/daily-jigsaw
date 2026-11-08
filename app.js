@@ -1044,6 +1044,45 @@ function formatTime(sec) {
   return hh > 0 ? hh + ':' + p2(m % 60) + ':' + p2(s) : p2(m) + ':' + p2(s);
 }
 
+/* ---- タイマー累積 (純粋関数) ----
+ * 経過時間の持ち方: base (確定済みの累積秒) + 走行中セグメント。
+ * 走行中セグメントは started && !paused && !cleared の間だけ
+ * (now - timerStart) が加わる。cleared が立った後は base のみが正になる。
+ * ★ クリア確定 (onClear) と一時停止では、必ず「フラグを立てる前に」
+ *   elapsedSeconds で走行分を base へ畳み込むこと。先に cleared を立てて
+ *   から読むと走行分が丸ごと切り捨てられ、開始から一度も一時停止して
+ *   いないゲームのクリアタイムが 0 秒になる (実機バグの根本原因)。 */
+function elapsedSeconds(t, now) {
+  if (!t) return 0;
+  var run = 0;
+  if (t.started && !t.paused && !t.cleared && t.timerStart > 0) {
+    run = (now - t.timerStart) / 1000;
+    if (!(run > 0)) run = 0; // 時計の巻き戻し等で負にしない
+  }
+  return Math.floor((t.base || 0) + run);
+}
+/* クリアタイムの保険 (最終ガード): 手数が 1 以上あるのに 0 秒になる
+ * 場合は、保存済みの進行 (elapsedSec) から復元し、それも無ければ
+ * 最低 1 秒にする。0 秒クリアを記録に残さないため。 */
+function sanitizeClearTime(elapsed, moves, savedSec) {
+  var e = Math.floor(elapsed) || 0;
+  if (e > 0) return e;
+  if ((moves || 0) > 0) {
+    var s = Math.floor(savedSec) || 0;
+    return s > 0 ? s : 1;
+  }
+  return 0;
+}
+
+var GAME_URL = 'https://daily-jigsaw.pages.dev';
+/* 結果の共有文 (文字共有・クリップボード共通)。ゲーム URL と
+ * ハッシュタグ #まいにちジグソー を必ず含む。 */
+function buildShareText(res) {
+  return 'まいにちジグソー ' + res.date + ' ・ ' + res.pieces + 'ピース ・ タイム ' +
+    formatTime(res.timeSec) + ' ・ ' + res.moves + '手でクリア！\n' +
+    GAME_URL + '\n#まいにちジグソー';
+}
+
 var PureLogic = {
   BASE_DATE_FALLBACK: BASE_DATE_FALLBACK, DIFFICULTIES: DIFFICULTIES,
   TABSIZE: TABSIZE, JITTER: JITTER, SNAP_DIST: SNAP_DIST,
@@ -1062,6 +1101,8 @@ var PureLogic = {
   scatterRect: scatterRect, initialScatter: initialScatter,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime,
+  elapsedSeconds: elapsedSeconds, sanitizeClearTime: sanitizeClearTime,
+  GAME_URL: GAME_URL, buildShareText: buildShareText,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   boxTapAction: boxTapAction,
   WALL_CATALOG: WALL_CATALOG,
@@ -1711,8 +1752,10 @@ function persistProgress() {
   saveStore();
 }
 function currentElapsed() {
-  var run = (state.started && !state.paused && !state.cleared) ? (Date.now() - state.timerStart) / 1000 : 0;
-  return Math.floor(state.elapsedBase + run);
+  return elapsedSeconds({
+    base: state.elapsedBase, started: state.started, paused: state.paused,
+    cleared: state.cleared, timerStart: state.timerStart
+  }, Date.now());
 }
 
 /* ---------- 画像読み込み / フォールバック ---------- */
@@ -2897,11 +2940,23 @@ function updateProgressUI() {
 }
 
 /* ---------- クリア処理 ---------- */
+var lastClearResult = null; // 共有 (文字/画像) 用に直近のクリア結果を保持
 function onClear() {
   seClear(); // クリアのオルゴール風アルペジオ
+  /* ★ 順序が重要 (実機バグ修正): 以前は state.cleared = true を立ててから
+   * currentElapsed() を読んでいたため、走行中セグメントが「クリア済みは
+   * 走行しない」として切り捨てられていた。elapsedBase は一時停止時にしか
+   * 畳み込まれないので、開始から一度も設定を開いていないゲームでは
+   * クリアタイムが 0 秒になっていた (手数は別管理なので数えられていた)。
+   * 必ず cleared を立てる前に確定させ、保険として保存済み進行からも守る。 */
+  var elapsed = currentElapsed();
+  elapsed = sanitizeClearTime(elapsed, state.moves, progressFor(playDate, difficulty).elapsedSec);
   state.cleared = true;
-  state.elapsedBase = currentElapsed();
-  var elapsed = state.elapsedBase;
+  state.elapsedBase = elapsed;
+  lastClearResult = {
+    date: playDate, pieces: difficulty, timeSec: elapsed, moves: state.moves,
+    imageId: state.imageId, imageKey: state.imageKey
+  };
   var prev = findRecord(playDate, difficulty);
   var rec = {
     date: playDate, imageId: state.imageId, imageKey: state.imageKey, pieces: difficulty,
@@ -2938,6 +2993,102 @@ function onClear() {
   }
   $('resultModal').hidden = false;
 }
+/* ---------- クリア結果の共有 (文字 / 画像) ---------- */
+function flashShareBtn(text) {
+  var btn = $('resultShareBtn');
+  var orig = '結果を共有';
+  btn.textContent = text;
+  setTimeout(function () { btn.textContent = orig; }, 1500);
+}
+/* 文字で共有: Web Share が使えればそれ、無ければクリップボードへ。
+ * 文面は buildShareText (URL + #まいにちジグソー を必ず含む) */
+function shareResultText() {
+  $('shareChoiceModal').hidden = true;
+  if (!lastClearResult) return;
+  var text = buildShareText(lastClearResult);
+  if (navigator.share) {
+    navigator.share({ text: text }).catch(function () { /* キャンセルは無視 */ });
+  } else if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(function () {
+      flashShareBtn('コピーしました');
+    }, function () { /* 失敗時は何もしない */ });
+  }
+}
+/* 共有画像 (1200×630): 左に完成盤面 (実ピース形状の継ぎ目つき)、
+ * 右に結果とクレジット。盤面は壁の額装と同じレンダラーで描く */
+function buildShareImage(res) {
+  var rec = { date: res.date, pieces: res.pieces, imageId: res.imageId, imageKey: res.imageKey };
+  return renderWallBoardCanvas(rec).then(function (board) {
+    var W = 1200, H = 630;
+    var cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    var ctx = cv.getContext('2d');
+    ctx.fillStyle = '#f7f2e7'; // 生成り (スタート画面の紙面)
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#33523f'; // 深緑の帯
+    ctx.fillRect(0, 0, W, 12);
+    ctx.fillRect(0, H - 12, W, 12);
+    // 盤面: 左に 540×540、落影 + 深緑の細枠
+    var bs = 540, bx = 45, by = (H - bs) / 2;
+    ctx.save();
+    ctx.shadowColor = 'rgba(60,40,20,0.35)';
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 10;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(bx, by, bs, bs);
+    ctx.restore();
+    ctx.drawImage(board, bx, by, bs, bs);
+    ctx.strokeStyle = '#33523f';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(bx, by, bs, bs);
+    // テキスト (右側)
+    var tx = bx + bs + 55;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#33523f';
+    ctx.font = '800 58px sans-serif';
+    ctx.fillText('まいにちジグソー', tx, 168);
+    ctx.fillStyle = '#7a3b3a';
+    ctx.font = '800 96px sans-serif';
+    ctx.fillText('クリア！', tx, 292);
+    ctx.fillStyle = '#3a3230';
+    ctx.font = '600 42px sans-serif';
+    ctx.fillText(res.date, tx, 388);
+    ctx.fillText(res.pieces + 'ピース ・ ' + res.moves + '手', tx, 452);
+    ctx.font = '800 54px sans-serif';
+    ctx.fillText('タイム ' + formatTime(res.timeSec), tx, 532);
+    ctx.fillStyle = 'rgba(58,50,48,0.6)';
+    ctx.font = '500 27px sans-serif';
+    ctx.fillText(GAME_URL, tx, 588);
+    return cv;
+  });
+}
+function downloadShareImage(cv) {
+  var a = document.createElement('a');
+  a.href = cv.toDataURL('image/png');
+  a.download = 'mainichi-jigsaw-' + (lastClearResult ? lastClearResult.date : 'result') + '.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+/* 画像で共有: files 共有が使える環境ではそれ、無ければダウンロード */
+function shareResultImage() {
+  $('shareChoiceModal').hidden = true;
+  if (!lastClearResult) return;
+  buildShareImage(lastClearResult).then(function (cv) {
+    if (!cv) return;
+    if (!cv.toBlob) { downloadShareImage(cv); return; }
+    cv.toBlob(function (blob) {
+      if (!blob) { downloadShareImage(cv); return; }
+      var file = new File([blob], 'mainichi-jigsaw-' + lastClearResult.date + '.png', { type: 'image/png' });
+      if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).catch(function () { /* キャンセルは無視 */ });
+      } else {
+        downloadShareImage(cv);
+      }
+    }, 'image/png');
+  });
+}
+
 function runConfetti() {
   var wrap = $('confettiWrap'), cv = $('confetti'), ctx = cv.getContext('2d');
   cv.width = window.innerWidth; cv.height = window.innerHeight;
@@ -3640,8 +3791,12 @@ function paintWallFrameUnit(cv, f, rec, st) {
  * 輪郭パスで、完成盤面をオフスクリーン Canvas に描く。ピースの形と数は
  * レコードの日付×難易度で決まる実物と一致する。 */
 function renderWallBoardCanvas(rec) {
+  return renderBoardCanvasAt(rec, detailRenderPlan(rec.pieces).sizePx);
+}
+/* 完成盤面を指定サイズで描く。額装は詳細サイズ、額装ピッカーの
+ * サムネイルは小サイズで、どちらも同じ実ピース形状の見た目にする。 */
+function renderBoardCanvasAt(rec, sizePx) {
   var plan = detailRenderPlan(rec.pieces);
-  var sizePx = plan.sizePx;
   var bcv = document.createElement('canvas');
   bcv.width = sizePx;
   bcv.height = sizePx;
@@ -3797,37 +3952,62 @@ function renderWallTray() {
   });
   $('wallFrameCount').textContent = wall.frames.length ? '額装 ' + wall.frames.length + ' 点を表示中' : '';
 }
-/* 額装ピッカー: クリア記録の一覧 (配置済みの記録は選べない) */
+/* 額装ピッカー: 全画面のサムネイルグリッド (カメラロール風)。
+ * 並べるのは実ピース形状の完成盤面サムネイルだけで、日付・難易度などの
+ * 文字情報は一切出さない (旧ダイアログ版は大きな画像+テキストで横に
+ * はみ出し、横スクロールが発生していた)。配置済みの記録は淡く+✓印で
+ * 示し、タップできない。サムネイルは小 Canvas で描いてキャッシュし、
+ * 開き直したときは再描画しない。 */
+var frameThumbCache = new Map(); // recordKey -> canvas
+var FRAME_THUMB_PX = 264;
+function renderFrameThumb(rec) {
+  var key = wallRecordKey(rec);
+  if (frameThumbCache.has(key)) return Promise.resolve(frameThumbCache.get(key));
+  return renderBoardCanvasAt(rec, FRAME_THUMB_PX).then(function (cv) {
+    frameThumbCache.set(key, cv);
+    return cv;
+  });
+}
 function openFramePicker() {
-  var list = $('framePickerList');
-  list.innerHTML = '';
+  var grid = $('framePickerGrid');
+  grid.innerHTML = '';
   var placedKeys = {};
   store.wall.frames.forEach(function (f) { placedKeys[f.recordKey] = true; });
   var recs = store.records.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : b.pieces - a.pieces; });
-  if (!recs.length) {
-    list.innerHTML = '<p class="picker-empty">まだクリア記録がありません。パズルをクリアすると額装できます</p>';
-  }
+  $('framePickerEmpty').hidden = recs.length > 0;
   recs.forEach(function (r) {
     var key = wallRecordKey(r);
-    var thumb = entryThumbUrl(entryForRecord(r));
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'picker-card';
-    b.disabled = !!placedKeys[key];
-    b.innerHTML = (thumb ? '<img loading="lazy" src="' + thumb + '" alt="">' : '') +
-      '<span class="picker-meta">' + r.date + ' ・ ' + r.pieces + 'ピース</span>' +
-      '<span class="picker-state">' + (placedKeys[key] ? '壁に表示中' : 'タップで額装') + '</span>';
-    b.addEventListener('click', function () {
-      store.wall.frames.push({ recordKey: key, x: 0.5, y: 0.38, w: 0.30, color: 'walnut' });
-      saveStore();
-      sePlace();
-      $('framePickerModal').hidden = true;
-      renderWall();
-      selectWall('frame', key);
+    var placed = !!placedKeys[key];
+    var cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'frame-thumb' + (placed ? ' placed' : '');
+    cell.disabled = placed;
+    cell.setAttribute('aria-label', placed ? '壁に表示中のパズル' : 'このパズルを額装する');
+    if (placed) {
+      var mark = document.createElement('span');
+      mark.className = 'frame-thumb-mark';
+      mark.textContent = '✓';
+      cell.appendChild(mark);
+    }
+    grid.appendChild(cell);
+    renderFrameThumb(r).then(function (cv) {
+      if (cell.isConnected) cell.insertBefore(cv, cell.firstChild);
     });
-    list.appendChild(b);
+    if (!placed) {
+      cell.addEventListener('click', function () {
+        store.wall.frames.push({ recordKey: key, x: 0.5, y: 0.38, w: 0.30, color: 'walnut' });
+        saveStore();
+        sePlace();
+        closeFramePicker();
+        renderWall();
+        selectWall('frame', key);
+      });
+    }
   });
-  $('framePickerModal').hidden = false;
+  $('framePickerView').hidden = false;
+}
+function closeFramePicker() {
+  $('framePickerView').hidden = true;
 }
 /* スタート画面の「壁の小物」行 (所持数と、未確認のごほうび/フレーム解放の通知) */
 function updateStartWallRow() {
@@ -4219,12 +4399,17 @@ function wireControls() {
     collectionBackToHome = true; // コレクションから戻る先もスタート画面にする
     showCollection();
   });
-  $('resultCopyBtn').addEventListener('click', function () {
-    var text = $('resultText').textContent + ' #まいにちジグソー';
-    if (navigator.clipboard) navigator.clipboard.writeText(text);
-    $('resultCopyBtn').textContent = 'コピーしました';
-    setTimeout(function () { $('resultCopyBtn').textContent = '結果をコピー'; }, 1500);
+  /* クリア画面から壁へ: モーダルを閉じて壁画面を開く。壁の「戻る」は
+   * クリア後の定線 (閉じる→スタート画面) に合わせて 'home' にする */
+  $('resultWallBtn').addEventListener('click', function () {
+    $('resultModal').hidden = true;
+    showWall('home');
   });
+  /* 共有は文字/画像の選択を挟む */
+  $('resultShareBtn').addEventListener('click', function () { $('shareChoiceModal').hidden = false; });
+  $('shareCancelBtn').addEventListener('click', function () { $('shareChoiceModal').hidden = true; });
+  $('shareTextBtn').addEventListener('click', shareResultText);
+  $('shareImageBtn').addEventListener('click', shareResultImage);
   /* クリア報酬: ごほうびリビール / フレーム解放通知 / 壁をかざる の導線 */
   $('rewardBtn').addEventListener('click', function () { showRewardReveal(); });
   $('rewardLaterBtn').addEventListener('click', function () { closeRewardReveal(); });
@@ -4242,7 +4427,7 @@ function wireControls() {
   $('wallBack').addEventListener('click', function () { hideWall(); });
   $('wallUnplaceBtn').addEventListener('click', function () { unplaceWallSelected(); });
   $('wallFrameBtn').addEventListener('click', function () { openFramePicker(); });
-  $('framePickerClose').addEventListener('click', function () { $('framePickerModal').hidden = true; });
+  $('framePickerBack').addEventListener('click', function () { closeFramePicker(); });
   $('wallStage').addEventListener('pointerdown', function (ev) {
     if (ev.target === $('wallStage')) selectWall(null); // 壁の何もない所をタップで選択解除
   });
