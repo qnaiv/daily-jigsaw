@@ -3066,6 +3066,7 @@ function onClear() {
     $('resultRewardItems').innerHTML = '';
   }
   $('resultModal').hidden = false;
+  navPush('result');
 }
 /* ---------- クリア結果の共有 (文字 / 画像) ---------- */
 function flashShareBtn(text) {
@@ -3304,6 +3305,7 @@ function showRewardReveal() {
     box.appendChild(card);
   });
   $('rewardModal').hidden = false;
+  navPush('reward');
 }
 function closeRewardReveal() {
   $('rewardModal').hidden = true;
@@ -3369,6 +3371,7 @@ function showUnlockNotice() {
   else title = '新しいフレームが使えるようになりました';
   $('unlockTitle').textContent = title;
   $('unlockModal').hidden = false;
+  navPush('unlock');
 }
 function closeUnlockNotice() {
   $('unlockModal').hidden = true;
@@ -3396,6 +3399,7 @@ var wallDrag = null;     // { kind, key, el, moved, startX, startY, offX, offY }
 function showWall(from) {
   uiWall = true;
   wallBackToHome = from === 'home';
+  navPush('wall');
   wallSelected = null;
   wallDrag = null;
   bgmTryPlay(); // 壁画面でも BGM を流す (開始はこのタップを起点にする)
@@ -4450,13 +4454,14 @@ function openFramePicker() {
         store.wall.frames.push({ recordKey: key, x: placeAt.x, y: placeAt.y, w: 0.30, color: 'walnut' });
         saveStore();
         sePlace();
-        closeFramePicker();
+        navBack();
         renderWall();
         selectWall('frame', key);
       });
     }
   });
   $('framePickerView').hidden = false;
+  navPush('framePicker');
 }
 function closeFramePicker() {
   $('framePickerView').hidden = true;
@@ -4712,13 +4717,14 @@ function openPaperPicker() {
           store.wall.paper = p.id;
           saveStore();
         }
-        closePaperPicker();
+        navBack();
         renderWall(); // 背景の再描画もここで起きる
       });
     }
     grid.appendChild(cell);
   });
   $('paperPickerView').hidden = false;
+  navPush('paperPicker');
 }
 function closePaperPicker() {
   $('paperPickerView').hidden = true;
@@ -4765,6 +4771,7 @@ function applyVisibility() {
 }
 function showCollection() {
   uiCollection = true;
+  navPush('collection');
   applyVisibility();
   renderCollection();
 }
@@ -4787,6 +4794,96 @@ document.addEventListener('visibilitychange', function () {
   if (document.hidden || !uiHome) return;
   if (maybeAdvanceRound() && state && state.pool) startGame(state.pool);
 });
+
+/* ---------- 戻るジェスチャー (History API) ----------
+ * スマホの戻るジェスチャー/ブラウザの戻る = history の popstate。
+ * 画面・モーダルを1枚ずつ履歴に積み (navStack が対応表)、popstate で
+ * 最上層だけを閉じる。画面上の戻る/閉じるボタンも history.back() に統一。
+ * プレイ画面での戻るは、スタートへ直行せず設定シートを開く (ユーザー指定)。
+ * 確認ダイアログ類 (confirm/freshConfirm/resetConfirm/shareChoice) は履歴に
+ * 積まず、開いていれば popstate で「それだけ閉じて履歴を積み直す」。 */
+var navStack = ['start'];
+var navStale = 0;     // 履歴側にだけ残った古いエントリ数 (ホーム遷移/無言pop分)
+var navPopping = false;
+function navTop() { return navStack[navStack.length - 1]; }
+function navPush(name) {
+  if (navPopping || navTop() === name) return;
+  navStack.push(name);
+  try { history.pushState({ djNav: name }, ''); } catch (e) { /* file: 等 */ }
+}
+function navBack() { history.back(); }
+/* 履歴を戻さずに最上層だけ取り除く (設定→コレクション等の横移動用)。
+ * 履歴側のエントリは古エントリとして数え、基点での popstate で消化する */
+function navSilentPop(name) {
+  if (navTop() !== name) return;
+  navStack.pop();
+  navStale++;
+}
+/* スタート画面へ一気に戻る遷移 (設定の「スタート画面に戻る」/やりなおし) */
+function navGoHome() {
+  navStale += Math.max(0, navStack.length - 1);
+  navStack = ['start'];
+}
+/* クリア画面から壁/コレクションへのジャンプ */
+function navJumpTo(name) {
+  navStale += Math.max(0, navStack.length - 1);
+  navStack = ['start', name];
+}
+function navCloseTopConfirm() {
+  var ids = ['resetConfirmModal', 'freshConfirmModal', 'confirmModal', 'shareChoiceModal'];
+  var closed = false;
+  for (var i = 0; i < ids.length; i++) {
+    if (!$(ids[i]).hidden) { $(ids[i]).hidden = true; closed = true; }
+  }
+  return closed;
+}
+function navCloseLayer(name) {
+  if (name === 'settings') closeSettings();
+  else if (name === 'credits') closeCredits();
+  else if (name === 'preview') $('previewModal').hidden = true;
+  else if (name === 'detail') $('detailModal').hidden = true;
+  else if (name === 'reward') closeRewardReveal();
+  else if (name === 'unlock') closeUnlockNotice();
+  else if (name === 'result') {
+    $('resultModal').hidden = true;
+    navGoHome(); // クリア画面を閉じたらプレイには残らずスタート画面へ
+    goToStartScreen();
+  }
+  else if (name === 'collection') {
+    uiCollection = false;
+    if (navTop() === 'play') showPlay();
+    else goToStartScreen();
+  }
+  else if (name === 'wall') hideWall();
+  else if (name === 'framePicker') closeFramePicker();
+  else if (name === 'paperPicker') closePaperPicker();
+  else if (name === 'play') goToStartScreen();
+}
+window.addEventListener('popstate', function () {
+  if (navPopping) return;
+  navPopping = true;
+  try {
+    if (navCloseTopConfirm()) {
+      try { history.pushState({ djNav: navTop() }, ''); } catch (e) { /* ignore */ }
+      return;
+    }
+    if (navStack.length <= 1) {
+      if (navStale > 0) navStale--;
+      return;
+    }
+    var top = navTop();
+    if (top === 'play') {
+      /* プレイ中の戻るは設定シートを開く (ユーザー指定 2026-11-09) */
+      navStack.push('settings');
+      try { history.pushState({ djNav: 'settings' }, ''); } catch (e) { /* ignore */ }
+      openSettings();
+      return;
+    }
+    navStack.pop();
+    navCloseLayer(top);
+  } finally { navPopping = false; }
+});
+try { history.replaceState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ }
 function renderCollection() {
   var recs = store.records.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : b.pieces - a.pieces; });
   var days = new Set(recs.map(function (r) { return r.date; }));
@@ -4854,6 +4951,7 @@ function openDetail(r) {
   }
   // 過去日をプレイしに行く導線は作らない (コレクションは閲覧のみ)
   $('detailModal').hidden = false;
+  navPush('detail');
   renderDetailPuzzle(r);
 }
 
@@ -5050,6 +5148,7 @@ function openPreview() {
     $('previewImg').src = entryPhotoUrl(state.entry, size) || '';
   }
   $('previewModal').hidden = false;
+  navPush('preview');
 }
 
 /* ---------- 設定メニュー (開いている間はタイマー停止) ---------- */
@@ -5066,6 +5165,7 @@ function openSettings() {
   if (timerRunning()) { pauseTimer(); settingsAutoPaused = true; persistProgress(); }
   updateSettingsPauseBtn();
   $('settingsModal').hidden = false;
+  navPush('settings');
 }
 function closeSettings() {
   $('settingsModal').hidden = true;
@@ -5076,11 +5176,12 @@ function closeSettings() {
   }
 }
 /* クレジットは設定シートの上に重ねて開く (閉じれば設定に戻る) */
-function openCredits() { $('creditsModal').hidden = false; }
+function openCredits() { $('creditsModal').hidden = false; navPush('credits'); }
 function closeCredits() { $('creditsModal').hidden = true; }
 
 /* ---------- やりなおす (進行を消して未開始の箱に戻る) ---------- */
 function restartPuzzle() {
+  navGoHome(); // どの画面からでも未開封の箱 (スタート画面) に戻る遷移
   if (store.progress[playDate]) delete store.progress[playDate][difficulty];
   saveStore();
   bgmEnterTitle(); // タイトル画面 (未開封の箱) に戻るので音は止める (id 19)
@@ -5109,11 +5210,11 @@ function wireControls() {
   $('seToggle').addEventListener('change', function () { onSeToggleChanged($('seToggle').checked); });
   $('seToggleStart').addEventListener('change', function () { onSeToggleChanged($('seToggleStart').checked); });
   document.querySelectorAll('[data-settings-close]').forEach(function (el) {
-    el.addEventListener('click', closeSettings);
+    el.addEventListener('click', function () { navBack(); });
   });
   $('settingsCreditsBtn').addEventListener('click', openCredits);
   document.querySelectorAll('[data-credits-close]').forEach(function (el) {
-    el.addEventListener('click', closeCredits);
+    el.addEventListener('click', function () { navBack(); });
   });
   $('settingsPauseBtn').addEventListener('click', function () {
     if (!state || !state.started || state.cleared) return;
@@ -5125,15 +5226,18 @@ function wireControls() {
   });
   $('settingsPreviewBtn').addEventListener('click', function () {
     closeSettings();
+    navSilentPop('settings');
     openPreview();
   });
   $('settingsCollectionBtn').addEventListener('click', function () {
     closeSettings();
+    navSilentPop('settings');
     collectionBackToHome = false; // プレイ中からのコレクションはプレイ画面へ戻る
     showCollection();
   });
   $('settingsHomeBtn').addEventListener('click', function () {
     closeSettings();
+    navGoHome();
     goToStartScreen();
   });
   $('settingsRestartBtn').addEventListener('click', function () {
@@ -5183,21 +5287,16 @@ function wireControls() {
     collectionBackToHome = false;
     showCollection();
   });
-  $('collectionBack').addEventListener('click', function () {
-    if (collectionBackToHome) { collectionBackToHome = false; goToStartScreen(); }
-    else showPlay();
-  });
+  $('collectionBack').addEventListener('click', function () { navBack(); });
   $('resumeClose').addEventListener('click', function () { $('resumeBanner').hidden = true; });
   document.querySelectorAll('[data-close]').forEach(function (el) {
-    el.addEventListener('click', function () {
-      $('previewModal').hidden = true;
-      $('detailModal').hidden = true;
-    });
+    el.addEventListener('click', function () { navBack(); });
   });
   // クリア画面を閉じたらプレイ画面 (空の机) には残らず、スタート画面に戻す
-  $('resultCloseBtn').addEventListener('click', function () { $('resultModal').hidden = true; goToStartScreen(); });
+  $('resultCloseBtn').addEventListener('click', function () { navBack(); });
   $('resultCollectionBtn').addEventListener('click', function () {
     $('resultModal').hidden = true;
+    navJumpTo('collection');
     collectionBackToHome = true; // コレクションから戻る先もスタート画面にする
     showCollection();
   });
@@ -5205,6 +5304,7 @@ function wireControls() {
    * クリア後の定線 (閉じる→スタート画面) に合わせて 'home' にする */
   $('resultWallBtn').addEventListener('click', function () {
     $('resultModal').hidden = true;
+    navJumpTo('wall');
     showWall('home');
   });
   /* 共有は文字/画像の選択を挟む */
@@ -5214,25 +5314,27 @@ function wireControls() {
   $('shareImageBtn').addEventListener('click', shareResultImage);
   /* クリア報酬: ごほうびリビール / フレーム解放通知 / 壁をかざる の導線 */
   $('rewardBtn').addEventListener('click', function () { showRewardReveal(); });
-  $('rewardLaterBtn').addEventListener('click', function () { closeRewardReveal(); });
+  $('rewardLaterBtn').addEventListener('click', function () { navBack(); });
   $('rewardWallBtn').addEventListener('click', function () {
     closeRewardReveal();
+    navSilentPop('reward');
     showWall('home');
   });
   $('unlockBtn').addEventListener('click', function () { showUnlockNotice(); });
-  $('unlockCloseBtn').addEventListener('click', function () { closeUnlockNotice(); });
+  $('unlockCloseBtn').addEventListener('click', function () { navBack(); });
   $('wallBtn').addEventListener('click', function () { showWall('home'); });
   $('settingsWallBtn').addEventListener('click', function () {
     closeSettings();
+    navSilentPop('settings');
     showWall('play');
   });
-  $('wallBack').addEventListener('click', function () { hideWall(); });
+  $('wallBack').addEventListener('click', function () { navBack(); });
   $('wallUnplaceBtn').addEventListener('click', function () { unplaceWallSelected(); });
   $('wallFrameBtn').addEventListener('click', function () { openFramePicker(); });
-  $('framePickerBack').addEventListener('click', function () { closeFramePicker(); });
+  $('framePickerBack').addEventListener('click', function () { navBack(); });
   $('wallPaperBtn').addEventListener('click', function () { openPaperPicker(); });
   $('wallShareBtn').addEventListener('click', function () { shareWallImage(); });
-  $('paperPickerBack').addEventListener('click', function () { closePaperPicker(); });
+  $('paperPickerBack').addEventListener('click', function () { navBack(); });
   // 画面リサイズで壁ステージの大きさが変わったら壁を描き直す
   window.addEventListener('resize', function () { if (uiWall) renderWall(); });
   // 壁カメラのジェスチャ: 空き場所のドラッグでパン、2本指でピンチズーム、
@@ -5422,6 +5524,7 @@ function openBox() {
       persistProgress();
     }
     uiHome = false;
+    navPush('play');
     applyVisibility();
     updateProgressUI();
     draw();
