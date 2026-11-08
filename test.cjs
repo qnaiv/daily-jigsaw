@@ -1083,6 +1083,23 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const badPaper = L.normalizeWall({ paper: 'nope', paperUnlocks: 'garbage', pendingPaperUnlocks: 42 });
   ok(badPaper.paper === 'kinari' && eq(badPaper.paperUnlocks, ['kinari', 'sage']) && eq(badPaper.pendingPaperUnlocks, []), '壁紙移行: 壊れた値は初期値に落ちる');
 
+  // 壁の広さ段階制 (段階0: 横1.5/縦1.2 → 段階1: 横3.0/縦1.4、累計15クリアで解放)
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  ok(eq(L.WALL_SIZE_STAGES, [{ w: 1.5, h: 1.2 }, { w: 3.0, h: 1.4 }]) && L.WALL_EXPAND_CLEARS === 15, '壁拡張: 段階表 (横1.5→3.0 / 縦1.2→1.4) と解放条件 (累計15クリア)');
+  ok(L.emptyWall().sizeStage === 0 && L.emptyWall().pendingExpand === false, '壁拡張: 新規セーブは段階0・拡張未通知なし');
+  ok(L.spreadWallX(0.5, 1, 1.5) === 0.5 && near(L.spreadWallX(0, 1, 1.5), 1 / 6) && near(L.spreadWallX(1, 1, 3), 2 / 3), '壁拡張: 横は中心基準で広がる (中心は不動、端は内側へ)');
+  ok(L.spreadWallY(1, 1, 1.4) === 1 && near(L.spreadWallY(0, 1, 1.2), 1 / 6) && near(L.spreadWallY(0.5, 1.2, 1.4), 4 / 7), '壁拡張: 縦は床基準 (床=1は不動) で上方向へ広がる');
+  const legW = L.normalizeWall({ owned: ['w007'], placed: [{ id: 'w007', x: 0, y: 1 }], frames: [] });
+  ok(legW.sizeStage === 0 && near(legW.placed[0].x, 1 / 6) && legW.placed[0].y === 1, '壁拡張移行: 段階制前のセーブ (1.0x1.0) は段階0の広さへ座標移行');
+  const keptW = L.normalizeWall({ sizeStage: 1, owned: ['w007'], placed: [{ id: 'w007', x: 0.2, y: 0.3 }], frames: [] });
+  ok(keptW.sizeStage === 1 && keptW.placed[0].x === 0.2 && keptW.placed[0].y === 0.3, '壁拡張移行: 段階が保存されたセーブは座標そのまま保持');
+  const exW = L.emptyWall();
+  exW.placed.push({ id: 'w007', x: 0.5, y: 0.5 });
+  ok(L.applyWallExpand(exW, 14) === false && exW.sizeStage === 0, '壁拡張: 累計14クリアでは広がらない');
+  ok(L.applyWallExpand(exW, 15) === true && exW.sizeStage === 1 && exW.pendingExpand === true, '壁拡張: 累計15クリアで段階1に広がり通知待ちになる');
+  ok(exW.placed[0].x === 0.5 && near(exW.placed[0].y, 4 / 7), '壁拡張: 広げるとき配置は 中心x不変・床基準y で移る');
+  ok(L.applyWallExpand(exW, 99) === false && exW.sizeStage === 1, '壁拡張: 段階1が上限 (無限には広がらない)');
+
   // 配線: index.html / app.js / style.css が壁紙 UI を持つ
   const fs = require('fs');
   const path = require('path');
@@ -1092,6 +1109,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(html.indexOf('id="wallPaperBtn"') !== -1 && html.indexOf('id="paperPickerView"') !== -1 && html.indexOf('id="paperPickerGrid"') !== -1 && html.indexOf('id="paperPickerBack"') !== -1, '壁紙配線: index.html に 壁紙ボタンとピッカーがある');
   ok(appSrc.indexOf('paintWallBackdrop') !== -1 && appSrc.indexOf('paintWallpaperRegion') !== -1 && appSrc.indexOf('openPaperPicker') !== -1, '壁紙配線: app.js に背景ペインターとピッカーがある');
   ok(css.indexOf('.wall-bg') !== -1 && css.indexOf('#paperPickerGrid') !== -1 && css.indexOf('#wallStage::after') === -1, '壁紙配線: style.css に背景 Canvas とピッカーの様式があり、旧 ::after 巾木は撤去');
+  ok(appSrc.indexOf('wallWorld') !== -1 && appSrc.indexOf('applyWallCam') !== -1 && appSrc.indexOf('wallFitBtn') !== -1 && css.indexOf('#wallWorld') !== -1, '壁拡張配線: ワールド層とカメラと全体ボタンがある');
+  ok(html.indexOf('id="wallShareBtn"') !== -1 && appSrc.indexOf('shareWallImage') !== -1 && appSrc.indexOf('buildWallShareImage') !== -1, '壁共有配線: 壁画面に共有ボタンと壁全体の画像生成がある');
 
   // 壁まわり改善 (2026-11-08 実機テスト): 壁でも BGM / 配置 SE / クレジット分離 / 壁紙名ラベルなし
   ok(appSrc.indexOf('function bgmOnTitle() { return uiHome && !uiWall; }') !== -1, '壁BGM: タイトル判定は壁画面を例外にする (壁では流れる)');

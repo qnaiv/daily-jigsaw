@@ -987,6 +987,52 @@ function applyPaperUnlocks(wall, totalClears) {
   });
   return ids;
 }
+/* 壁の広さは段階制 (2026-11-08 ユーザー決定): 無限には広げず2段階まで。
+ * 段階0 = 横1.5倍・縦1.2倍 (最初から)、段階1 = 横3.0倍・縦1.4倍
+ * (累計クリア WALL_EXPAND_CLEARS 回で解放)。倍率はステージ (画面) 比。
+ * 段階制より前のセーブは 1.0 x 1.0 の壁として扱い、段階0へ移行する。
+ * 座標の移行: 横は中心基準 (今の並びが真ん中に残り両側が開く)、
+ * 縦は床基準 (床からの高さ = 1 - y を保存し、上方向にだけ伸びる)。 */
+var WALL_SIZE_STAGES = [{ w: 1.5, h: 1.2 }, { w: 3.0, h: 1.4 }];
+var WALL_LEGACY_SIZE = { w: 1, h: 1 };
+var WALL_EXPAND_CLEARS = 15;
+function wallSizeOf(stage) {
+  if (stage === -1) return WALL_LEGACY_SIZE;
+  return WALL_SIZE_STAGES[stage] || WALL_SIZE_STAGES[0];
+}
+function spreadWallX(x, fromW, toW) {
+  var v = 0.5 + (x - 0.5) * (fromW / toW);
+  return Math.min(1, Math.max(0, v));
+}
+function spreadWallY(y, fromH, toH) {
+  var v = 1 - (1 - y) * (fromH / toH);
+  return Math.min(1, Math.max(0, v));
+}
+/* wall の配置座標を現在の段階から目標段階の広さへ移し替え、sizeStage を
+ * 更新する。wall.sizeStage が数値でない場合は旧形式 (1.0 x 1.0) とみなす */
+function applyWallSizeStage(wall, stage) {
+  var from = wallSizeOf(typeof wall.sizeStage === 'number' ? wall.sizeStage : -1);
+  var to = wallSizeOf(stage);
+  if (from !== to) {
+    [wall.placed, wall.frames].forEach(function (arr) {
+      (arr || []).forEach(function (p) {
+        if (typeof p.x === 'number') p.x = spreadWallX(p.x, from.w, to.w);
+        if (typeof p.y === 'number') p.y = spreadWallY(p.y, from.h, to.h);
+      });
+    });
+  }
+  wall.sizeStage = stage;
+}
+/* 壁の拡張解放: 段階0で累計クリアが条件に達したら段階1へ広げ、
+ * 未通知分として pendingExpand を立てる。戻り値: 今回広げたか */
+function applyWallExpand(wall, totalClears) {
+  var cur = typeof wall.sizeStage === 'number' ? wall.sizeStage : 0;
+  if (cur >= WALL_SIZE_STAGES.length - 1) return false;
+  if (totalClears < WALL_EXPAND_CLEARS) return false;
+  applyWallSizeStage(wall, cur + 1);
+  wall.pendingExpand = true;
+  return true;
+}
 /* アイテムの表示幅 (壁の幅に対する比率) の目安: カタログのサイズ感から決める */
 var WALL_SIZE_RATIO = { S: 0.20, M: 0.28, L: 0.40 };
 function wallItemById(id) {
@@ -1000,7 +1046,7 @@ function wallItemWidthRatio(item) {
  * 所持済みを対象から外すので、ここに入っていれば二重に届くことはない */
 var WALL_STARTER_ITEMS = ['w007', 'w030', 'w037']; // ユーカリリース / 葉っぱガーランド / ハートガーランド
 function emptyWall() {
-  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], lastDate: null, history: {} };
+  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], sizeStage: 0, pendingExpand: false, lastDate: null, history: {} };
 }
 /* 保存データの形が崩れていても使える形に寄せる (旧データには wall 自体がない)。
  * placed は配列順 = 重なり順を保ち、同じアイテム/記録の重複は先勝ちで落とす。 */
@@ -1085,6 +1131,15 @@ function normalizeWall(w) {
       if (Array.isArray(w.history[d])) out.history[d] = w.history[d].filter(function (id) { return !!wallItemById(id); });
     });
   }
+  // 壁の広さ段階: 有効な段階が保存されていれば引き継ぐ。無ければ段階制より
+  // 前のセーブ (1.0 x 1.0 の壁) として、段階0の広さへ座標を移行する
+  if (typeof w.sizeStage === 'number' && WALL_SIZE_STAGES[w.sizeStage]) {
+    out.sizeStage = w.sizeStage;
+  } else {
+    out.sizeStage = -1; // applyWallSizeStage に旧形式として読ませるための番兵
+    applyWallSizeStage(out, 0);
+  }
+  out.pendingExpand = w.pendingExpand === true;
   return out;
 }
 /* 抽選対象に入るか: 未所持で、季節物はその月の間だけ */
@@ -1225,6 +1280,9 @@ var PureLogic = {
   frameStyleById: frameStyleById, newFrameUnlocks: newFrameUnlocks, applyFrameUnlocks: applyFrameUnlocks,
   WALLPAPERS: WALLPAPERS, wallpaperById: wallpaperById,
   newPaperUnlocks: newPaperUnlocks, applyPaperUnlocks: applyPaperUnlocks,
+  WALL_SIZE_STAGES: WALL_SIZE_STAGES, WALL_EXPAND_CLEARS: WALL_EXPAND_CLEARS,
+  wallSizeOf: wallSizeOf, spreadWallX: spreadWallX, spreadWallY: spreadWallY,
+  applyWallSizeStage: applyWallSizeStage, applyWallExpand: applyWallExpand,
   RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
   WALL_STARTER_ITEMS: WALL_STARTER_ITEMS,
   wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
@@ -3279,11 +3337,12 @@ function processRewardsOnClear() {
   }
   var unlocked = applyFrameUnlocks(wall, store.records.length);
   var paperUnlocked = applyPaperUnlocks(wall, store.records.length);
+  var expanded = applyWallExpand(wall, store.records.length);
   if (grants.length) {
     recordWallHistory(wall, playDate, grants);
     grants.forEach(function (id) { if (wall.pending.indexOf(id) < 0) wall.pending.push(id); });
   }
-  if (grants.length || unlocked.length || paperUnlocked.length) saveStore();
+  if (grants.length || unlocked.length || paperUnlocked.length || expanded) saveStore();
   return grants;
 }
 /* 記録 → エントリ解決 (額装・コレクション共通)。picsum はキーから
@@ -3338,6 +3397,15 @@ function showUnlockNotice() {
   var list = $('unlockList');
   list.innerHTML = '';
   var fNames = [], pNames = [];
+  var expanded = !!store.wall.pendingExpand;
+  if (expanded) {
+    var erow = document.createElement('div');
+    erow.className = 'unlock-row';
+    erow.innerHTML = '<span class="unlock-swatch" style="background:#F3E9D3"></span>' +
+      '<span class="unlock-name">壁が広くなりました</span>' +
+      '<span class="unlock-cond">累計 ' + WALL_EXPAND_CLEARS + ' 回クリアで解放</span>';
+    list.appendChild(erow);
+  }
   store.wall.pendingUnlocks.forEach(function (id) {
     var st = frameStyleById(id);
     if (!st) return;
@@ -3370,7 +3438,9 @@ function showUnlockNotice() {
     paintPaperPreview(cv, p, 104, 80);
   });
   var title;
-  if (fNames.length && pNames.length) title = '新しいフレームと壁紙が使えるようになりました';
+  if (expanded && !fNames.length && !pNames.length) title = '壁が広くなりました';
+  else if (expanded) title = '壁が広くなり、新しいアイテムも使えるようになりました';
+  else if (fNames.length && pNames.length) title = '新しいフレームと壁紙が使えるようになりました';
   else if (pNames.length === 1) title = '新しい壁紙『' + pNames[0] + '』が使えるようになりました';
   else if (pNames.length > 1) title = '新しい壁紙が使えるようになりました';
   else if (fNames.length === 1) title = '新しいフレーム『' + fNames[0] + '』が使えるようになりました';
@@ -3380,9 +3450,10 @@ function showUnlockNotice() {
 }
 function closeUnlockNotice() {
   $('unlockModal').hidden = true;
-  if (store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length) {
+  if (store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length || store.wall.pendingExpand) {
     store.wall.pendingUnlocks = [];
     store.wall.pendingPaperUnlocks = [];
+    store.wall.pendingExpand = false;
     saveStore();
     updateStartWallRow();
   }
@@ -3406,15 +3477,21 @@ function showWall(from) {
   wallSelected = null;
   wallDrag = null;
   bgmTryPlay(); // 壁画面でも BGM を流す (開始はこのタップを起点にする)
+  // 累計クリアが条件に達していれば壁を一段広げる (冪等)
+  var expanded = applyWallExpand(store.wall, store.records.length);
+  wallCam.x = 0.5; wallCam.y = 0.5;
+  wallCam.zoom = expanded ? wallFitZoom() : 1;
   // 壁を開いたら未確認のごほうび/解放は確認済み扱いにする
-  if (store.wall.pending.length || store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length) {
+  if (expanded || store.wall.pending.length || store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length || store.wall.pendingExpand) {
     store.wall.pending = [];
     store.wall.pendingUnlocks = [];
     store.wall.pendingPaperUnlocks = [];
+    store.wall.pendingExpand = false;
     saveStore();
   }
   applyVisibility();
   renderWall();
+  if (expanded) showToast('壁が広くなりました');
 }
 function hideWall() {
   uiWall = false;
@@ -3432,14 +3509,199 @@ function wallFrameEntry(key) {
   for (var i = 0; i < store.wall.frames.length; i++) if (store.wall.frames[i].recordKey === key) return store.wall.frames[i];
   return null;
 }
+/* ---------- 壁カメラ (段階制の壁をパン/ズームで見る) ----------
+ * 壁の実体は #wallWorld (ステージより大きい層) で、カメラは中心比率
+ * (x, y) と倍率 zoom。screen = (比率 - 中心) x ワールドpx x zoom + 画面/2。
+ * ズーム下限は壁全体が収まる倍率、上限は 2 倍。端では止まる (余白なし) */
+var wallCam = { x: 0.5, y: 0.5, zoom: 1, tx: 0, ty: 0 };
+function wallSize() { return wallSizeOf(store.wall && typeof store.wall.sizeStage === 'number' ? store.wall.sizeStage : 0); }
+function wallWorldPx() {
+  var stage = $('wallStage');
+  var vw = (stage && stage.clientWidth) || 360, vh = (stage && stage.clientHeight) || 450;
+  var s = wallSize();
+  return { vw: vw, vh: vh, w: vw * s.w, h: vh * s.h };
+}
+function wallFitZoom() {
+  var s = wallSize();
+  return Math.min(1 / s.w, 1 / s.h);
+}
+function clampWallCam() {
+  var s = wallSize();
+  wallCam.zoom = Math.min(2, Math.max(wallFitZoom(), wallCam.zoom));
+  var hw = 0.5 / (wallCam.zoom * s.w), hh = 0.5 / (wallCam.zoom * s.h);
+  wallCam.x = hw >= 0.5 ? 0.5 : Math.min(1 - hw, Math.max(hw, wallCam.x));
+  wallCam.y = hh >= 0.5 ? 0.5 : Math.min(1 - hh, Math.max(hh, wallCam.y));
+}
+function applyWallCam() {
+  var world = $('wallWorld');
+  if (!world) return;
+  var d = wallWorldPx();
+  clampWallCam();
+  wallCam.tx = d.vw / 2 - wallCam.x * d.w * wallCam.zoom;
+  wallCam.ty = d.vh / 2 - wallCam.y * d.h * wallCam.zoom;
+  world.style.transform = 'translate(' + wallCam.tx + 'px,' + wallCam.ty + 'px) scale(' + wallCam.zoom + ')';
+}
+/* 画面座標 (client) → 壁の比率座標 */
+function wallPointFromClient(cx, cy) {
+  var stage = $('wallStage');
+  var rect = stage.getBoundingClientRect();
+  var d = wallWorldPx();
+  return {
+    x: (cx - rect.left - wallCam.tx) / (wallCam.zoom * d.w),
+    y: (cy - rect.top - wallCam.ty) / (wallCam.zoom * d.h)
+  };
+}
+/* 画面座標 (ステージ内 px) に壁比率点 wp が来るようカメラ中心を合わせる */
+function wallCamSetFromScreen(wp, sx, sy) {
+  var d = wallWorldPx();
+  wallCam.x = wp.x - (sx - d.vw / 2) / (wallCam.zoom * d.w);
+  wallCam.y = wp.y - (sy - d.vh / 2) / (wallCam.zoom * d.h);
+}
+/* 「全体」ボタン: 全体表示と等倍 (中心) を切り替える */
+function toggleWallFit() {
+  if (wallCam.zoom > wallFitZoom() + 0.01) {
+    wallCam.zoom = wallFitZoom();
+    wallCam.x = 0.5; wallCam.y = 0.5;
+  } else {
+    wallCam.zoom = 1;
+    wallCam.x = 0.5; wallCam.y = 0.5;
+  }
+  applyWallCam();
+}
 function renderWall() {
   var stage = $('wallStage');
   stage.innerHTML = '';
-  paintWallBackdrop(); // 背景 Canvas (壁紙 + 床 + 巾木) を一番奥に敷く
-  store.wall.frames.forEach(function (f) { stage.appendChild(buildWallFrameEl(f)); });
-  store.wall.placed.forEach(function (p) { stage.appendChild(buildWallItemEl(p)); });
+  var world = document.createElement('div');
+  world.id = 'wallWorld';
+  var d = wallWorldPx();
+  world.style.width = d.w + 'px';
+  world.style.height = d.h + 'px';
+  stage.appendChild(world);
+  paintWallBackdrop(); // 背景 Canvas (壁紙 + 床 + 巾木) をワールドの一番奥に敷く
+  store.wall.frames.forEach(function (f) { world.appendChild(buildWallFrameEl(f)); });
+  store.wall.placed.forEach(function (p) { world.appendChild(buildWallItemEl(p)); });
+  var fit = document.createElement('button');
+  fit.id = 'wallFitBtn';
+  fit.className = 'wall-fit-btn';
+  fit.type = 'button';
+  fit.textContent = '全体';
+  fit.addEventListener('click', function () { toggleWallFit(); });
+  stage.appendChild(fit);
+  applyWallCam();
   renderWallTray();
   updateWallSelBar();
+}
+/* ---------- 壁の共有画像 ----------
+ * 壁全体 (現在の広さ分すべて) を 1 枚の Canvas に描いて共有する。
+ * 額は実ピース形状の盤面で描き直し (画面表示と同じレシピ)、小物は
+ * 画像をそのまま置く。重なり順は画面と同じ (額 → 小物)。
+ * 下部にブランドのフッターを付ける。 */
+function buildShareFrameCanvas(f, unitW) {
+  var rec = recordByWallKey(f.recordKey);
+  var st = frameStyleById(f.color) || frameStyleById('walnut');
+  var U = Math.max(24, unitW * f.w);
+  var geo = frameGeometry(U, st);
+  var scale = 2;
+  var cv = document.createElement('canvas');
+  cv.width = Math.round(geo.size * scale);
+  cv.height = Math.round(geo.size * scale);
+  var ctx = cv.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  var upper = rec && isUpperTier(rec.pieces) ? rec.pieces : 0;
+  if (!rec) {
+    paintFrameUnit(ctx, st, U, null, 'missing', f.recordKey, upper);
+    return Promise.resolve({ cv: cv, size: geo.size });
+  }
+  return renderWallBoardCanvas(rec).then(function (board) {
+    paintFrameUnit(ctx, st, U, board, 'ready', f.recordKey, upper);
+    return { cv: cv, size: geo.size };
+  });
+}
+function buildWallShareImage() {
+  var stage = $('wallStage');
+  if (!stage || !stage.clientWidth) return Promise.resolve(null);
+  var unit = stage.clientWidth, s = wallSize();
+  var worldW = unit * s.w, worldH = stage.clientHeight * s.h;
+  var k = Math.min(2, 1800 / worldW);
+  if (k < 0.5) k = 0.5;
+  var W = Math.round(worldW * k), H = Math.round(worldH * k);
+  var footer = Math.round(30 * k) + 18;
+  var cv = document.createElement('canvas');
+  cv.width = W;
+  cv.height = H + footer;
+  var ctx = cv.getContext('2d');
+  if (!ctx) return Promise.resolve(null);
+  paintWallBase(ctx, W, H, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
+  var frameJobs = store.wall.frames.map(function (f) {
+    return buildShareFrameCanvas(f, unit * k).then(function (r) {
+      ctx.drawImage(r.cv, Math.round(f.x * W - r.size / 2), Math.round(f.y * H - r.size / 2), r.size, r.size);
+    });
+  });
+  return Promise.all(frameJobs).then(function () {
+    var itemJobs = store.wall.placed.map(function (p) {
+      return new Promise(function (res) {
+        var it = wallItemById(p.id);
+        if (!it) { res(); return; }
+        var img = new Image();
+        img.onload = function () {
+          var wpx = wallItemWidthRatio(it) * unit * k;
+          var hpx = wpx * img.naturalHeight / Math.max(1, img.naturalWidth);
+          ctx.save();
+          ctx.shadowColor = 'rgba(90,70,40,0.25)';
+          ctx.shadowBlur = 5 * k;
+          ctx.shadowOffsetY = 3 * k;
+          ctx.drawImage(img, p.x * W - wpx / 2, p.y * H - hpx / 2, wpx, hpx);
+          ctx.restore();
+          res();
+        };
+        img.onerror = function () { res(); };
+        img.src = 'wall-items/' + it.id + '.webp';
+      });
+    });
+    return Promise.all(itemJobs);
+  }).then(function () {
+    ctx.fillStyle = '#F7F2E7';
+    ctx.fillRect(0, H, W, footer);
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#43382A';
+    ctx.font = '700 ' + Math.round(15 * k) + 'px "Hiragino Mincho ProN", "Yu Mincho", serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('まいにちジグソー', Math.round(14 * k), H + footer / 2);
+    ctx.fillStyle = '#7A7264';
+    ctx.font = Math.round(12 * k) + 'px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('daily-jigsaw.pages.dev', W - Math.round(14 * k), H + footer / 2);
+    return cv;
+  });
+}
+function downloadWallShareImage(cv) {
+  var a = document.createElement('a');
+  a.href = cv.toDataURL('image/png');
+  a.download = 'mainichi-jigsaw-wall.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+/* 壁画像で共有: クリア画像と同じ作法 (files 共有 → 無ければ保存 + 注記) */
+function shareWallImage() {
+  buildWallShareImage().then(function (cv) {
+    if (!cv) return;
+    if (!cv.toBlob) { downloadWallShareImage(cv); showToast(SHARE_SAVE_NOTE); return; }
+    cv.toBlob(function (blob) {
+      if (!blob) { downloadWallShareImage(cv); showToast(SHARE_SAVE_NOTE); return; }
+      var file = new File([blob], 'mainichi-jigsaw-wall.png', { type: 'image/png' });
+      if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).catch(function (err) {
+          if (err && err.name === 'AbortError') return;
+          downloadWallShareImage(cv);
+          showToast(SHARE_SAVE_NOTE);
+        });
+      } else {
+        downloadWallShareImage(cv);
+        showToast(SHARE_SAVE_NOTE);
+      }
+    }, 'image/png');
+  });
 }
 function buildWallItemEl(p) {
   var it = wallItemById(p.id);
@@ -3447,7 +3709,7 @@ function buildWallItemEl(p) {
   el.className = 'wall-el wall-item';
   el.style.left = (p.x * 100) + '%';
   el.style.top = (p.y * 100) + '%';
-  el.style.width = (wallItemWidthRatio(it) * 100) + '%';
+  el.style.width = (wallItemWidthRatio(it) * 100 / wallSize().w) + '%';
   el.dataset.kind = 'item';
   el.dataset.key = p.id;
   var img = document.createElement('img');
@@ -4010,7 +4272,7 @@ function buildWallFrameEl(f) {
   el.dataset.key = f.recordKey;
   el.style.left = (f.x * 100) + '%';
   el.style.top = (f.y * 100) + '%';
-  el.style.width = (f.w * 100) + '%';
+  el.style.width = (f.w * 100 / wallSize().w) + '%';
   var cv = document.createElement('canvas');
   cv.className = 'frame-canvas';
   el.appendChild(cv);
@@ -4090,23 +4352,22 @@ function attachWallDrag(el, kind, key) {
       el.parentNode.appendChild(el);
     }
     selectWall(kind, key);
-    var rect = $('wallStage').getBoundingClientRect();
+    var pt = wallPointFromClient(ev.clientX, ev.clientY);
     wallDrag = {
       kind: kind, key: key, el: el, moved: false,
       startX: ev.clientX, startY: ev.clientY,
-      offX: (ev.clientX - rect.left) / rect.width - entry.x,
-      offY: (ev.clientY - rect.top) / rect.height - entry.y
+      offX: pt.x - entry.x,
+      offY: pt.y - entry.y
     };
   });
   el.addEventListener('pointermove', function (ev) {
     if (!wallDrag || wallDrag.kind !== kind || wallDrag.key !== key) return;
     if (Math.abs(ev.clientX - wallDrag.startX) + Math.abs(ev.clientY - wallDrag.startY) > 6) wallDrag.moved = true;
     if (!wallDrag.moved) return;
-    var rect = $('wallStage').getBoundingClientRect();
     var entry = kind === 'item' ? wallPlacedEntry(key) : wallFrameEntry(key);
     if (!entry) return;
-    var c = clampItemPos((ev.clientX - rect.left) / rect.width - wallDrag.offX,
-                         (ev.clientY - rect.top) / rect.height - wallDrag.offY);
+    var pt = wallPointFromClient(ev.clientX, ev.clientY);
+    var c = clampItemPos(pt.x - wallDrag.offX, pt.y - wallDrag.offY);
     entry.x = c.x;
     entry.y = c.y;
     el.style.left = (c.x * 100) + '%';
@@ -4198,7 +4459,8 @@ function renderWallTray() {
       '<span class="decor-chip-state">' + (placed ? '配置中' : '未配置') + '</span>';
     b.addEventListener('click', function () {
       if (!wallPlacedEntry(it.id)) {
-        store.wall.placed.push({ id: it.id, x: 0.5, y: 0.45 });
+        var placeAt = clampItemPos(wallCam.x, wallCam.y);
+        store.wall.placed.push({ id: it.id, x: placeAt.x, y: placeAt.y });
         saveStore();
         sePlace();
         renderWall();
@@ -4252,7 +4514,8 @@ function openFramePicker() {
     });
     if (!placed) {
       cell.addEventListener('click', function () {
-        store.wall.frames.push({ recordKey: key, x: 0.5, y: 0.38, w: 0.30, color: 'walnut' });
+        var placeAt = clampItemPos(wallCam.x, wallCam.y);
+        store.wall.frames.push({ recordKey: key, x: placeAt.x, y: placeAt.y, w: 0.30, color: 'walnut' });
         saveStore();
         sePlace();
         closeFramePicker();
@@ -4459,14 +4722,17 @@ function paintWallBase(ctx, W, H, def) {
  * リサイズ時にだけ呼ぶ (ドラッグ中は再描画しない) */
 function paintWallBackdrop() {
   var stage = $('wallStage');
-  var cv = stage.querySelector('canvas.wall-bg');
+  var world = $('wallWorld');
+  if (!world) return;
+  var cv = world.querySelector('canvas.wall-bg');
   if (!cv) {
     cv = document.createElement('canvas');
     cv.className = 'wall-bg';
     cv.setAttribute('aria-hidden', 'true');
-    stage.insertBefore(cv, stage.firstChild);
+    world.insertBefore(cv, world.firstChild);
   }
-  var W = stage.clientWidth, H = stage.clientHeight;
+  var d = wallWorldPx();
+  var W = d.w, H = d.h;
   if (!W || !H) return;
   var dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(W * dpr);
@@ -4532,8 +4798,11 @@ function updateStartWallRow() {
   $('wallItemsInfo').textContent = '壁の小物 ' + wall.owned.length + ' / ' + WALL_CATALOG.length;
   $('rewardBtn').hidden = !wall.pending.length;
   var pendU = wall.pendingUnlocks, pendP = wall.pendingPaperUnlocks;
-  $('unlockBtn').hidden = !(pendU.length || pendP.length);
-  if (pendU.length && pendP.length) {
+  var pendE = !!wall.pendingExpand;
+  $('unlockBtn').hidden = !(pendU.length || pendP.length || pendE);
+  if (pendE && !pendU.length && !pendP.length) {
+    $('unlockBtn').textContent = '🖼 壁が広くなりました →';
+  } else if (pendU.length && pendP.length) {
     $('unlockBtn').textContent = '🖼 新しいフレームと壁紙が使えるようになりました →';
   } else if (pendP.length === 1) {
     var pp = wallpaperById(pendP[0]);
@@ -4997,12 +5266,72 @@ function wireControls() {
   $('wallFrameBtn').addEventListener('click', function () { openFramePicker(); });
   $('framePickerBack').addEventListener('click', function () { closeFramePicker(); });
   $('wallPaperBtn').addEventListener('click', function () { openPaperPicker(); });
+  $('wallShareBtn').addEventListener('click', function () { shareWallImage(); });
   $('paperPickerBack').addEventListener('click', function () { closePaperPicker(); });
-  // 画面リサイズで壁ステージの大きさが変わったら背景だけ描き直す
-  window.addEventListener('resize', function () { if (uiWall) paintWallBackdrop(); });
-  $('wallStage').addEventListener('pointerdown', function (ev) {
-    if (ev.target === $('wallStage')) selectWall(null); // 壁の何もない所をタップで選択解除
+  // 画面リサイズで壁ステージの大きさが変わったら壁を描き直す
+  window.addEventListener('resize', function () { if (uiWall) renderWall(); });
+  // 壁カメラのジェスチャ: 空き場所のドラッグでパン、2本指でピンチズーム、
+  // ホイールでもズーム。アイテム上の操作は attachWallDrag が担当する
+  var wallPtrs = new Map();
+  var wallGesture = null;
+  var wallStageEl = $('wallStage');
+  wallStageEl.addEventListener('pointerdown', function (ev) {
+    if (ev.target.closest && ev.target.closest('.wall-el')) return;
+    if (ev.target.id === 'wallFitBtn') return;
+    selectWall(null); // 壁の何もない所をタップで選択解除
+    wallPtrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    try { wallStageEl.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+    if (wallPtrs.size === 1) {
+      wallGesture = { mode: 'pan', sx: ev.clientX, sy: ev.clientY, camX: wallCam.x, camY: wallCam.y };
+    } else if (wallPtrs.size === 2) {
+      var pts = Array.from(wallPtrs.values());
+      var mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      wallGesture = {
+        mode: 'pinch',
+        d0: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1,
+        zoom0: wallCam.zoom,
+        wp: wallPointFromClient(mid.x, mid.y)
+      };
+    }
   });
+  wallStageEl.addEventListener('pointermove', function (ev) {
+    if (!wallPtrs.has(ev.pointerId) || !wallGesture) return;
+    wallPtrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    var d = wallWorldPx();
+    if (wallGesture.mode === 'pan' && wallPtrs.size === 1) {
+      wallCam.x = wallGesture.camX - (ev.clientX - wallGesture.sx) / (wallCam.zoom * d.w);
+      wallCam.y = wallGesture.camY - (ev.clientY - wallGesture.sy) / (wallCam.zoom * d.h);
+      applyWallCam();
+    } else if (wallGesture.mode === 'pinch' && wallPtrs.size === 2) {
+      var pts = Array.from(wallPtrs.values());
+      var d1 = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      var mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      var rect = wallStageEl.getBoundingClientRect();
+      wallCam.zoom = wallGesture.zoom0 * d1 / wallGesture.d0;
+      clampWallCam();
+      wallCamSetFromScreen(wallGesture.wp, mid.x - rect.left, mid.y - rect.top);
+      applyWallCam();
+    }
+  });
+  function wallPtrEnd(ev) {
+    wallPtrs.delete(ev.pointerId);
+    if (!wallPtrs.size) wallGesture = null;
+    else if (wallPtrs.size === 1) {
+      var p = Array.from(wallPtrs.values())[0];
+      wallGesture = { mode: 'pan', sx: p.x, sy: p.y, camX: wallCam.x, camY: wallCam.y };
+    }
+  }
+  wallStageEl.addEventListener('pointerup', wallPtrEnd);
+  wallStageEl.addEventListener('pointercancel', wallPtrEnd);
+  wallStageEl.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
+    var rect = wallStageEl.getBoundingClientRect();
+    var wp = wallPointFromClient(ev.clientX, ev.clientY);
+    wallCam.zoom *= Math.exp(-ev.deltaY * 0.0015);
+    clampWallCam();
+    wallCamSetFromScreen(wp, ev.clientX - rect.left, ev.clientY - rect.top);
+    applyWallCam();
+  }, { passive: false });
   /* 全データリセット (設定シート内・危険操作): 専用の確認モーダルを挟み、
    * 確定したら保存キーを丸ごと消して再読み込みし、初期状態に戻す */
   $('settingsResetBtn').addEventListener('click', function () { $('resetConfirmModal').hidden = false; });
