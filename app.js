@@ -6,7 +6,7 @@
 /* ================= 純粋ロジック ================= */
 
 var BASE_DATE_FALLBACK = '2026-11-07';
-var DIFFICULTIES = [16, 36, 100, 225, 400, 784, 1225]; // 2025 は廃止し 16 (4x4) を追加 (2026-11-08)
+var DIFFICULTIES = [16, 36, 100, 225, 400, 1225]; // 2025 は廃止し 16 (4x4) を追加 (2026-11-08)、784 も廃止し6段階に (2026-11-08)
 var TABSIZE = 0.2;      // デコの高さ = 一辺の約20%
 var JITTER = 0.045;     // 制御点ジッター (辺長比)
 var SNAP_DIST = 0.35;   // 相対スナップの許容距離 (セル単位)
@@ -49,7 +49,10 @@ function jstTodayString(now) {
 /* 日付移動は廃止 (ユーザー指定): アプリは常に今日 (JST) のお題だけを開く。
  * ?date= パラメータにも対応しない。過去の記録はコレクションで見るだけ。 */
 
-/* ---- お題決定: (対象日 - 基準日) mod プール ----
+/* ---- お題決定: (対象日 - 基準日) をプールで引く ----
+ * 2026-11-08 からは難易度グループ制: ペア ([16,36] / [100,225] / [400,1225])
+ * ごとに別のお題を割り当てる (pickPoolEntry の group 引数)。グループなしの
+ * 呼び出しは従来の日付のみ選択 (旧バージョンで開始した進行中ゲームの維持用)。
  * プール (data/images.json) はエントリ配列形式:
  *   { type:'picsum', id } — Lorem Picsum の写真
  *   { type:'url', key, title, source, thumbUrl, fullUrl, license, attribution }
@@ -62,11 +65,26 @@ function poolEntries(pool) {
   if (Array.isArray(pool.ids)) return pool.ids.map(function (id) { return { type: 'picsum', id: id }; });
   return [];
 }
-function pickPoolEntry(dateStr, pool) {
+/* 難易度グループ: 隣り合う2段階がペアで同じお題 (画像) を共有する。
+ * [16,36]→0 / [100,225]→1 / [400,1225]→2。未知の値 (旧 784 など) は 0。 */
+function difficultyGroup(pieces) {
+  if (pieces === 100 || pieces === 225) return 1;
+  if (pieces === 400 || pieces === 1225) return 2;
+  return 0;
+}
+/* ペアの上位難易度 (36 / 225 / 1225) か。「上級」豪華仕様の対象 */
+function isUpperTier(pieces) {
+  return pieces === 36 || pieces === 225 || pieces === 1225;
+}
+function pickPoolEntry(dateStr, pool, group) {
   var entries = poolEntries(pool);
   if (!entries.length) return null;
   var days = daysBetween(dateStr, pool.baseDate || BASE_DATE_FALLBACK);
-  var idx = ((days % entries.length) + entries.length) % entries.length;
+  /* グループ指定時は (日数×3 + グループ) で引く: 同じ日でもグループごとに
+   * 別のお題になり、ペア内 (同グループ) では同じお題を共有する。
+   * 省略時は従来どおり日数だけで引く (旧バージョン互換)。 */
+  var raw = typeof group === 'number' ? days * 3 + group : days;
+  var idx = ((raw % entries.length) + entries.length) % entries.length;
   return entries[idx];
 }
 /* 旧 API 互換: picsum エントリのときだけ ID を返す (URL エントリは null) */
@@ -477,7 +495,7 @@ function initialScatter(dateStr, pieces) {
   return clusters;
 }
 
-/* スタート画面の箱の包装柄 (完成写真は載せない)。日付シードで決定的にローテーション */
+/* スタート画面の箱の包装柄 (完成写真は載せない)。日付×難易度グループで決定的に決まる */
 var BOX_PATTERNS = [
   { id: 'dots-red', name: '生成りに細ドット' },
   { id: 'stripes-mint', name: '細ストライプ' },
@@ -486,11 +504,15 @@ var BOX_PATTERNS = [
   { id: 'confetti', name: '小紋' },
   { id: 'floral-retro', name: '小花' }
 ];
-function boxPatternIndex(dateStr) {
+/* グループ指定時は (日数×3 + グループ) で引く (お題画像のグループ選択と同じリズム):
+ * 同じ日でもグループごとに別の柄になり、翌日は全グループの柄が変わる。
+ * 省略時は従来どおり日数だけで引く (旧バージョン互換)。 */
+function boxPatternIndex(dateStr, group) {
   var days = daysBetween(dateStr, BASE_DATE_FALLBACK);
-  return ((days % BOX_PATTERNS.length) + BOX_PATTERNS.length) % BOX_PATTERNS.length;
+  var raw = typeof group === 'number' ? days * 3 + group : days;
+  return ((raw % BOX_PATTERNS.length) + BOX_PATTERNS.length) % BOX_PATTERNS.length;
 }
-function boxPatternForDate(dateStr) { return BOX_PATTERNS[boxPatternIndex(dateStr)]; }
+function boxPatternForDate(dateStr, group) { return BOX_PATTERNS[boxPatternIndex(dateStr, group)]; }
 
 /* 完成判定 (内部のみ): 全ピースがマット上にあり、各ピースがホーム座標に一致 */
 function isComplete(clusters, n) {
@@ -1169,6 +1191,7 @@ var PureLogic = {
   jstTodayString: jstTodayString,
   pickImageId: pickImageId, imageSizeFor: imageSizeFor,
   poolEntries: poolEntries, pickPoolEntry: pickPoolEntry, poolEntryKey: poolEntryKey,
+  difficultyGroup: difficultyGroup, isUpperTier: isUpperTier,
   poolEntryByKey: poolEntryByKey, recordImageKey: recordImageKey,
   entryPhotoUrl: entryPhotoUrl, entryThumbUrl: entryThumbUrl,
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
@@ -1821,7 +1844,23 @@ var state = null; // ゲーム開始時に構築
 function newGameState(pool) {
   var prog = progressFor(playDate, difficulty);
   var gameStarted = progressIsStarted(prog);
-  var entry = pickPoolEntry(playDate, pool);
+  /* お題の決定 (2026-11-08 グループ制):
+   * - progress.imgKey が保存されていれば、そのエントリを最優先で維持する
+   *   (プールから引けなければグループ選択にフォールバック)
+   * - 開始済みなのに imgKey が無い = 旧バージョンで始めた進行中ゲーム。
+   *   お題が変わらないよう従来の日付のみ選択で引き、imgKey を補完保存する
+   * - それ以外 (新規) は難易度グループで選び、開始確定時 (persistProgress で
+   *   started が立つとき) に imgKey を保存する */
+  var entry;
+  if (prog.imgKey) {
+    entry = poolEntryByKey(pool, prog.imgKey) || pickPoolEntry(playDate, pool, difficultyGroup(difficulty));
+  } else if (gameStarted) {
+    entry = pickPoolEntry(playDate, pool);
+    prog.imgKey = poolEntryKey(entry);
+    saveStore();
+  } else {
+    entry = pickPoolEntry(playDate, pool, difficultyGroup(difficulty));
+  }
   return {
     pool: pool,
     entry: entry,
@@ -1858,6 +1897,9 @@ function persistProgress() {
   prog.previewCount = state.previewCount;
   prog.cleared = state.cleared;
   prog.started = state.gameStarted;
+  /* ゲーム開始が確定したら、そのときのお題キーを progress に固定する
+   * (以後の再開ではこのキーが最優先になり、お題が途中で変わらない) */
+  if (state.gameStarted && state.imageKey) prog.imgKey = state.imageKey;
   saveStore();
 }
 function currentElapsed() {
@@ -3012,6 +3054,7 @@ function onClear() {
   $('resultDateLine').textContent = Number(dp[0]) + '年' + Number(dp[1]) + '月' + Number(dp[2]) + '日 ・ ' + difficulty + 'ピース';
   $('resultStatLine').textContent = 'タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
+  $('resultUpperBadge').hidden = !isUpperTier(difficulty); // 上級 (ペア上位) のときだけ金のバッジを出す
   var boardHost = $('resultBoard');
   boardHost.innerHTML = '';
   renderBoardCanvasAt(rec, 288).then(function (cv) {
@@ -3705,13 +3748,13 @@ function drawFrameBoardPlaceholder(ctx, bx, by, B, U, state) {
  * 外形の左上は (pad, pad)。board は完成盤面の Canvas (null の間は
  * boardState のプレースホルダ)。木目・星の乱数は seedKey で固定し、
  * 盤面ロード後の描き直しでも見た目が変わらないようにする。 */
-function paintFrameUnit(ctx, st, U, board, boardState, seedKey) {
+function paintFrameUnit(ctx, st, U, board, boardState, seedKey, upperPieces) {
   var geo = frameGeometry(U, st);
   var bw = geo.bw, matW = geo.matW, B = geo.board;
   var X0 = geo.pad, Y0 = geo.pad, X1 = X0 + U, Y1 = Y0 + U;
   var rng = rngFromString('frame:' + st.id + ':' + seedKey);
   if (st.shape === 'circle') {
-    paintCircleFrameUnit(ctx, st, U, board, boardState, seedKey, geo);
+    paintCircleFrameUnit(ctx, st, U, board, boardState, seedKey, geo, upperPieces);
     return;
   }
   var base = hexToRgb(st.color);
@@ -3794,9 +3837,63 @@ function paintFrameUnit(ctx, st, U, board, boardState, seedKey) {
   else if (st.ornament === 'corners') drawFrameCorners(ctx, X0, Y0, U);
   else if (st.ornament === 'pearl') drawFramePearls(ctx, X0, Y0, U, bw + matW);
   else if (st.ornament === 'crown') drawFrameCrown(ctx, X0 + U / 2, Y0 - U * 0.017, U * 0.147);
+  // 8. 上級仕様: 額の外側4隅にフラットな金の三角キャップを付ける (案F6。
+  // 絵の中には何も描かない。額自体の豪華化ではなく「付け足す装飾」として区別する)
+  if (upperPieces) drawFrameCornerCaps(ctx, X0, Y0, U);
+}
+/* 上級仕様 (案F6): 額の外側4隅に付ける、フラットでマットな金の三角キャップ。
+ * 壁インテリアの作風 (単色 + 輪郭線) に合わせ、グラデーションや影は付けない。 */
+function drawFrameCornerCaps(ctx, X0, Y0, U) {
+  var L = U * 0.135;
+  var X1 = X0 + U, Y1 = Y0 + U;
+  var corners = [
+    [X0, Y0, 1, 1], [X1, Y0, -1, 1], [X0, Y1, 1, -1], [X1, Y1, -1, -1]
+  ];
+  ctx.save();
+  ctx.fillStyle = '#c9a24b';
+  ctx.strokeStyle = '#a48034';
+  ctx.lineWidth = Math.max(1, U * 0.007);
+  ctx.lineJoin = 'round';
+  for (var i = 0; i < corners.length; i++) {
+    var c = corners[i];
+    ctx.beginPath();
+    ctx.moveTo(c[0], c[1]);
+    ctx.lineTo(c[0] + c[2] * L, c[1]);
+    ctx.lineTo(c[0], c[1] + c[3] * L);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(c[0] + c[2] * L, c[1]);
+    ctx.lineTo(c[0], c[1] + c[3] * L);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+/* 上級仕様 (円形フレーム用): 四角い額の金キャップ (案F6) に相当する表現として、
+ * リング (額) 自体の左上部分をフラットな金の弧に替える。絵の中には描かない。 */
+function drawCircleUpperArc(ctx, cx, cy, R, bw) {
+  var rMid = R - bw / 2;
+  var a0 = Math.PI * 202 / 180, a1 = Math.PI * 248 / 180;
+  ctx.save();
+  ctx.strokeStyle = '#c9a24b';
+  ctx.lineWidth = bw;
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  ctx.arc(cx, cy, rMid, a0, a1);
+  ctx.stroke();
+  // 弧の両端に一段濃い金の仕切り線
+  ctx.strokeStyle = '#a48034';
+  ctx.lineWidth = Math.max(1, R * 0.014);
+  [a0, a1].forEach(function (a) {
+    ctx.beginPath();
+    ctx.moveTo(cx + (R - bw) * Math.cos(a), cy + (R - bw) * Math.sin(a));
+    ctx.lineTo(cx + R * Math.cos(a), cy + R * Math.sin(a));
+    ctx.stroke();
+  });
+  ctx.restore();
 }
 /* まるフレーム: 木目のリング + 面取り (弧のハイライト) + 円形の盤面 */
-function paintCircleFrameUnit(ctx, st, U, board, boardState, seedKey, geo) {
+function paintCircleFrameUnit(ctx, st, U, board, boardState, seedKey, geo, upperPieces) {
   var bw = geo.bw, pad = geo.pad;
   var cx = pad + U / 2, cy = pad + U / 2;
   var R = U / 2, rIn = R - bw;
@@ -3863,6 +3960,8 @@ function paintCircleFrameUnit(ctx, st, U, board, boardState, seedKey, geo) {
   if (board) ctx.drawImage(board, cx - rIn, cy - rIn, rIn * 2, rIn * 2);
   else drawFrameBoardPlaceholder(ctx, cx - rIn, cy - rIn, rIn * 2, U, boardState);
   ctx.restore();
+  // 上級仕様 (円形): リングの左上を金の弧に替える (四角額の金キャップ相当)
+  if (upperPieces) drawCircleUpperArc(ctx, cx, cy, R, bw);
 }
 function buildWallFrameEl(f) {
   var rec = recordByWallKey(f.recordKey);
@@ -3894,14 +3993,16 @@ function paintWallFrameUnit(cv, f, rec, st) {
   cv.height = px;
   var ctx = cv.getContext('2d');
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  paintFrameUnit(ctx, st, U, null, rec ? 'loading' : 'missing', f.recordKey);
+  // 上級仕様は対象レコード (ペア上位難易度) のときだけ付ける
+  var upperPieces = rec && isUpperTier(rec.pieces) ? rec.pieces : 0;
+  paintFrameUnit(ctx, st, U, null, rec ? 'loading' : 'missing', f.recordKey, upperPieces);
   if (!rec) return;
   renderWallBoardCanvas(rec).then(function (board) {
     if (!cv.isConnected) return; // 壁を作り直していたら古い描画は捨てる
     var c2 = cv.getContext('2d');
     c2.setTransform(scale, 0, 0, scale, 0, 0);
     c2.clearRect(0, 0, geo.size, geo.size);
-    paintFrameUnit(c2, st, U, board, 'ready', f.recordKey);
+    paintFrameUnit(c2, st, U, board, 'ready', f.recordKey, upperPieces);
   });
 }
 /* 壁の額装パズル: コレクション詳細 (paintDetailBoard) と同じ辺生成・
@@ -3910,6 +4011,11 @@ function paintWallFrameUnit(cv, f, rec, st) {
 function renderWallBoardCanvas(rec) {
   return renderBoardCanvasAt(rec, detailRenderPlan(rec.pieces).sizePx);
 }
+/* 上級仕様: 完成盤面の左上隅に斜めの金のリボン帯を描く (ペア上位難易度
+ * 36/225/1225 の記録だけ)。帯は左上コーナーを 45° で横切り、帯幅は盤面
+ * 一辺の約13%。盤面の正方形領域でクリップするのでマットや額にはみ出さない。
+ * renderBoardCanvasAt の共通処理として描くため、壁の額・コレクション詳細・
+ * 額ピッカー・クリア画面・共有画像のすべてに効く (額自体は通常のまま)。 */
 /* 完成盤面を指定サイズで描く。額装は詳細サイズ、額装ピッカーの
  * サムネイルは小サイズで、どちらも同じ実ピース形状の見た目にする。 */
 function renderBoardCanvasAt(rec, sizePx) {
@@ -4491,7 +4597,9 @@ function openDetail(r) {
     return it ? it.name : id;
   });
   $('detailText').innerHTML =
-    '日付: ' + r.date + '<br>難易度: ' + r.pieces + 'ピース<br>クリアタイム: ' + formatTime(r.bestTimeSec) +
+    '日付: ' + r.date + '<br>難易度: ' + r.pieces + 'ピース' +
+    (isUpperTier(r.pieces) ? ' <span class="upper-chip">上級クリア</span>' : '') +
+    '<br>クリアタイム: ' + formatTime(r.bestTimeSec) +
     '<br>手数: ' + (r.moves != null ? r.moves : '-') +
     '<br>完成図: ' + (r.previewViewed ? '見た（' + r.previewCount + '回）' : '見ずにクリア') +
     (rewardNames.length ? '<br>この日に手に入れた小物: ' + rewardNames.join('、') : '') +
@@ -4590,7 +4698,7 @@ function renderDetailPuzzle(r) {
 /* ---------- コントロール配線 ---------- */
 /* 難易度セレクタ (案D: 重なったカード)。傾きはカード位置で決定的に決める。
  * 選択中カードの想定時間はカード列の下に1行だけ出す。 */
-var DIFF_TIME_LABELS = { 16: '1〜3分', 36: '3〜8分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 784: '半日〜1日', 1225: '1〜2日' };
+var DIFF_TIME_LABELS = { 16: '1〜3分', 36: '3〜8分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 1225: '1〜2日' };
 var DIFF_SUB_LABELS = { 16: 'かんたん', 1225: 'おに' };
 var DIFF_TILTS = [-3, -1.2, 2.2, -2, 1.4, -0.6, 2.5];
 function buildDifficultySeg() {
@@ -4611,6 +4719,12 @@ function buildDifficultySeg() {
       sub.className = 'diff-sub';
       sub.textContent = DIFF_SUB_LABELS[d];
       b.appendChild(sub);
+    }
+    if (isUpperTier(d)) { // ペア上位 (上級) のカードには金の ★ を付ける
+      var star = document.createElement('span');
+      star.className = 'diff-star';
+      star.textContent = '★';
+      b.appendChild(star);
     }
     b.setAttribute('aria-pressed', d === difficulty ? 'true' : 'false');
     b.addEventListener('click', function () {
@@ -4968,7 +5082,7 @@ function renderStartScreen() {
   var mode = startPanelMode({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters });
   var startedAlready = mode !== 'box';
   $('giftBox').classList.remove('opening');
-  $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate).id);
+  $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate, difficultyGroup(difficulty)).id);
   $('giftBox').hidden = false;
   $('startHint').hidden = false;
   $('startHint').textContent = mode === 'resume' ? '箱をタップしてつづきから' : '箱をタップ';
@@ -4996,7 +5110,7 @@ function startGame(pool) {
   cancelPressAndRect();
   buildDifficultySeg();
   if (firstStart) { uiHome = true; firstStart = false; } // ページを開き直したら必ずスタート画面から
-  // スタート画面: 未開封なら包装された箱 (柄は日付で決定的)、開始済みなら続きからパネル
+  // スタート画面: 未開封なら包装された箱 (柄は日付×難易度グループで決定的)、開始済みなら続きからパネル
   renderStartScreen();
   $('fadeVeil').classList.remove('on');
   var d = new Date(dateToMs(playDate));
