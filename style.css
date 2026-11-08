@@ -286,8 +286,8 @@ button { font: inherit; cursor: pointer; }
  * コンパクトなピルで出す。選択中は緑に広がり想定時間も中に出る */
 .diff-chips { display: flex; flex-wrap: nowrap; justify-content: center; gap: 6px; padding: 2px 4px; width: 100%; box-sizing: border-box; }
 .diff-chip {
-  display: inline-flex; align-items: center; gap: 4px; min-width: 0;
-  min-height: 38px; padding: 7px 12px;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; min-width: 0;
+  min-height: 40px; padding: 5px 12px 4px;
   background: var(--panel); color: var(--ink);
   border: 1px solid var(--line); border-radius: 999px;
   box-shadow: 0 1px 2px var(--shadow-soft);
@@ -295,9 +295,10 @@ button { font: inherit; cursor: pointer; }
   -webkit-tap-highlight-color: transparent; cursor: pointer;
 }
 .diff-chip .diff-num { font-size: 15px; font-weight: 800; letter-spacing: .02em; line-height: 1.15; white-space: nowrap; }
-.diff-chip .diff-star { line-height: 1; font-size: 10px; color: #c9a227; }
+/* ティアの ★ は数字の下に小さく置く (無い難易度も高さを揃える) */
+.diff-chip .diff-star { line-height: 1; height: 10px; font-size: 9px; color: #c9a227; }
 .diff-chip .diff-star.silver { color: #9aa3ab; }
-.diff-chip .diff-star.royal { font-size: 9px; letter-spacing: -1.5px; }
+.diff-chip .diff-star.royal { font-size: 8.5px; letter-spacing: -1.5px; }
 .diff-chip.active { background: var(--mat); color: var(--mat-ink); border-color: transparent; }
 .diff-chip.active .diff-star.silver { color: #cfd6da; }
 

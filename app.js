@@ -5023,12 +5023,10 @@ function buildDifficultySeg() {
     num.textContent = d + 'ピース';
     b.appendChild(num);
     var tier = frameTier(d);
-    if (tier) { // 装飾ティアのチップにはティア色の ★ (最上位は ★★)
-      var star = document.createElement('span');
-      star.className = 'diff-star ' + tier;
-      star.textContent = tier === 'royal' ? '★★' : '★';
-      b.appendChild(star);
-    }
+    var star = document.createElement('span');
+    star.className = 'diff-star ' + (tier || 'none');
+    star.textContent = tier ? (tier === 'royal' ? '★★' : '★') : '';
+    b.appendChild(star);
     b.setAttribute('aria-pressed', sel ? 'true' : 'false');
     b.addEventListener('click', function () {
       if (d === difficulty) return;

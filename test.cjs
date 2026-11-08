@@ -1231,7 +1231,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(css2.indexOf('.cert-badge-upper') !== -1, 'クリア画面: 金バッジの CSS がある');
 
   // スタート画面の難易度カード ★ (ティア色・最上位は ★★) とグループ見出し
-  ok(appSrc2.indexOf("star.className = 'diff-star ' + tier") !== -1 && appSrc2.indexOf('frameTier(d)') !== -1, '難易度カード: ティアに ★ を付ける配線がある');
+  ok(appSrc2.indexOf("star.className = 'diff-star ' + (tier || 'none')") !== -1 && appSrc2.indexOf('frameTier(d)') !== -1, '難易度チップ: ティアに ★ を数字の下へ付ける配線がある');
   ok(appSrc2.indexOf("tier === 'royal' ? '★★' : '★'") !== -1, '難易度カード: 最上位は ★★');
   ok(css2.indexOf('.diff-star') !== -1 && css2.indexOf('.diff-star.silver') !== -1 && css2.indexOf('.diff-star.royal') !== -1, '難易度カード: ★ の CSS (銀/特別含む) がある');
   // スタート画面再設計 (2026-11-08): 箱カルーセル + ピース数チップ。
