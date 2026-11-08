@@ -943,5 +943,48 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.resetAllData(null, 'daily-jigsaw:v1') === false, 'リセット: storage が無くても落ちない');
 }
 
+/* 26. PWA: manifest / アイコン / Service Worker / index.html・app.js の配線 */
+{
+  const fs = require('fs');
+  const path = require('path');
+  const readText = (p) => fs.readFileSync(path.join(__dirname, p), 'utf8');
+
+  let manifest = null;
+  try { manifest = JSON.parse(readText('manifest.webmanifest')); } catch (e) { /* 下の ok で落ちる */ }
+  ok(!!manifest, 'PWA: manifest.webmanifest が JSON として妥当');
+  ok(!!manifest && manifest.name === 'まいにちジグソー' && manifest.short_name === 'ジグソー', 'PWA: manifest の name / short_name');
+  ok(!!manifest && manifest.start_url === '.' && manifest.scope === '.' && manifest.display === 'standalone', 'PWA: manifest の start_url / scope / display');
+  ok(!!manifest && /^#[0-9a-f]{6}$/i.test(manifest.theme_color || '') && /^#[0-9a-f]{6}$/i.test(manifest.background_color || ''), 'PWA: manifest の theme_color / background_color が色指定');
+
+  const icons = (manifest && manifest.icons) || [];
+  ok(icons.some((i) => i.sizes === '192x192' && String(i.purpose || '').indexOf('any') !== -1)
+    && icons.some((i) => i.sizes === '512x512' && String(i.purpose || '').indexOf('any') !== -1)
+    && icons.some((i) => i.sizes === '512x512' && String(i.purpose || '').indexOf('maskable') !== -1),
+    'PWA: アイコン 192/512 (any) と 512 (maskable) が宣言されている');
+  ok(icons.length > 0 && icons.every((i) => fs.existsSync(path.join(__dirname, i.src))), 'PWA: 宣言されたアイコンファイルがすべて実在');
+  ok(icons.every((i) => {
+    const b = fs.readFileSync(path.join(__dirname, i.src));
+    const wh = i.sizes.split('x').map(Number);
+    return b.toString('latin1', 1, 4) === 'PNG' && b.readUInt32BE(16) === wh[0] && b.readUInt32BE(20) === wh[1];
+  }), 'PWA: アイコンは宣言どおりの寸法の PNG');
+
+  const sw = readText('sw.js');
+  ok(sw.indexOf("addEventListener('install'") !== -1 && sw.indexOf("addEventListener('activate'") !== -1 && sw.indexOf("addEventListener('fetch'") !== -1,
+    'PWA: sw.js に install / activate / fetch ハンドラがある');
+  ok(/VERSION\s*=\s*'[^']+'/.test(sw) && sw.indexOf('caches.delete') !== -1, 'PWA: sw.js はバージョン付きキャッシュを持ち旧キャッシュを削除する');
+  const precache = /var PRECACHE_URLS = \[([\s\S]*?)\];/.exec(sw);
+  ok(!!precache && precache[1].indexOf('index.html') !== -1 && precache[1].indexOf('app.js') !== -1 && precache[1].indexOf('.mp3') === -1,
+    'PWA: プリキャッシュは最小限で mp3 を含まない');
+  ok(sw.indexOf("request.mode === 'navigate'") !== -1, 'PWA: sw.js はナビゲーションを NetworkFirst で扱う');
+
+  const html = readText('index.html');
+  ok(html.indexOf('rel="manifest"') !== -1 && html.indexOf('manifest.webmanifest') !== -1
+    && html.indexOf('name="theme-color"') !== -1 && html.indexOf('rel="apple-touch-icon"') !== -1
+    && html.indexOf('apple-mobile-web-app-capable') !== -1,
+    'PWA: index.html に manifest リンク / theme-color / apple-touch-icon / モバイル向け meta がある');
+  ok(L && readText('app.js').indexOf("serviceWorker.register('sw.js')") !== -1 || readText('app.js').indexOf('serviceWorker.register("sw.js")') !== -1,
+    'PWA: app.js に Service Worker の登録コードがある');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -1091,6 +1091,16 @@ if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 (function () {
 var $ = function (id) { return document.getElementById(id); };
+
+/* ---------- PWA: Service Worker 登録 (失敗しても本体に影響させない) ---------- */
+try {
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* 登録失敗時は通常の Web ページとして動作 */ });
+    });
+  }
+} catch (e) { /* ignore */ }
+
 var STORE_KEY = 'daily-jigsaw:v1';
 var CELL = 100; // ワールド単位: 1セル = 100
 
