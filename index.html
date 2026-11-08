@@ -134,7 +134,6 @@
     <button id="wallFrameBtn" class="btn" type="button">額装する</button>
     <span id="wallFrameCount" class="wall-frame-count"></span>
     <button id="wallPaperBtn" class="btn" type="button">壁紙</button>
-    <span id="wallPaperInfo" class="wall-frame-count"></span>
   </div>
   <div id="wallTray"></div>
 </section>
@@ -174,18 +173,28 @@
         <label class="settings-row"><span>BGM音量</span><input type="range" id="bgmVolume" min="0" max="100" step="1"></label>
         <label class="settings-row"><span>効果音（SE）</span><input type="checkbox" id="seToggle"></label>
       </div>
-      <div class="settings-credits">
-        <span class="settings-section-label">BGMクレジット</span>
-        <ul id="bgmCredits" class="credit-list"></ul>
-      </div>
-      <div class="settings-credits">
-        <span class="settings-section-label">写真クレジット（CC BY）</span>
-        <ul id="photoCredits" class="credit-list"></ul>
-      </div>
+      <button id="settingsCreditsBtn" class="btn settings-item" type="button">クレジット</button>
       <button id="settingsRestartBtn" class="btn settings-item danger" type="button">やりなおす</button>
       <button id="settingsResetBtn" class="btn settings-item danger" type="button">データをリセット</button>
     </div>
     <button class="btn modal-close" type="button" data-settings-close>閉じる</button>
+  </div>
+</div>
+
+<!-- クレジット: 設定シートのボタンから開く。閉じると設定シートに戻る -->
+<div id="creditsModal" class="modal" hidden>
+  <div class="modal-backdrop" data-credits-close></div>
+  <div class="modal-body credits-body">
+    <h2>クレジット</h2>
+    <div class="settings-credits">
+      <span class="settings-section-label">BGMクレジット</span>
+      <ul id="bgmCredits" class="credit-list"></ul>
+    </div>
+    <div class="settings-credits">
+      <span class="settings-section-label">写真クレジット（CC BY）</span>
+      <ul id="photoCredits" class="credit-list"></ul>
+    </div>
+    <button class="btn modal-close" type="button" data-credits-close>閉じる</button>
   </div>
 </div>
 
@@ -229,7 +238,7 @@
       <p id="resultDateLine"></p>
       <p id="resultStatLine"></p>
     </div>
-    <p id="resultBadge" class="cert-badge" hidden>完成図未確認</p>
+    <p id="resultBadge" class="cert-badge" hidden>完成図を見ずにクリア</p>
     <div id="resultRewardItems" class="cert-rewards" hidden></div>
     <div class="cert-actions">
       <button id="resultWallBtn" class="btn cert-primary" type="button">壁をかざる</button>
@@ -323,6 +332,7 @@
   </div>
 </div>
 
+<div id="appToast" role="status" aria-live="polite"></div>
 <div id="fadeVeil"></div>
 <div id="confettiWrap" hidden><canvas id="confetti"></canvas></div>
 

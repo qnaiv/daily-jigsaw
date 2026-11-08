@@ -964,8 +964,11 @@ function wallItemById(id) {
 function wallItemWidthRatio(item) {
   return (item && WALL_SIZE_RATIO[item.size]) || WALL_SIZE_RATIO.M;
 }
+/* 最初から持っている壁アイテム (初日でも飾れるように)。付与抽選は
+ * 所持済みを対象から外すので、ここに入っていれば二重に届くことはない */
+var WALL_STARTER_ITEMS = ['w007', 'w030', 'w037']; // ユーカリリース / 葉っぱガーランド / ハートガーランド
 function emptyWall() {
-  return { owned: [], seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], lastDate: null, history: {} };
+  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], lastDate: null, history: {} };
 }
 /* 保存データの形が崩れていても使える形に寄せる (旧データには wall 自体がない)。
  * placed は配列順 = 重なり順を保ち、同じアイテム/記録の重複は先勝ちで落とす。 */
@@ -975,6 +978,10 @@ function normalizeWall(w) {
   if (Array.isArray(w.owned)) {
     out.owned = w.owned.filter(function (id, idx) { return !!wallItemById(id) && w.owned.indexOf(id) === idx; });
   }
+  // 初期アイテムは既存セーブにも不足分を補う (新規は emptyWall で所持済み)
+  WALL_STARTER_ITEMS.forEach(function (id) {
+    if (wallItemById(id) && out.owned.indexOf(id) < 0) out.owned.push(id);
+  });
   if (w.seen && typeof w.seen === 'object') {
     Object.keys(w.seen).forEach(function (id) {
       if (wallItemById(id) && typeof w.seen[id] === 'string') out.seen[id] = w.seen[id];
@@ -1176,6 +1183,7 @@ var PureLogic = {
   WALLPAPERS: WALLPAPERS, wallpaperById: wallpaperById,
   newPaperUnlocks: newPaperUnlocks, applyPaperUnlocks: applyPaperUnlocks,
   RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
+  WALL_STARTER_ITEMS: WALL_STARTER_ITEMS,
   wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
   emptyWall: emptyWall, normalizeWall: normalizeWall,
   wallDrawEligible: wallDrawEligible, drawWallItem: drawWallItem,
@@ -1541,8 +1549,9 @@ function bgmStopAll() {
   bgm.decks.forEach(function (d) { if (d) d.audio.pause(); });
 }
 /* タイトル画面 (スタート画面) にいる間は音を出さない (id 19)。
- * uiHome は同じクロージャ内で後から宣言される var (参照は実行時のみ)。 */
-function bgmOnTitle() { return uiHome; }
+ * ただし壁画面は例外: スタート画面から入っても BGM を流す。
+ * uiHome / uiWall は同じクロージャ内で後から宣言される var (参照は実行時のみ)。 */
+function bgmOnTitle() { return uiHome && !uiWall; }
 /* 最初の再生開始。呼ばれるのは机に入った時点 (openBox 完了・つづき再開) と、
  * ジェスチャごとの再試行 (bgmTryPlay) から。タイトル画面では開始しない */
 function bgmStart() {
@@ -1733,10 +1742,18 @@ function seReward() { // 報酬が届く/選ぶ: キラキラした2音 + 柔ら
   seTone(1760, 0.35, 0.13, 'sine', 0.08);
   seTone(659.25, 0.2, 0.09, 'sine', 0.05);
 }
-function sePlace() { // インテリアを机に置く: 陶器の「コトン」
-  if (!seInGame()) return;
+/* 配置音を鳴らしてよい場面: プレイ中、または壁画面 (スタート画面経由でも
+ * uiWall が立っていれば鳴らす)。素のスタート画面では鳴らさない */
+function sePlaceOk() { return seReady() && (!uiHome || uiWall); }
+function sePlace() { // 壁に置く: 陶器の「コトン」
+  if (!sePlaceOk()) return;
   seTone([320, 140], 0.09, 0.32);
   seNoise(0.04, 'lowpass', [700, 400], 0.14);
+}
+function seUnplace() { // 壁からしまう: 配置音より控えめな「コトッ」
+  if (!sePlaceOk()) return;
+  seTone([260, 120], 0.07, 0.15);
+  seNoise(0.03, 'lowpass', [600, 350], 0.06);
 }
 /* ユーザー操作のたびにキャプチャ段階で受ける (ステージ側の pointerdown
  * ハンドラより先に AudioContext の生成と BGM の開始/再試行が走る)。
@@ -3036,7 +3053,7 @@ function onClear() {
   persistProgress();
   $('streakNum').textContent = computeStreak();
   runConfetti();
-  // 記録証 (C案): 額装した完成盤面 + 記録2行 + 完成図未確認バッジ
+  // 記録証 (C案): 額装した完成盤面 + 記録2行 + 「完成図を見ずにクリア」バッジ
   var dp = playDate.split('-');
   $('resultDateLine').textContent = Number(dp[0]) + '年' + Number(dp[1]) + '月' + Number(dp[2]) + '日 ・ ' + difficulty + 'ピース';
   $('resultStatLine').textContent = 'タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
@@ -3071,6 +3088,16 @@ function flashShareBtn(text) {
   var orig = '結果を共有';
   btn.textContent = text;
   setTimeout(function () { btn.textContent = orig; }, 1500);
+}
+/* 汎用の短い注記 (数秒で消える)。モーダルの上にも出る */
+var appToastTimer = null;
+function showToast(text) {
+  var el = $('appToast');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add('show');
+  if (appToastTimer) clearTimeout(appToastTimer);
+  appToastTimer = setTimeout(function () { el.classList.remove('show'); }, 3800);
 }
 /* 文字で共有: Web Share が使えればそれ、無ければクリップボードへ。
  * 文面は buildShareText (URL + #まいにちジグソー を必ず含む) */
@@ -3122,12 +3149,18 @@ function buildShareImage(res) {
     ctx.fillStyle = '#7a3b3a';
     ctx.font = '700 96px "Hiragino Mincho ProN", "Hiragino Mincho Pro", "Yu Mincho", "YuMincho", "Noto Serif JP", serif';
     ctx.fillText('クリア', tx, 292);
-    // 完成図を見ずにクリアした場合は見出しの横に小さく明記する
+    // 完成図を見ずにクリアした場合はバッジで明記する。位置は見出しの
+    // 実測幅 + 余白で決め、文字には絶対に重ねない。バッジが長くて
+    // 横に収まらないときは見出しの下の行に置き、以降の記録行を
+    // その分だけ下げてピルと重ならないようにする
+    var statShift = 0;
     if (!res.previewViewed) {
-      var badgeText = '完成図未確認';
+      var titleW = ctx.measureText('クリア').width; // 見出しフォントが有効なうちに実測する
+      var badgeText = '完成図を見ずにクリア';
       ctx.font = '600 25px sans-serif';
       var bw2 = ctx.measureText(badgeText).width + 32;
-      var bh2 = 40, bx2 = tx + 224, by2 = 256;
+      var bh2 = 40, bx2 = tx + titleW + 26, by2 = 292 - 60;
+      if (bx2 + bw2 > W - 24) { bx2 = tx; by2 = 308; statShift = 14; } // 横に収まらなければ見出しの下の行へ
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(bx2, by2, bw2, bh2, bh2 / 2);
       else ctx.rect(bx2, by2, bw2, bh2);
@@ -3140,13 +3173,13 @@ function buildShareImage(res) {
     }
     ctx.fillStyle = '#3a3230';
     ctx.font = '600 42px sans-serif';
-    ctx.fillText(res.date, tx, 388);
-    ctx.fillText(res.pieces + 'ピース ・ ' + res.moves + '手', tx, 452);
+    ctx.fillText(res.date, tx, 388 + statShift);
+    ctx.fillText(res.pieces + 'ピース ・ ' + res.moves + '手', tx, 452 + statShift);
     ctx.font = '800 54px sans-serif';
-    ctx.fillText('タイム ' + formatTime(res.timeSec), tx, 532);
+    ctx.fillText('タイム ' + formatTime(res.timeSec), tx, 532 + statShift);
     ctx.fillStyle = 'rgba(58,50,48,0.6)';
     ctx.font = '500 27px sans-serif';
-    ctx.fillText(GAME_URL, tx, 588);
+    ctx.fillText(GAME_URL, tx, 588 + statShift);
     return cv;
   });
 }
@@ -3158,20 +3191,31 @@ function downloadShareImage(cv) {
   a.click();
   a.remove();
 }
-/* 画像で共有: files 共有が使える環境ではそれ、無ければダウンロード */
+/* 画像共有できない環境向けの受け皿: 保存したことを必ず知らせる
+ * (無言でダウンロードすると「共有できず保存しようとする」バグに見える) */
+var SHARE_SAVE_NOTE = 'このブラウザでは画像の直接共有ができないため、画像を保存しました';
+function saveShareImageFallback(cv) {
+  downloadShareImage(cv);
+  showToast(SHARE_SAVE_NOTE);
+}
+/* 画像で共有: files 共有が使える環境ではそれ、無ければ保存 + 注記。
+ * share() がキャンセル (AbortError) 以外で失敗したときも保存に落とす */
 function shareResultImage() {
   $('shareChoiceModal').hidden = true;
   if (!lastClearResult) return;
   buildShareImage(lastClearResult).then(function (cv) {
     if (!cv) return;
-    if (!cv.toBlob) { downloadShareImage(cv); return; }
+    if (!cv.toBlob) { saveShareImageFallback(cv); return; }
     cv.toBlob(function (blob) {
-      if (!blob) { downloadShareImage(cv); return; }
+      if (!blob) { saveShareImageFallback(cv); return; }
       var file = new File([blob], 'mainichi-jigsaw-' + lastClearResult.date + '.png', { type: 'image/png' });
       if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
-        navigator.share({ files: [file] }).catch(function () { /* キャンセルは無視 */ });
+        navigator.share({ files: [file] }).catch(function (err) {
+          if (err && err.name === 'AbortError') return; // ユーザーのキャンセルは何もしない
+          saveShareImageFallback(cv);
+        });
       } else {
-        downloadShareImage(cv);
+        saveShareImageFallback(cv);
       }
     }, 'image/png');
   });
@@ -3352,6 +3396,7 @@ function showWall(from) {
   wallBackToHome = from === 'home';
   wallSelected = null;
   wallDrag = null;
+  bgmTryPlay(); // 壁画面でも BGM を流す (開始はこのタップを起点にする)
   // 壁を開いたら未確認のごほうび/解放は確認済み扱いにする
   if (store.wall.pending.length || store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length) {
     store.wall.pending = [];
@@ -3384,8 +3429,6 @@ function renderWall() {
   paintWallBackdrop(); // 背景 Canvas (壁紙 + 床 + 巾木) を一番奥に敷く
   store.wall.frames.forEach(function (f) { stage.appendChild(buildWallFrameEl(f)); });
   store.wall.placed.forEach(function (p) { stage.appendChild(buildWallItemEl(p)); });
-  var paper = wallpaperById(store.wall.paper);
-  $('wallPaperInfo').textContent = paper ? paper.name : '';
   renderWallTray();
   updateWallSelBar();
 }
@@ -4038,6 +4081,7 @@ function unplaceWallSelected() {
   wallSelected = null;
   saveStore();
   renderWall();
+  seUnplace();
 }
 /* 下部トレイ: 所持アイテム (タップで配置/選択) + 額装の導線 */
 function renderWallTray() {
@@ -4463,7 +4507,7 @@ function renderCollection() {
     card.className = 'card';
     card.type = 'button';
     var badges = '<span class="badge">' + r.pieces + 'ピース</span>' +
-      (r.previewViewed ? '<span class="badge">完成図: 見た</span>' : '<span class="badge praise">完成図を見ずにクリア！</span>');
+      (r.previewViewed ? '<span class="badge">完成図: 見た</span>' : '<span class="badge praise">完成図を見ずにクリア</span>');
     var entry = entryForRecord(r);
     var thumb = entryThumbUrl(entry);
     var titleLine = entry && entry.type === 'url' && entry.title
@@ -4682,6 +4726,9 @@ function closeSettings() {
     persistProgress();
   }
 }
+/* クレジットは設定シートの上に重ねて開く (閉じれば設定に戻る) */
+function openCredits() { $('creditsModal').hidden = false; }
+function closeCredits() { $('creditsModal').hidden = true; }
 
 /* ---------- やりなおす (進行を消して未開始の箱に戻る) ---------- */
 function restartPuzzle() {
@@ -4715,6 +4762,10 @@ function wireControls() {
   $('seToggleStart').addEventListener('change', function () { onSeToggleChanged($('seToggleStart').checked); });
   document.querySelectorAll('[data-settings-close]').forEach(function (el) {
     el.addEventListener('click', closeSettings);
+  });
+  $('settingsCreditsBtn').addEventListener('click', openCredits);
+  document.querySelectorAll('[data-credits-close]').forEach(function (el) {
+    el.addEventListener('click', closeCredits);
   });
   $('settingsPauseBtn').addEventListener('click', function () {
     if (!state || !state.started || state.cleared) return;

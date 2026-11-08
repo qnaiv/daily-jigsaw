@@ -879,8 +879,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
   // 付与の適用 (所持 + seen 日付のみ。壁への自動配置はしない)
   const gw = L.emptyWall();
-  L.grantWallItems(gw, ['w007', 'w007', 'w999'], '2026-11-08');
-  ok(eq(gw.owned, ['w007']) && gw.seen.w007 === '2026-11-08' && gw.placed.length === 0, '壁付与: 重複/未知は無視され seen に日付が残り、自動配置はされない');
+  L.grantWallItems(gw, ['w001', 'w001', 'w999'], '2026-11-08');
+  ok(eq(gw.owned, ['w007', 'w030', 'w037', 'w001']) && gw.seen.w001 === '2026-11-08' && gw.placed.length === 0, '壁付与: 重複/未知は無視され seen に日付が残り、自動配置はされない');
   L.recordWallHistory(gw, '2026-11-08', ['w007']);
   L.recordWallHistory(gw, '2026-11-08', []);
   ok(eq(gw.history, { '2026-11-08': ['w007'] }), '壁付与: 履歴は日付キーで記録され、空配列では上書きしない');
@@ -919,12 +919,21 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
     frames: [{ recordKey: '2026-11-08|36|p1', x: 0.5, y: 0.38, w: 0.3, color: 'royal' }, { recordKey: 'bad', x: 0, y: 0, w: 1.5, color: 'walnut' }],
     frameUnlocks: ['black'], pendingUnlocks: ['gold', 'walnut'], lastDate: '2026-11-08', history: {}
   });
-  ok(eq(norm.owned, ['w001']) && eq(Object.keys(norm.seen), ['w001']) && eq(norm.pending, ['w002']), '壁保存: 未知の id は所持/初見/未受取から落ちる');
+  ok(eq(norm.owned, ['w001', 'w007', 'w030', 'w037']) && eq(Object.keys(norm.seen), ['w001']) && eq(norm.pending, ['w002']), '壁保存: 未知の id は所持/初見/未受取から落ちる (初期アイテムは補われる)');
   ok(norm.placed.length === 1 && norm.placed[0].id === 'w001', '壁保存: 配置は所持アイテムのみ残る');
   ok(norm.frames.length === 1 && norm.frames[0].color === 'walnut', '壁保存: 未解放スタイルの額は walnut に戻り、不正な記録キーは落ちる');
   ok(norm.frameUnlocks.includes('oak') && norm.frameUnlocks.includes('walnut') && norm.frameUnlocks.includes('black'), '壁保存: 初期スタイルは常に解放済み扱い');
   ok(eq(norm.pendingUnlocks, ['gold']), '壁保存: 解放通知待ちは unlockAt>0 のものだけ残る');
   ok(eq(L.normalizeWall(null), L.emptyWall()) && eq(L.normalizeWall('garbage'), L.emptyWall()), '壁保存: 壊れた値は空の形に初期化');
+
+  // 初期インテリア 3 点 (w007 ユーカリリース / w030 葉っぱガーランド / w037 ハートガーランド)
+  ok(eq(L.WALL_STARTER_ITEMS, ['w007', 'w030', 'w037']) && L.WALL_STARTER_ITEMS.every(id => !!L.wallItemById(id)), '初期アイテム: 3 点が仕様どおりで全てカタログに実在');
+  ok(eq(L.emptyWall().owned, ['w007', 'w030', 'w037']) && L.emptyWall().placed.length === 0, '初期アイテム: 新規は 3 点所持・未配置 (トレイ) で開始');
+  const mig1 = L.normalizeWall({ owned: ['w001'], placed: [], frames: [] });
+  ok(eq(mig1.owned, ['w001', 'w007', 'w030', 'w037']), '初期アイテム移行: 既存セーブに不足分が補われる');
+  const mig2 = L.normalizeWall({ owned: ['w037', 'w001'], placed: [], frames: [] });
+  ok(eq(mig2.owned, ['w037', 'w001', 'w007', 'w030']), '初期アイテム移行: 所持済みは重複せず、欠けた分だけ末尾に補われる');
+  ok(L.WALL_STARTER_ITEMS.every(id => !L.wallDrawEligible(L.wallItemById(id), L.emptyWall(), 1)), '初期アイテム: 所持済みなので付与抽選の対象に入らない');
 
   // 配置クランプ
   const cl = L.clampItemPos(-3, 7);
@@ -1075,6 +1084,32 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(html.indexOf('id="wallPaperBtn"') !== -1 && html.indexOf('id="paperPickerView"') !== -1 && html.indexOf('id="paperPickerGrid"') !== -1 && html.indexOf('id="paperPickerBack"') !== -1, '壁紙配線: index.html に 壁紙ボタンとピッカーがある');
   ok(appSrc.indexOf('paintWallBackdrop') !== -1 && appSrc.indexOf('paintWallpaperRegion') !== -1 && appSrc.indexOf('openPaperPicker') !== -1, '壁紙配線: app.js に背景ペインターとピッカーがある');
   ok(css.indexOf('.wall-bg') !== -1 && css.indexOf('#paperPickerGrid') !== -1 && css.indexOf('#wallStage::after') === -1, '壁紙配線: style.css に背景 Canvas とピッカーの様式があり、旧 ::after 巾木は撤去');
+
+  // 壁まわり改善 (2026-11-08 実機テスト): 壁でも BGM / 配置 SE / クレジット分離 / 壁紙名ラベルなし
+  ok(appSrc.indexOf('function bgmOnTitle() { return uiHome && !uiWall; }') !== -1, '壁BGM: タイトル判定は壁画面を例外にする (壁では流れる)');
+  const showWallBody = appSrc.slice(appSrc.indexOf('function showWall(from)'), appSrc.indexOf('function hideWall()'));
+  ok(showWallBody.indexOf('bgmTryPlay()') !== -1, '壁BGM: 壁を開くたびに開始/再開を試みる');
+  ok(appSrc.indexOf('function seUnplace()') !== -1 && appSrc.indexOf('sePlaceOk()') !== -1, '壁SE: 配置可否ゲートと「しまう」音がある');
+  const unplaceBody = appSrc.slice(appSrc.indexOf('function unplaceWallSelected()'), appSrc.indexOf('function renderWallTray()'));
+  ok(unplaceBody.indexOf('seUnplace()') !== -1, '壁SE: しまう操作で控えめな音が鳴る');
+  ok(html.indexOf('id="creditsModal"') !== -1 && html.indexOf('id="settingsCreditsBtn"') !== -1 && html.indexOf('id="bgmCredits"') !== -1 && html.indexOf('id="photoCredits"') !== -1, 'クレジット: 設定のボタンと専用モーダル (一覧はモーダル側) がある');
+  const settingsBlock = html.slice(html.indexOf('id="settingsModal"'), html.indexOf('id="creditsModal"'));
+  ok(settingsBlock.indexOf('bgmCredits') === -1 && settingsBlock.indexOf('photoCredits') === -1 && settingsBlock.indexOf('settingsCreditsBtn') !== -1, 'クレジット: 設定シート内に長い一覧は残っていない');
+  ok(html.indexOf('wallPaperInfo') === -1 && appSrc.indexOf('wallPaperInfo') === -1, '壁紙名ラベル: 壁画面の現在壁紙名テキストは撤去');
+
+  // 画像共有のフォールバック: 保存に落ちたら必ず注記を出す (成功時・キャンセル時は出さない)
+  ok(html.indexOf('id="appToast"') !== -1 && appSrc.indexOf('function showToast(') !== -1 && css.indexOf('#appToast') !== -1, '共有注記: 汎用トースト (要素/関数/CSS) がある');
+  ok(appSrc.indexOf('このブラウザでは画像の直接共有ができないため、画像を保存しました') !== -1, '共有注記: 保存フォールバックの文言がある');
+  const saveFbBody = appSrc.slice(appSrc.indexOf('function saveShareImageFallback('), appSrc.indexOf('function shareResultImage()'));
+  ok(saveFbBody.indexOf('downloadShareImage(cv)') !== -1 && saveFbBody.indexOf('showToast(SHARE_SAVE_NOTE)') !== -1, '共有注記: 保存フォールバックは保存+注記をセットで行う');
+  const shareImgBody = appSrc.slice(appSrc.indexOf('function shareResultImage()'), appSrc.indexOf('function runConfetti()'));
+  ok(shareImgBody.indexOf('AbortError') !== -1 && (shareImgBody.match(/saveShareImageFallback\(cv\)/g) || []).length >= 3, '共有注記: toBlob不可/Blob失敗/未対応/share失敗 (キャンセル除く) の全経路が保存+注記に落ちる');
+
+  // バッジ文言は「完成図を見ずにクリア」 (旧「完成図未確認」は残さない)
+  ok(appSrc.indexOf('完成図未確認') === -1 && html.indexOf('完成図未確認') === -1, 'バッジ文言: 旧文言「完成図未確認」はコード/HTMLに残っていない');
+  ok(appSrc.indexOf("'完成図を見ずにクリア'") !== -1 && html.indexOf('>完成図を見ずにクリア<') !== -1, 'バッジ文言: 共有画像とクリア画面の両方が新文言');
+  const buildImgBody = appSrc.slice(appSrc.indexOf('function buildShareImage('), appSrc.indexOf('function downloadShareImage('));
+  ok(buildImgBody.indexOf("measureText('クリア')") !== -1 && buildImgBody.indexOf('statShift') !== -1, '共有画像バッジ: 見出し実測幅で配置し、下行配置時は記録行を下げて重ねない');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
