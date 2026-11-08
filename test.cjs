@@ -830,92 +830,105 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.boxTapAction({ started: true, cleared: true, clusters: [{ pieces: [0] }] }) === 'resume', '箱タップ: クリア済みも箱から盤面へ入る');
 }
 
-/* 25. クリア報酬インテリアの純粋ロジック (ランダム付与 + レア度) */
+/* 25. 壁インテリア (案B) の純粋ロジック: 壁カタログ + ランダム付与 + フレーム解放 + リセット */
 {
   // カタログの健全性
-  const ids = L.REWARD_ITEMS.map(it => it.id);
-  ok(L.REWARD_ITEMS.length === 200, '報酬: カタログは 200 点');
-  ok(new Set(ids).size === ids.length, '報酬: アイテム id は一意');
-  ok(L.REWARD_ITEMS.every(it => it.name && it.size > 0), '報酬: 全点に名前・サイズがある');
-  ok(L.REWARD_ITEMS.every(it => { const p = it.def || L.defaultItemPos(it); return p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1; }), '報酬: 全点の既定位置 (def または算出) が比率内に収まる');
-  ok(L.REWARD_ITEMS.filter(it => it.kind === 'grant').length === 2 && L.REWARD_ITEMS.filter(it => it.kind === 'grant').every(it => it.grantAt > 0), '報酬: 直接付与は写真立て/額縁の 2 点で節目回数がある');
-  ok(L.REWARD_ITEMS.filter(it => it.kind === 'draw').every(it => it.rarity === 1 || it.rarity === 2 || it.rarity === 3), '報酬: 抽選アイテムは全点レア度 1..3');
-  ok(L.REWARD_ITEMS.filter(it => it.photo).every(it => it.photoRect && it.photoRect.w > 0 && it.photoRect.h > 0 && it.photoRect.x + it.photoRect.w <= 1.001 && it.photoRect.y + it.photoRect.h <= 1.001), '報酬: 写真アイテムの写真窓は画像内に収まる');
-  ok(L.rewardItemById('plant').name === 'ミニ観葉植物' && L.rewardItemById('nope') === null, '報酬: id 引きができる');
+  const ids = L.WALL_CATALOG.map(it => it.id);
+  ok(L.WALL_CATALOG.length === 50, '壁: カタログは 50 点');
+  ok(new Set(ids).size === ids.length && ids.every((id, i) => id === 'w' + String(i + 1).padStart(3, '0')), '壁: id は w001..w050 で一意・連番');
+  ok(L.WALL_CATALOG.every(it => it.name && ['S', 'M', 'L'].includes(it.size)), '壁: 全点に名前・サイズ感がある');
+  ok(L.WALL_CATALOG.filter(it => it.rarity === 3).length === 3, '壁: ★3 は 3 点');
+  ok(L.WALL_CATALOG.filter(it => it.rarity === 2).length === 15, '壁: ★2 は 15 点');
+  ok(L.WALL_CATALOG.filter(it => it.rarity === 1).length === 32, '壁: ★1 は 32 点');
+  ok(L.wallItemById('w018').rarity === 3 && L.wallItemById('w028').rarity === 3 && L.wallItemById('w045').rarity === 3, '壁: ★3 は #18 ハーフリース / #28 折り鶴 / #45 星型ランタン');
+  ok(L.WALL_SIZE_RATIO.S < L.WALL_SIZE_RATIO.M && L.WALL_SIZE_RATIO.M < L.WALL_SIZE_RATIO.L, '壁: サイズ比 S<M<L');
+  ok(L.rarityLabel(L.wallItemById('w018')) === '★3' && L.rarityLabel(L.wallItemById('w001')) === '★1' && L.rarityLabel(null) === '', '壁: レア度ラベル');
   ok(L.RARITY_TABLE[1].weight > L.RARITY_TABLE[2].weight && L.RARITY_TABLE[2].weight > L.RARITY_TABLE[3].weight && L.RARITY_TABLE[3].weight > 0, 'レア度: 重みは ★1 > ★2 > ★3 の単調減少');
-  ok(L.rarityLabel(L.rewardItemById('teapot')) === '★3' && L.rarityLabel(L.rewardItemById('mug')) === '★1' && L.rarityLabel(L.rewardItemById('frame')) === '', 'レア度: ラベル表示 (節目枠は無表示)');
 
-  // 節目の直接付与
-  const empty = L.emptyRewards();
-  ok(eq(L.milestoneGrants(empty, 2), []), '報酬付与: 累計2回では何も届かない');
-  ok(eq(L.milestoneGrants(empty, 3), ['frame']), '報酬付与: 累計3回で写真立て');
-  ok(eq(L.milestoneGrants(empty, 9), ['frame']), '報酬付与: 累計9回は写真立てのみ');
-  ok(eq(L.milestoneGrants(empty, 10), ['frame', 'gaku']), '報酬付与: 累計10回で額縁も届く');
-  ok(eq(L.milestoneGrants({ owned: ['frame'], placed: {}, pending: null, lastDate: null, history: {} }, 10), ['gaku']), '報酬付与: 所持済みは再付与しない');
+  // 季節ゲート
+  const seasonal = {};
+  L.WALL_CATALOG.filter(it => it.months).forEach(it => { seasonal[it.id] = it.months; });
+  ok(eq(seasonal, { w001: [3, 4, 5], w003: [6], w004: [7, 8], w009: [10, 11], w015: [6, 7] }), '壁: 季節ゲートは 5 点だけ・月が仕様どおり');
+  ok(L.wallDrawEligible(L.wallItemById('w001'), L.emptyWall(), 4) === true && L.wallDrawEligible(L.wallItemById('w001'), L.emptyWall(), 6) === false, '壁: 桜は春のみ抽選対象');
 
-  // ランダム抽選: 生涯初回は観葉植物が確定
-  ok(L.drawRewardItem(L.emptyRewards(), { month: 6, firstEver: true }, () => 0.99) === 'plant', '抽選: 生涯初回はミニ観葉植物が確定');
-  // 季節: 季節物はその月だけ対象 (rng を全域スイープして到達可能性を検証)
-  const seasonalIds = L.REWARD_ITEMS.filter(it => it.months).map(it => it.id);
-  ok(seasonalIds.length >= 20, '抽選: 季節アイテムが複数ある (' + seasonalIds.length + ' 点)');
-  const seenByMonth = { 1: new Set(), 6: new Set(), 12: new Set() };
-  for (const m of [1, 6, 12]) {
-    for (let i = 0; i < 400; i++) {
-      const id = L.drawRewardItem(L.emptyRewards(), { month: m, firstEver: false }, () => i / 400);
-      if (id) seenByMonth[m].add(id);
-    }
+  // 抽選: 季節外は絶対に出ない / 所持済みは出ない / 全所持は null / ★3 は希少 (rng 全域スイープ)
+  const seenDec = new Set();
+  for (let i = 0; i < 400; i++) {
+    const id = L.drawWallItem(L.emptyWall(), { month: 12 }, () => i / 400);
+    if (id) seenDec.add(id);
   }
-  ok([...seenByMonth[12]].some(id => { const it = L.rewardItemById(id); return it.months && it.months.includes(12); }), '抽選: 12月は 12月季節物に届く');
-  ok([...seenByMonth[6]].every(id => { const it = L.rewardItemById(id); return !it.months || it.months.includes(6); }), '抽選: 6月は季節外アイテムが絶対に出ない');
-  ok([...seenByMonth[1]].every(id => { const it = L.rewardItemById(id); return !it.months || it.months.includes(1); }), '抽選: 1月も季節外は出ない');
-  // レア度の偏り: 決定的スイープで ★3 の出現率は ★1 より十分小さい
-  let c1 = 0, c3 = 0, N = 2000;
+  ok([...seenDec].every(id => { const it = L.wallItemById(id); return !it.months; }), '壁抽選: 12月は季節物が一切出ない');
+  ok(seenDec.size >= 30, '壁抽選: 通年アイテムには広く届く (' + seenDec.size + ' 種)');
+  const seenJun = new Set();
+  for (let i = 0; i < 400; i++) {
+    const id = L.drawWallItem(L.emptyWall(), { month: 6 }, () => i / 400);
+    if (id) seenJun.add(id);
+  }
+  ok(seenJun.has('w003') && seenJun.has('w015') && !seenJun.has('w001'), '壁抽選: 6月は あじさい/ラベンダー が出て 桜は出ない');
+  let c1 = 0, c3 = 0; const N = 2000;
   for (let i = 0; i < N; i++) {
-    const id = L.drawRewardItem(L.emptyRewards(), { month: 6, firstEver: false }, () => i / N);
-    const r = L.rewardItemById(id).rarity;
+    const id = L.drawWallItem(L.emptyWall(), { month: 1 }, () => i / N);
+    const r = L.wallItemById(id).rarity;
     if (r === 1) c1++; else if (r === 3) c3++;
   }
-  ok(c3 > 0 && c3 < c1 / 5, '抽選: ★3 は出るが ★1 の 1/5 未満の頻度 (実測 ★3=' + c3 + ' ★1=' + c1 + ')');
-  // 所持済みは二度と出ない / 全所持なら null
-  const one = L.emptyRewards(); one.owned = ['mug'];
-  ok(L.drawRewardItem(one, { month: 6, firstEver: false }, () => 0) !== 'mug', '抽選: 所持済みは出ない');
-  const allOwned = L.emptyRewards(); allOwned.owned = ids.slice();
-  ok(L.drawRewardItem(allOwned, { month: 12, firstEver: false }, () => 0.5) === null, '抽選: 全所持なら null');
-  ok(L.rewardDrawEligible(L.rewardItemById('frame'), L.emptyRewards(), 6) === false, '抽選: 節目枠は抽選対象外');
+  ok(c3 > 0 && c3 < c1 / 5, '壁抽選: ★3 は出るが ★1 の 1/5 未満の頻度 (実測 ★3=' + c3 + ' ★1=' + c1 + ')');
+  const oneW = L.emptyWall(); oneW.owned = ['w007'];
+  ok(L.drawWallItem(oneW, { month: 6 }, () => 0) !== 'w007', '壁抽選: 所持済みは出ない');
+  const allW = L.emptyWall(); allW.owned = ids.slice();
+  ok(L.drawWallItem(allW, { month: 6 }, () => 0.5) === null, '壁抽選: 全所持なら null');
 
-  // 付与の適用: 所持 + 既定配置 + 履歴
-  const rw = L.emptyRewards();
-  L.grantRewardItems(rw, ['mug', 'frame']);
-  ok(rw.owned.includes('mug') && rw.placed.mug.x === L.rewardItemById('mug').def.x, '報酬付与: 既定位置に自動配置される');
-  ok(rw.placed.frame && rw.placed.frame.z >= 0, '報酬付与: 直接付与も配置される');
-  const rwNew = L.emptyRewards();
-  L.grantRewardItems(rwNew, ['pl01']);
-  ok(rwNew.placed.pl01.x >= 0 && rwNew.placed.pl01.x <= 1 && rwNew.placed.pl01.y >= 0 && rwNew.placed.pl01.y <= 1, '報酬付与: def 無しアイテムも算出位置に置かれる');
+  // 付与の適用 (所持 + seen 日付のみ。壁への自動配置はしない)
+  const gw = L.emptyWall();
+  L.grantWallItems(gw, ['w007', 'w007', 'w999'], '2026-11-08');
+  ok(eq(gw.owned, ['w007']) && gw.seen.w007 === '2026-11-08' && gw.placed.length === 0, '壁付与: 重複/未知は無視され seen に日付が残り、自動配置はされない');
+  L.recordWallHistory(gw, '2026-11-08', ['w007']);
+  L.recordWallHistory(gw, '2026-11-08', []);
+  ok(eq(gw.history, { '2026-11-08': ['w007'] }), '壁付与: 履歴は日付キーで記録され、空配列では上書きしない');
 
-  // 旧 3 択 pending の精算: 候補から 1 点が付与され、履歴は pending の日付
-  const leg = L.emptyRewards();
-  leg.pending = { date: '2026-11-05', choices: ['mug', 'books', 'candle'] };
-  const settled = L.settleLegacyPending(leg, () => 0);
-  ok(settled === 'mug' && leg.pending === null && leg.owned.includes('mug'), '旧 pending 精算: 候補の先頭 (rng=0) が付与され pending が消える');
-  ok(eq(leg.history['2026-11-05'], ['mug']) && leg.lastDate === '2026-11-05', '旧 pending 精算: 履歴と lastDate が pending の日付になる');
-  ok(L.settleLegacyPending(L.emptyRewards(), () => 0) === null, '旧 pending 精算: pending が無ければ null');
-  const legOwned = L.emptyRewards();
-  legOwned.owned = ['mug']; legOwned.pending = { date: '2026-11-05', choices: ['mug'] };
-  ok(L.settleLegacyPending(legOwned, () => 0) === null && legOwned.pending === null, '旧 pending 精算: 候補が全て所持済みなら付与なしで解消');
+  // フレームカタログと解放 (frame-design.md: 20 種・初期 2 種・タイプを散らした解放順)
+  ok(L.FRAME_STYLES.length === 20, 'フレーム: 20 種');
+  ok(eq(L.FRAME_STYLES.map(s => s.id), ['oak', 'walnut', 'black', 'ribbon', 'white', 'circle', 'pink', 'gold', 'flower', 'sky', 'antique', 'silver', 'cherry', 'starry', 'green', 'bronze', 'navy', 'rainbow', 'pearl', 'royal']), 'フレーム: 解放順が仕様どおり');
+  ok(L.FRAME_STYLES.every(s => s.color && s.width > 0 && ['none', 'line', 'corners', 'ribbon', 'stars', 'flowers', 'pearl', 'crown'].includes(s.ornament) && ['rect', 'circle'].includes(s.shape)), 'フレーム: 全種に色・枠幅・装飾・形がある (データ駆動)');
+  ok(L.frameStyleById('circle').shape === 'circle' && L.FRAME_STYLES.filter(s => s.shape === 'circle').length === 1, 'フレーム: 円形は まるフレーム だけ');
+  const fw = L.emptyWall();
+  ok(eq(fw.frameUnlocks, ['oak', 'walnut']), 'フレーム: 初期解放は oak / walnut の 2 種');
+  ok(eq(L.newFrameUnlocks(fw, 2), []) && eq(L.newFrameUnlocks(fw, 3), ['black']), 'フレーム: 3 回で ブラック 解放');
+  ok(eq(L.newFrameUnlocks(fw, 5), ['black', 'ribbon']) && eq(L.newFrameUnlocks(fw, 12), ['black', 'ribbon', 'white', 'circle']), 'フレーム: 序盤に 色/装飾/形 が散らばって解放される');
+  ok(L.newFrameUnlocks(fw, 209).length === 17 && L.newFrameUnlocks(fw, 210).length === 18, 'フレーム: 210 回で全 18 種解放');
+  const fw2 = L.emptyWall();
+  const added = L.applyFrameUnlocks(fw2, 12);
+  ok(eq(added, ['black', 'ribbon', 'white', 'circle']) && eq(fw2.pendingUnlocks, added) && fw2.frameUnlocks.length === 6, 'フレーム: 解放が frameUnlocks と通知待ち (pendingUnlocks) に反映');
+  ok(eq(L.applyFrameUnlocks(fw2, 12), []) && eq(L.applyFrameUnlocks(fw2, 4), []), 'フレーム: 解放は冪等 (再適用・巻き戻しなし)');
 
-  // 保存形式の正規化 (壊れた/未知のデータを読んでも落ちない・既存フィールドは保持)
-  const norm = L.normalizeRewards({ owned: ['mug', 'unknown-x'], placed: { mug: { x: 0.5, y: 0.5, z: 2 }, 'unknown-x': { x: 0, y: 0, z: 1 } }, pending: { date: '2026-11-08', choices: ['mug', 'unknown-x'] }, lastDate: '2026-11-08', history: { '2026-11-08': ['mug', 'unknown-x'] } });
-  ok(eq(norm.owned, ['mug']), '報酬保存: 未知の id は所持から落ちる');
-  ok(!!norm.placed.mug && !('unknown-x' in norm.placed), '報酬保存: 未知の id の配置も落ちる');
-  ok(eq(norm.pending.choices, ['mug']), '報酬保存: pending の候補からも未知の id が落ちる');
-  ok(eq(norm.history['2026-11-08'], ['mug']) && norm.lastDate === '2026-11-08', '報酬保存: 履歴と最終付与日は保持される');
-  ok(eq(L.normalizeRewards(null), L.emptyRewards()) && eq(L.normalizeRewards('garbage'), L.emptyRewards()), '報酬保存: 壊れた値は空の形に初期化');
+  // 保存形式の正規化 (壊れた/未知のデータを読んでも落ちない)
+  const norm = L.normalizeWall({
+    owned: ['w001', 'nope'], seen: { w001: '2026-11-08', nope: '2026-11-08' }, pending: ['w002', 'nope'],
+    placed: [{ id: 'w001', x: 0.5, y: 0.4 }, { id: 'nope', x: 0, y: 0 }, { id: 'w003', x: 0.5, y: 0.4 }],
+    frames: [{ recordKey: '2026-11-08|36|p1', x: 0.5, y: 0.38, w: 0.3, color: 'royal' }, { recordKey: 'bad', x: 0, y: 0, w: 1.5, color: 'walnut' }],
+    frameUnlocks: ['black'], pendingUnlocks: ['gold', 'walnut'], lastDate: '2026-11-08', history: {}
+  });
+  ok(eq(norm.owned, ['w001']) && eq(Object.keys(norm.seen), ['w001']) && eq(norm.pending, ['w002']), '壁保存: 未知の id は所持/初見/未受取から落ちる');
+  ok(norm.placed.length === 1 && norm.placed[0].id === 'w001', '壁保存: 配置は所持アイテムのみ残る');
+  ok(norm.frames.length === 1 && norm.frames[0].color === 'walnut', '壁保存: 未解放スタイルの額は walnut に戻り、不正な記録キーは落ちる');
+  ok(norm.frameUnlocks.includes('oak') && norm.frameUnlocks.includes('walnut') && norm.frameUnlocks.includes('black'), '壁保存: 初期スタイルは常に解放済み扱い');
+  ok(eq(norm.pendingUnlocks, ['gold']), '壁保存: 解放通知待ちは unlockAt>0 のものだけ残る');
+  ok(eq(L.normalizeWall(null), L.emptyWall()) && eq(L.normalizeWall('garbage'), L.emptyWall()), '壁保存: 壊れた値は空の形に初期化');
 
-  // 配置クランプ (中心が机の内側に収まる)
+  // 配置クランプ
   const cl = L.clampItemPos(-3, 7);
-  ok(cl.x === 0 && cl.y === 1, '報酬配置: 比率座標は 0..1 にクランプ');
+  ok(cl.x === 0 && cl.y === 1, '壁配置: 比率座標は 0..1 にクランプ');
   const cl2 = L.clampItemPos(0.25, 0.75);
-  ok(cl2.x === 0.25 && cl2.y === 0.75, '報酬配置: 範囲内はそのまま');
+  ok(cl2.x === 0.25 && cl2.y === 0.75, '壁配置: 範囲内はそのまま');
+
+  // 全リセットヘルパー
+  const box = { 'daily-jigsaw:v1': '{"records":[]}', other: 'keep' };
+  const fakeStorage = {
+    getItem: k => (k in box ? box[k] : null),
+    removeItem: k => { delete box[k]; }
+  };
+  ok(L.resetAllData(fakeStorage, 'daily-jigsaw:v1') === true && !('daily-jigsaw:v1' in box) && box.other === 'keep', 'リセット: 対象キーだけを消して true を返す');
+  ok(L.resetAllData(fakeStorage, 'daily-jigsaw:v1') === false, 'リセット: キーが無ければ false');
+  ok(L.resetAllData(null, 'daily-jigsaw:v1') === false, 'リセット: storage が無くても落ちない');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

@@ -741,19 +741,23 @@ function boxTapAction(prog) {
 }
 
 /* ---- クリア報酬インテリア (純粋ロジック) ----
- * 仕様 (2026-11-08 改定。設計案アーティファクト＋ユーザー指示):
- * - その日の初回クリアで 1 日 1 個、未所持から「ランダム抽選」で直接付与する
- *   (旧・3 択方式は廃止。旧セーブの pending は settleLegacyPending で精算)。
+ * 仕様 (2026-11-08 案B「壁だけ」改定。机インテリアは廃止):
+ * - その日の初回クリアで 1 日 1 個、未所持から「ランダム抽選」で直接付与する。
  * - 抽選はレア度 (★1 コモン / ★2 レア / ★3 スーパーレア) の重み付き。
  *   重みは RARITY_TABLE に集約する。季節アイテム (months を持つ) は
  *   その月の間だけ抽選対象になる。
- * - 生涯の初回クリアでは ミニ観葉植物 を確定付与 (チュートリアル報酬)。
- * - 写真立て (累計 3 回) と額縁 (累計 10 回) は抽選を経由しない節目の直接付与。
- * - 配置は机 (散布領域) に対する比率座標 {x, y} と重なり順 z で保持する。
- *   def が無いアイテムは defaultItemPos (カタログ順の黄金角レイアウト) で置く。
- * - photo: 中に直近のクリア写真をはめ込む枠物。photoRect は画像内の写真の
- *   矩形 (比率)。生成画像の透明部分から実測して決めた値。
- * カタログは items-v2/catalog.json と同期 (200 点)。 */
+ * - インテリアの付与は毎日のランダム抽選のみ。フレームのスタイルは
+ *   別枠の「解放報酬」で、累計クリア回数 (store.records.length) で解放する
+ *   (黒=5 / 白=10 / 金=20 / アンティーク=35、初期はウォルナットのみ)。
+ *   解放した分は wall.pendingUnlocks に積み、通知で確認されるまで残す。
+ * - 付与した id は wall.pending に積み、スタート画面の通知から開く
+ *   リビールで確認されるまで残る (壁画面を開いたときも解消する)。
+ * - 保存は store.wall (normalizeWall で形を保証)。旧・机インテリアの
+ *   store.rewards はもう使わない (保存データ自体は消さず読み捨てる)。
+ * カタログは wall-items/catalog.json と同期 (50 点)。
+ * 画像は wall-items/<id>.webp (512×512 透過)。
+ * 配置は壁に対する比率座標 {x, y} (中心) の配列で保持し、配列順 = 重なり順。
+ * 額装パズルは frames に { recordKey, x, y, w, color } で保持する。 */
 var RARITY_TABLE = {
   1: { label: '★1', name: 'コモン', weight: 100 },
   2: { label: '★2', name: 'レア', weight: 30 },
@@ -763,265 +767,195 @@ function rarityLabel(item) {
   var r = item && RARITY_TABLE[item.rarity];
   return r ? r.label : '';
 }
-var REWARD_ITEMS = [
-  { id: 'plant', name: 'ミニ観葉植物', cat: 'plant', kind: 'draw', rarity: 1, size: 1.1, def: { x: 0.16, y: 0.18 } },
-  { id: 'mug', name: 'コーヒーマグ', cat: 'food', kind: 'draw', rarity: 1, size: 0.8, def: { x: 0.82, y: 0.76 } },
-  { id: 'candle', name: 'キャンドル', cat: 'interior', kind: 'draw', rarity: 1, size: 0.7, def: { x: 0.13, y: 0.44 } },
-  { id: 'books', name: '本の束', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.2, def: { x: 0.15, y: 0.8 } },
-  { id: 'clock', name: '卓上時計', cat: 'interior', kind: 'draw', rarity: 1, size: 0.9, def: { x: 0.84, y: 0.44 } },
-  { id: 'vase', name: '一輪挿し', cat: 'interior', kind: 'draw', rarity: 1, size: 0.8, def: { x: 0.85, y: 0.16 } },
-  { id: 'frame', name: '写真立て', cat: 'interior', kind: 'grant', grantAt: 3, size: 1.3, photo: true, photoRect: { x: 0.213, y: 0.121, w: 0.584, h: 0.777, def: { x: 0.62, y: 0.14 } } },
-  { id: 'lamp', name: 'デスクライト', cat: 'interior', kind: 'draw', rarity: 2, size: 1.3, def: { x: 0.36, y: 0.13 } },
-  { id: 'cat', name: '猫の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.9, def: { x: 0.55, y: 0.86 } },
-  { id: 'teapot', name: 'ティーポットセット', cat: 'food', kind: 'draw', rarity: 3, size: 1.2, def: { x: 0.66, y: 0.82 } },
-  { id: 'maple', name: '紅葉の枝', cat: 'seasonal', kind: 'draw', rarity: 2, months: [11], size: 1.1, def: { x: 0.14, y: 0.68 } },
-  { id: 'tree', name: 'ミニツリー', cat: 'seasonal', kind: 'draw', rarity: 2, months: [12], size: 1.1, def: { x: 0.14, y: 0.68 } },
-  { id: 'gaku', name: '額縁「今月の一枚」', cat: 'interior', kind: 'grant', grantAt: 10, size: 1.5, photo: true, photoRect: { x: 0.17, y: 0.277, w: 0.676, h: 0.459, def: { x: 0.4, y: 0.84 } } },
-  { id: 'pl01', name: '多肉植物の寄せ植え', cat: 'plant', kind: 'draw', rarity: 1, size: 1.09 },
-  { id: 'pl02', name: 'サボテン', cat: 'plant', kind: 'draw', rarity: 1, size: 0.99 },
-  { id: 'pl03', name: 'ハーブポット（バジル）', cat: 'plant', kind: 'draw', rarity: 1, size: 1.0 },
-  { id: 'pl04', name: '苔玉', cat: 'plant', kind: 'draw', rarity: 2, size: 1.13 },
-  { id: 'pl05', name: 'エアプランツ', cat: 'plant', kind: 'draw', rarity: 1, size: 0.96 },
-  { id: 'pl06', name: '小さな盆栽（松）', cat: 'plant', kind: 'draw', rarity: 3, size: 1.2 },
-  { id: 'pl07', name: '蘭の鉢', cat: 'plant', kind: 'draw', rarity: 2, size: 0.99 },
-  { id: 'pl08', name: 'ひまわりの鉢', cat: 'plant', kind: 'draw', rarity: 1, months: [7,8], size: 1.01 },
-  { id: 'pl09', name: 'チューリップの鉢', cat: 'plant', kind: 'draw', rarity: 1, months: [3,4], size: 1.11 },
-  { id: 'pl10', name: 'あじさいの鉢', cat: 'plant', kind: 'draw', rarity: 2, months: [6], size: 1.05 },
-  { id: 'pl11', name: 'ポインセチア', cat: 'plant', kind: 'draw', rarity: 2, months: [12], size: 1.2 },
-  { id: 'pl12', name: 'ハンギングプランター', cat: 'plant', kind: 'draw', rarity: 2, size: 1.19 },
-  { id: 'pl13', name: 'オリーブの鉢', cat: 'plant', kind: 'draw', rarity: 2, size: 1.15 },
-  { id: 'pl14', name: 'モンステラの鉢', cat: 'plant', kind: 'draw', rarity: 2, size: 1.15 },
-  { id: 'pl15', name: 'ドライフラワーの束', cat: 'plant', kind: 'draw', rarity: 1, size: 1.18 },
-  { id: 'pl16', name: 'ラベンダーの鉢', cat: 'plant', kind: 'draw', rarity: 1, months: [5,6], size: 0.96 },
-  { id: 'pl17', name: 'クローバーの鉢', cat: 'plant', kind: 'draw', rarity: 1, size: 1.02 },
-  { id: 'pl18', name: '小さなヤシの鉢', cat: 'plant', kind: 'draw', rarity: 2, size: 1.03 },
-  { id: 'pl19', name: '竹の鉢植え', cat: 'plant', kind: 'draw', rarity: 1, size: 1.19 },
-  { id: 'pl20', name: '藤の鉢', cat: 'plant', kind: 'draw', rarity: 2, months: [4,5], size: 1.04 },
-  { id: 'pl21', name: '金木犀の鉢', cat: 'plant', kind: 'draw', rarity: 2, months: [10], size: 0.96 },
-  { id: 'pl22', name: '南天の鉢', cat: 'plant', kind: 'draw', rarity: 2, months: [12,1], size: 1.04 },
-  { id: 'pl23', name: '水耕栽培のガラス鉢', cat: 'plant', kind: 'draw', rarity: 1, size: 1.18 },
-  { id: 'pl24', name: 'テラリウム', cat: 'plant', kind: 'draw', rarity: 3, size: 1.2 },
-  { id: 'fd01', name: '湯呑み（緑茶）', cat: 'food', kind: 'draw', rarity: 1, size: 0.94 },
-  { id: 'fd02', name: 'アイスコーヒー', cat: 'food', kind: 'draw', rarity: 1, months: [6,7,8], size: 1.05 },
-  { id: 'fd03', name: 'ラテアートのカップ', cat: 'food', kind: 'draw', rarity: 2, size: 1.05 },
-  { id: 'fd04', name: 'ワイングラス', cat: 'food', kind: 'draw', rarity: 2, size: 0.92 },
-  { id: 'fd05', name: 'ビールジョッキ', cat: 'food', kind: 'draw', rarity: 1, months: [7,8], size: 0.97 },
-  { id: 'fd06', name: 'お猪口と徳利', cat: 'food', kind: 'draw', rarity: 2, size: 1.02 },
-  { id: 'fd07', name: 'フレンチプレス', cat: 'food', kind: 'draw', rarity: 2, size: 0.86 },
-  { id: 'fd08', name: 'マキネッタ', cat: 'food', kind: 'draw', rarity: 2, size: 0.97 },
-  { id: 'fd09', name: 'やかん', cat: 'food', kind: 'draw', rarity: 1, size: 1.1 },
-  { id: 'fd10', name: 'ティーカップ', cat: 'food', kind: 'draw', rarity: 1, size: 0.89 },
-  { id: 'fd11', name: 'ガラスのティーポット', cat: 'food', kind: 'draw', rarity: 3, size: 1.15 },
-  { id: 'fd12', name: 'ピッチャーとグラス', cat: 'food', kind: 'draw', rarity: 1, size: 1.08 },
-  { id: 'fd13', name: 'スープボウル', cat: 'food', kind: 'draw', rarity: 1, size: 0.95 },
-  { id: 'fd14', name: 'パスタの皿', cat: 'food', kind: 'draw', rarity: 2, size: 1.1 },
-  { id: 'fd15', name: 'サンドイッチの皿', cat: 'food', kind: 'draw', rarity: 1, size: 0.95 },
-  { id: 'fd16', name: 'ラーメンどんぶり', cat: 'food', kind: 'draw', rarity: 2, size: 0.85 },
-  { id: 'fd17', name: 'おにぎり皿', cat: 'food', kind: 'draw', rarity: 1, size: 0.86 },
-  { id: 'fd18', name: 'サラダボウル', cat: 'food', kind: 'draw', rarity: 1, size: 0.89 },
-  { id: 'fd19', name: '果物かご', cat: 'food', kind: 'draw', rarity: 2, size: 1.1 },
-  { id: 'fd20', name: 'チーズボード', cat: 'food', kind: 'draw', rarity: 3, size: 1.25 },
-  { id: 'fd21', name: 'トーストの朝食皿', cat: 'food', kind: 'draw', rarity: 1, size: 0.95 },
-  { id: 'fd22', name: 'カレーライスの皿', cat: 'food', kind: 'draw', rarity: 1, size: 0.85 },
-  { id: 'fd23', name: 'お弁当箱', cat: 'food', kind: 'draw', rarity: 2, size: 1.02 },
-  { id: 'fd24', name: 'チーズフォンデュ鍋', cat: 'food', kind: 'draw', rarity: 3, months: [12,1,2], size: 1.15 },
-  { id: 'st01', name: '万年筆', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.9 },
-  { id: 'st02', name: '鉛筆と消しゴム', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.92 },
-  { id: 'st03', name: 'ペン立て', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.87 },
-  { id: 'st04', name: 'ノートの束', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.82 },
-  { id: 'st05', name: '付箋', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.83 },
-  { id: 'st06', name: 'ハサミ', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.92 },
-  { id: 'st07', name: 'ホチキス', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.76 },
-  { id: 'st08', name: 'テープ台', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.74 },
-  { id: 'st09', name: '木の定規', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.84 },
-  { id: 'st10', name: 'インク瓶', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.78 },
-  { id: 'st11', name: '封筒の束', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.84 },
-  { id: 'st12', name: 'シーリングスタンプ', cat: 'stationery', kind: 'draw', rarity: 3, size: 0.85 },
-  { id: 'st13', name: '卓上カレンダー', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.79 },
-  { id: 'st14', name: 'クリップの小皿', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.86 },
-  { id: 'st15', name: 'マスキングテープ', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.72 },
-  { id: 'st16', name: '色鉛筆立て', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.89 },
-  { id: 'st17', name: 'スケッチブック', cat: 'stationery', kind: 'draw', rarity: 2, size: 1.1 },
-  { id: 'st18', name: 'そろばん', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.91 },
-  { id: 'st19', name: '虫めがね', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.77 },
-  { id: 'st20', name: '眼鏡', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.9 },
-  { id: 'st21', name: '筆と硯', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.73 },
-  { id: 'st22', name: '穴あけパンチ', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.89 },
-  { id: 'st23', name: '電卓', cat: 'stationery', kind: 'draw', rarity: 1, size: 0.82 },
-  { id: 'st24', name: 'ガラスのペーパーウェイト', cat: 'stationery', kind: 'draw', rarity: 2, size: 0.86 },
-  { id: 'hb01', name: 'アコースティックギター', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.6 },
-  { id: 'hb02', name: 'ウクレレ', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.3 },
-  { id: 'hb03', name: 'レコード', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.1 },
-  { id: 'hb04', name: 'ヘッドホン', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.21 },
-  { id: 'hb05', name: 'フィルムカメラ', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.0 },
-  { id: 'hb06', name: 'インスタントカメラ', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.01 },
-  { id: 'hb07', name: 'チェス盤', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.3 },
-  { id: 'hb08', name: '将棋盤', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.2 },
-  { id: 'hb09', name: '碁盤', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.3 },
-  { id: 'hb10', name: 'トランプ', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.11 },
-  { id: 'hb11', name: 'サイコロ', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.19 },
-  { id: 'hb12', name: 'パレットと絵筆', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.18 },
-  { id: 'hb13', name: '水彩絵の具セット', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.1 },
-  { id: 'hb14', name: '毛糸と編み棒', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.06 },
-  { id: 'hb15', name: '刺繍枠', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.11 },
-  { id: 'hb16', name: 'ハーモニカ', cat: 'hobby', kind: 'draw', rarity: 1, size: 0.99 },
-  { id: 'hb17', name: 'カリンバ', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.23 },
-  { id: 'hb18', name: '懐中時計', cat: 'hobby', kind: 'draw', rarity: 3, size: 1.2 },
-  { id: 'hb19', name: '双眼鏡', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.26 },
-  { id: 'hb20', name: '小さな地球儀', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.1 },
-  { id: 'hb21', name: '砂時計', cat: 'hobby', kind: 'draw', rarity: 2, size: 1.0 },
-  { id: 'hb22', name: 'ルービックキューブ', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.03 },
-  { id: 'hb23', name: 'けん玉', cat: 'hobby', kind: 'draw', rarity: 1, size: 1.01 },
-  { id: 'an01', name: '柴犬の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.87 },
-  { id: 'an02', name: 'うさぎの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.88 },
-  { id: 'an03', name: 'ふくろうの置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.91 },
-  { id: 'an04', name: 'ペンギンの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 1.02 },
-  { id: 'an05', name: 'かえるの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.84 },
-  { id: 'an06', name: 'かめの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.97 },
-  { id: 'an07', name: 'きつねの置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.87 },
-  { id: 'an08', name: 'パンダの置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.97 },
-  { id: 'an09', name: 'ぞうの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 1.03 },
-  { id: 'an10', name: '馬の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.98 },
-  { id: 'an11', name: '鹿の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.86 },
-  { id: 'an12', name: 'くまの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.92 },
-  { id: 'an13', name: '金魚鉢', cat: 'animal', kind: 'draw', rarity: 2, months: [7,8], size: 1.0 },
-  { id: 'an14', name: '小鳥の置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.93 },
-  { id: 'an15', name: 'くじらの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 1.02 },
-  { id: 'an16', name: 'たこの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.83 },
-  { id: 'an17', name: 'カブトムシの置物', cat: 'animal', kind: 'draw', rarity: 2, months: [7,8], size: 0.9 },
-  { id: 'an18', name: '龍の置物', cat: 'animal', kind: 'draw', rarity: 3, size: 1.15 },
-  { id: 'an19', name: '招き猫', cat: 'animal', kind: 'draw', rarity: 3, size: 0.86 },
-  { id: 'an20', name: 'だるま', cat: 'animal', kind: 'draw', rarity: 2, size: 0.99 },
-  { id: 'an21', name: 'たぬきの置物', cat: 'animal', kind: 'draw', rarity: 2, size: 1.03 },
-  { id: 'an22', name: '鶴の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 1.02 },
-  { id: 'an23', name: '鯉の置物', cat: 'animal', kind: 'draw', rarity: 2, size: 0.84 },
-  { id: 'an24', name: 'ハリネズミの置物', cat: 'animal', kind: 'draw', rarity: 1, size: 0.95 },
-  { id: 'ss01', name: '桜の枝', cat: 'seasonal', kind: 'draw', rarity: 2, months: [3,4], size: 0.94 },
-  { id: 'ss02', name: '雛人形', cat: 'seasonal', kind: 'draw', rarity: 3, months: [3], size: 0.99 },
-  { id: 'ss03', name: 'ミニ鯉のぼり', cat: 'seasonal', kind: 'draw', rarity: 2, months: [5], size: 0.91 },
-  { id: 'ss04', name: '七夕飾り', cat: 'seasonal', kind: 'draw', rarity: 2, months: [7], size: 1.08 },
-  { id: 'ss05', name: 'すいか', cat: 'seasonal', kind: 'draw', rarity: 1, months: [7,8], size: 1.1 },
-  { id: 'ss06', name: '風鈴', cat: 'seasonal', kind: 'draw', rarity: 2, months: [7,8], size: 1.06 },
-  { id: 'ss07', name: '貝殻の小皿', cat: 'seasonal', kind: 'draw', rarity: 1, months: [7,8], size: 0.91 },
-  { id: 'ss08', name: 'うちわ', cat: 'seasonal', kind: 'draw', rarity: 1, months: [7,8], size: 1.15 },
-  { id: 'ss09', name: '月見団子', cat: 'seasonal', kind: 'draw', rarity: 2, months: [9], size: 1.1 },
-  { id: 'ss10', name: '栗の皿', cat: 'seasonal', kind: 'draw', rarity: 1, months: [9,10], size: 1.07 },
-  { id: 'ss11', name: 'ハロウィンかぼちゃ', cat: 'seasonal', kind: 'draw', rarity: 2, months: [10], size: 0.99 },
-  { id: 'ss12', name: '雪だるまの置物', cat: 'seasonal', kind: 'draw', rarity: 2, months: [12,1,2], size: 1.06 },
-  { id: 'ss13', name: 'クリスマスリース', cat: 'seasonal', kind: 'draw', rarity: 2, months: [12], size: 1.1 },
-  { id: 'ss14', name: '鏡餅', cat: 'seasonal', kind: 'draw', rarity: 2, months: [1], size: 1.14 },
-  { id: 'ss15', name: 'ミニ門松', cat: 'seasonal', kind: 'draw', rarity: 3, months: [1], size: 1.1 },
-  { id: 'ss16', name: 'ミニおせち', cat: 'seasonal', kind: 'draw', rarity: 3, months: [1], size: 1.1 },
-  { id: 'ss17', name: 'バレンタインチョコ', cat: 'seasonal', kind: 'draw', rarity: 2, months: [2], size: 1.01 },
-  { id: 'ss18', name: 'イースターエッグ', cat: 'seasonal', kind: 'draw', rarity: 1, months: [4], size: 1.08 },
-  { id: 'ss19', name: '菖蒲の花', cat: 'seasonal', kind: 'draw', rarity: 2, months: [5], size: 1.1 },
-  { id: 'ss20', name: 'てるてる坊主', cat: 'seasonal', kind: 'draw', rarity: 1, months: [6], size: 1.11 },
-  { id: 'ss21', name: '朝顔の鉢', cat: 'seasonal', kind: 'draw', rarity: 1, months: [7,8], size: 0.9 },
-  { id: 'ss22', name: '柿の枝', cat: 'seasonal', kind: 'draw', rarity: 1, months: [10,11], size: 1.14 },
-  { id: 'in01', name: 'アロマディフューザー', cat: 'interior', kind: 'draw', rarity: 2, size: 1.15 },
-  { id: 'in02', name: 'ミニ加湿器', cat: 'interior', kind: 'draw', rarity: 2, size: 1.01 },
-  { id: 'in03', name: '卓上ミラー', cat: 'interior', kind: 'draw', rarity: 1, size: 0.95 },
-  { id: 'in04', name: 'ジュエリーボックス', cat: 'interior', kind: 'draw', rarity: 2, size: 0.99 },
-  { id: 'in05', name: 'ティッシュケース', cat: 'interior', kind: 'draw', rarity: 1, size: 1.1 },
-  { id: 'in06', name: 'コースターの束', cat: 'interior', kind: 'draw', rarity: 1, size: 0.96 },
-  { id: 'in07', name: 'ブックエンド', cat: 'interior', kind: 'draw', rarity: 1, size: 1.11 },
-  { id: 'in08', name: '真鍮の燭台', cat: 'interior', kind: 'draw', rarity: 2, size: 0.97 },
-  { id: 'in09', name: 'お香立て', cat: 'interior', kind: 'draw', rarity: 2, size: 0.95 },
-  { id: 'in10', name: '小さな丸ラグ', cat: 'interior', kind: 'draw', rarity: 1, size: 1.2 },
-  { id: 'in11', name: 'アルバム', cat: 'interior', kind: 'draw', rarity: 1, size: 1.03 },
-  { id: 'in12', name: 'ソルトランプ', cat: 'interior', kind: 'draw', rarity: 2, size: 0.91 },
-  { id: 'in13', name: 'ドリームキャッチャー', cat: 'interior', kind: 'draw', rarity: 2, size: 1.1 },
-  { id: 'in14', name: '卓上噴水', cat: 'interior', kind: 'draw', rarity: 3, size: 1.15 },
-  { id: 'in15', name: 'ミニじょうろ', cat: 'interior', kind: 'draw', rarity: 1, size: 0.98 },
-  { id: 'in16', name: '丸座布団', cat: 'interior', kind: 'draw', rarity: 1, size: 1.2 },
-  { id: 'in17', name: '万華鏡', cat: 'interior', kind: 'draw', rarity: 2, size: 1.03 },
-  { id: 'in18', name: 'オルゴール', cat: 'interior', kind: 'draw', rarity: 3, size: 1.02 },
-  { id: 'in19', name: 'スノードーム', cat: 'interior', kind: 'draw', rarity: 2, months: [12], size: 1.02 },
-  { id: 'in20', name: '貯金箱', cat: 'interior', kind: 'draw', rarity: 1, size: 0.98 },
-  { id: 'in21', name: 'アロマストーン', cat: 'interior', kind: 'draw', rarity: 1, size: 1.14 },
-  { id: 'in22', name: 'ミニ本棚', cat: 'interior', kind: 'draw', rarity: 3, size: 1.4 },
-  { id: 'sw01', name: 'ショートケーキ', cat: 'sweets', kind: 'draw', rarity: 2, size: 1.01 },
-  { id: 'sw02', name: 'チョコレートケーキ', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.96 },
-  { id: 'sw03', name: 'チーズケーキ', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.03 },
-  { id: 'sw04', name: 'プリン', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.03 },
-  { id: 'sw05', name: 'パフェ', cat: 'sweets', kind: 'draw', rarity: 3, size: 1.03 },
-  { id: 'sw06', name: 'アイスクリームコーン', cat: 'sweets', kind: 'draw', rarity: 1, months: [7,8], size: 0.93 },
-  { id: 'sw07', name: 'マカロン', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.87 },
-  { id: 'sw08', name: 'クッキー皿', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.87 },
-  { id: 'sw09', name: 'ドーナツ皿', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.85 },
-  { id: 'sw10', name: 'パンケーキ', cat: 'sweets', kind: 'draw', rarity: 2, size: 1.1 },
-  { id: 'sw11', name: 'ワッフル', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.91 },
-  { id: 'sw12', name: 'ティラミス', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.86 },
-  { id: 'sw13', name: 'フルーツタルト', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.93 },
-  { id: 'sw14', name: 'シュークリーム', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.92 },
-  { id: 'sw15', name: 'どら焼き', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.92 },
-  { id: 'sw16', name: 'たい焼き', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.82 },
-  { id: 'sw17', name: '三色団子', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.03 },
-  { id: 'sw18', name: '抹茶ロールケーキ', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.88 },
-  { id: 'sw19', name: 'フルーツゼリー', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.98 },
-  { id: 'sw20', name: 'キャンディ瓶', cat: 'sweets', kind: 'draw', rarity: 2, size: 0.98 },
-  { id: 'sw21', name: 'はちみつポット', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.03 },
-  { id: 'sw22', name: 'シナモンロール', cat: 'sweets', kind: 'draw', rarity: 1, size: 0.92 },
-  { id: 'sw23', name: 'マドレーヌ', cat: 'sweets', kind: 'draw', rarity: 1, size: 1.02 },
-  { id: 'sw24', name: 'モンブラン', cat: 'sweets', kind: 'draw', rarity: 2, months: [9,10,11], size: 1.0 }
+var WALL_CATALOG = [
+  { id: 'w001', name: '桜のリース', cat: 'wreath', size: 'M', rarity: 1, months: [3,4,5] },
+  { id: 'w002', name: 'ミモザのリース', cat: 'wreath', size: 'M', rarity: 2 },
+  { id: 'w003', name: 'あじさいリース', cat: 'wreath', size: 'M', rarity: 1, months: [6] },
+  { id: 'w004', name: 'ひまわりリース', cat: 'wreath', size: 'L', rarity: 1, months: [7,8] },
+  { id: 'w005', name: 'バラのリース', cat: 'wreath', size: 'M', rarity: 2 },
+  { id: 'w006', name: 'ラベンダーリース', cat: 'wreath', size: 'M', rarity: 1 },
+  { id: 'w007', name: 'ユーカリリース', cat: 'wreath', size: 'M', rarity: 1 },
+  { id: 'w008', name: 'オリーブのリース', cat: 'wreath', size: 'M', rarity: 1 },
+  { id: 'w009', name: '紅葉リース', cat: 'wreath', size: 'M', rarity: 1, months: [10,11] },
+  { id: 'w010', name: '松ぼっくりのリース', cat: 'wreath', size: 'M', rarity: 2 },
+  { id: 'w011', name: 'コットンフラワーのリース', cat: 'wreath', size: 'M', rarity: 1 },
+  { id: 'w012', name: '野花の小リース', cat: 'wreath', size: 'S', rarity: 1 },
+  { id: 'w013', name: 'ローズマリーのリース', cat: 'wreath', size: 'S', rarity: 1 },
+  { id: 'w014', name: 'ドライフラワーのスワッグ', cat: 'wreath', size: 'M', rarity: 1 },
+  { id: 'w015', name: 'ラベンダーのスワッグ', cat: 'wreath', size: 'M', rarity: 1, months: [6,7] },
+  { id: 'w016', name: 'かすみ草のスワッグ', cat: 'wreath', size: 'S', rarity: 1 },
+  { id: 'w017', name: 'パンパスグラスのスワッグ', cat: 'wreath', size: 'M', rarity: 1 },
+  { id: 'w018', name: 'ハーフリース', cat: 'wreath', size: 'M', rarity: 3 },
+  { id: 'w019', name: '蔦のリース', cat: 'wreath', size: 'M', rarity: 1 },
+  { id: 'w020', name: '木の実とベルのリース', cat: 'wreath', size: 'M', rarity: 2 },
+  { id: 'w021', name: '三角フラッグ（パステル）', cat: 'garland', size: 'L', rarity: 1 },
+  { id: 'w022', name: '三角フラッグ（アースカラー）', cat: 'garland', size: 'L', rarity: 1 },
+  { id: 'w023', name: '星型ガーランド', cat: 'garland', size: 'L', rarity: 1 },
+  { id: 'w024', name: '月と星のガーランド', cat: 'garland', size: 'L', rarity: 2 },
+  { id: 'w025', name: 'ポンポンガーランド', cat: 'garland', size: 'M', rarity: 1 },
+  { id: 'w026', name: 'フェルトボールガーランド', cat: 'garland', size: 'M', rarity: 1 },
+  { id: 'w027', name: '紙の輪ガーランド', cat: 'garland', size: 'M', rarity: 2 },
+  { id: 'w028', name: '折り鶴ガーランド', cat: 'garland', size: 'M', rarity: 3 },
+  { id: 'w029', name: '木製ビーズガーランド', cat: 'garland', size: 'M', rarity: 1 },
+  { id: 'w030', name: '葉っぱガーランド', cat: 'garland', size: 'L', rarity: 1 },
+  { id: 'w031', name: '小花ガーランド', cat: 'garland', size: 'M', rarity: 2 },
+  { id: 'w032', name: '貝殻ガーランド', cat: 'garland', size: 'M', rarity: 1 },
+  { id: 'w033', name: '松ぼっくりガーランド', cat: 'garland', size: 'M', rarity: 1 },
+  { id: 'w034', name: 'リボンガーランド', cat: 'garland', size: 'M', rarity: 2 },
+  { id: 'w035', name: '提灯ガーランド', cat: 'garland', size: 'M', rarity: 1 },
+  { id: 'w036', name: '小鳥ガーランド', cat: 'garland', size: 'M', rarity: 2 },
+  { id: 'w037', name: 'ハートガーランド', cat: 'garland', size: 'M', rarity: 1 },
+  { id: 'w038', name: 'ドライオレンジガーランド', cat: 'garland', size: 'M', rarity: 1 },
+  { id: 'w039', name: 'ストリングライト（丸電球）', cat: 'light', size: 'L', rarity: 2 },
+  { id: 'w040', name: 'ストリングライト（星型）', cat: 'light', size: 'L', rarity: 2 },
+  { id: 'w041', name: 'ストリングライト（紙シェード）', cat: 'light', size: 'L', rarity: 1 },
+  { id: 'w042', name: 'ウォールランプ（きのこ型）', cat: 'light', size: 'M', rarity: 2 },
+  { id: 'w043', name: 'ウォールランプ（真鍮・半月）', cat: 'light', size: 'M', rarity: 1 },
+  { id: 'w044', name: 'ペーパーランタン（丸）', cat: 'light', size: 'M', rarity: 2 },
+  { id: 'w045', name: 'ペーパーランタン（星型）', cat: 'light', size: 'M', rarity: 3 },
+  { id: 'w046', name: 'キャンドル型ウォールライト', cat: 'light', size: 'S', rarity: 1 },
+  { id: 'w047', name: 'ウォールランプ（アンバーガラス）', cat: 'light', size: 'M', rarity: 2 },
+  { id: 'w048', name: '小さな提灯ライト', cat: 'light', size: 'S', rarity: 1 },
+  { id: 'w049', name: 'フェアリーライト', cat: 'light', size: 'L', rarity: 1 },
+  { id: 'w050', name: 'ティーカップライト', cat: 'light', size: 'S', rarity: 2 },
 ];
-function rewardItemById(id) {
-  for (var i = 0; i < REWARD_ITEMS.length; i++) if (REWARD_ITEMS[i].id === id) return REWARD_ITEMS[i];
+/* 額装パズルのフレームスタイル (frame-design.md の 20 種)。
+ * 描画はデータ駆動: color (枠色) / width (枠幅の比率) / mat (マットの色、
+ * 無ければ null) / ornament (装飾タイプ) / shape (rect | circle)。
+ * rainbow は color の代わりに gradient を使う (color はスウォッチ用の代表色)。
+ * 解放は unlockAt (累計クリア回数) で、初期は oak / walnut の 2 種。 */
+var FRAME_STYLES = [
+  { id: 'oak',     name: 'ナチュラルオーク',    unlockAt: 0,   color: '#C8A165', width: 0.06, mat: '#F5EFE0', ornament: 'none',    shape: 'rect' },
+  { id: 'walnut',  name: 'ウォルナット',        unlockAt: 0,   color: '#6E4C2C', width: 0.06, mat: '#F5EFE0', ornament: 'none',    shape: 'rect' },
+  { id: 'black',   name: 'ブラック',            unlockAt: 3,   color: '#33302C', width: 0.05, mat: null,       ornament: 'none',    shape: 'rect' },
+  { id: 'ribbon',  name: 'リボンフレーム',      unlockAt: 5,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'ribbon',  shape: 'rect' },
+  { id: 'white',   name: 'ホワイト',            unlockAt: 8,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect' },
+  { id: 'circle',  name: 'まるフレーム',        unlockAt: 12,  color: '#6E4C2C', width: 0.06, mat: null,       ornament: 'none',    shape: 'circle' },
+  { id: 'pink',    name: 'パステルピンク',      unlockAt: 16,  color: '#E7B7C5', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
+  { id: 'gold',    name: 'ゴールド',            unlockAt: 20,  color: '#C4A24B', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect' },
+  { id: 'flower',  name: 'お花フレーム',        unlockAt: 25,  color: '#F1EAD8', width: 0.07, mat: null,       ornament: 'flowers', shape: 'rect' },
+  { id: 'sky',     name: 'スカイブルー',        unlockAt: 30,  color: '#A8C6D8', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
+  { id: 'antique', name: 'アンティークゴールド', unlockAt: 40,  color: '#A67C2E', width: 0.07, mat: null,       ornament: 'corners', shape: 'rect' },
+  { id: 'silver',  name: 'シルバー',            unlockAt: 50,  color: '#B9BDC4', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect' },
+  { id: 'cherry',  name: 'チェリーウッド',      unlockAt: 60,  color: '#8A4A38', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
+  { id: 'starry',  name: '星空フレーム',        unlockAt: 75,  color: '#26314E', width: 0.07, mat: null,       ornament: 'stars',   shape: 'rect' },
+  { id: 'green',   name: 'ディープグリーン',    unlockAt: 90,  color: '#3E5C4B', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
+  { id: 'bronze',  name: 'ブロンズ',            unlockAt: 110, color: '#8C6A3F', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
+  { id: 'navy',    name: 'ネイビー',            unlockAt: 130, color: '#2F4057', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect' },
+  { id: 'rainbow', name: 'レインボーフレーム',  unlockAt: 155, color: '#D9A7A0', width: 0.07, mat: null,       ornament: 'none',    shape: 'rect',
+    gradient: 'linear-gradient(135deg, #D9A7A0, #E5C39A, #B5C49A, #9AB8C4, #B0A3C4)' },
+  { id: 'pearl',   name: 'パールフレーム',      unlockAt: 180, color: '#F6F1E7', width: 0.07, mat: null,       ornament: 'pearl',   shape: 'rect' },
+  { id: 'royal',   name: 'ロイヤルゴールド',    unlockAt: 210, color: '#B8912F', width: 0.09, mat: null,       ornament: 'crown',   shape: 'rect' }
+];
+function frameStyleById(id) {
+  for (var i = 0; i < FRAME_STYLES.length; i++) if (FRAME_STYLES[i].id === id) return FRAME_STYLES[i];
   return null;
 }
-function emptyRewards() {
-  return { owned: [], placed: {}, pending: null, lastDate: null, history: {} };
+/* 累計クリア回数で新しく解放されるスタイル id (未解放のものだけ・表の順) */
+function newFrameUnlocks(wall, totalClears) {
+  return FRAME_STYLES.filter(function (st) {
+    return st.unlockAt > 0 && totalClears >= st.unlockAt && wall.frameUnlocks.indexOf(st.id) < 0;
+  }).map(function (st) { return st.id; });
 }
-/* 保存データの形が崩れていても使える形に寄せる (旧データには rewards 自体がない) */
-function normalizeRewards(rw) {
-  var out = emptyRewards();
-  if (!rw || typeof rw !== 'object') return out;
-  if (Array.isArray(rw.owned)) out.owned = rw.owned.filter(function (id) { return !!rewardItemById(id); });
-  if (rw.placed && typeof rw.placed === 'object') {
-    Object.keys(rw.placed).forEach(function (id) {
-      var p = rw.placed[id];
-      if (rewardItemById(id) && p && typeof p.x === 'number' && typeof p.y === 'number') {
-        out.placed[id] = { x: p.x, y: p.y, z: typeof p.z === 'number' ? p.z : 0 };
+/* 解放を wall に反映する: frameUnlocks に加え、未通知分として
+ * pendingUnlocks にも積む。戻り値: 今回解放した styleId の配列。 */
+function applyFrameUnlocks(wall, totalClears) {
+  var ids = newFrameUnlocks(wall, totalClears);
+  ids.forEach(function (id) {
+    wall.frameUnlocks.push(id);
+    if (wall.pendingUnlocks.indexOf(id) < 0) wall.pendingUnlocks.push(id);
+  });
+  return ids;
+}
+/* アイテムの表示幅 (壁の幅に対する比率) の目安: カタログのサイズ感から決める */
+var WALL_SIZE_RATIO = { S: 0.20, M: 0.28, L: 0.40 };
+function wallItemById(id) {
+  for (var i = 0; i < WALL_CATALOG.length; i++) if (WALL_CATALOG[i].id === id) return WALL_CATALOG[i];
+  return null;
+}
+function wallItemWidthRatio(item) {
+  return (item && WALL_SIZE_RATIO[item.size]) || WALL_SIZE_RATIO.M;
+}
+function emptyWall() {
+  return { owned: [], seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], lastDate: null, history: {} };
+}
+/* 保存データの形が崩れていても使える形に寄せる (旧データには wall 自体がない)。
+ * placed は配列順 = 重なり順を保ち、同じアイテム/記録の重複は先勝ちで落とす。 */
+function normalizeWall(w) {
+  var out = emptyWall();
+  if (!w || typeof w !== 'object') return out;
+  if (Array.isArray(w.owned)) {
+    out.owned = w.owned.filter(function (id, idx) { return !!wallItemById(id) && w.owned.indexOf(id) === idx; });
+  }
+  if (w.seen && typeof w.seen === 'object') {
+    Object.keys(w.seen).forEach(function (id) {
+      if (wallItemById(id) && typeof w.seen[id] === 'string') out.seen[id] = w.seen[id];
+    });
+  }
+  if (Array.isArray(w.pending)) {
+    out.pending = w.pending.filter(function (id) { return !!wallItemById(id); });
+  }
+  if (Array.isArray(w.placed)) {
+    var placedIds = {};
+    w.placed.forEach(function (p) {
+      if (p && wallItemById(p.id) && out.owned.indexOf(p.id) >= 0 && typeof p.x === 'number' && typeof p.y === 'number' && !placedIds[p.id]) {
+        placedIds[p.id] = true;
+        var c = clampItemPos(p.x, p.y);
+        out.placed.push({ id: p.id, x: c.x, y: c.y });
       }
     });
   }
-  if (rw.pending && Array.isArray(rw.pending.choices) && typeof rw.pending.date === 'string') {
-    out.pending = {
-      date: rw.pending.date,
-      choices: rw.pending.choices.filter(function (id) { return !!rewardItemById(id); }).slice(0, 3)
-    };
-    if (!out.pending.choices.length) out.pending = null;
+  if (Array.isArray(w.frames)) {
+    var frameKeys = {};
+    w.frames.forEach(function (f) {
+      var keyParts = (f && typeof f.recordKey === 'string') ? f.recordKey.split('|') : [];
+      var keyOk = keyParts.length === 3 && /^\d{4}-\d{2}-\d{2}$/.test(keyParts[0]) && /^\d+$/.test(keyParts[1]) && keyParts[2].length > 0;
+      if (f && keyOk && typeof f.x === 'number' && typeof f.y === 'number' && !frameKeys[f.recordKey]) {
+        frameKeys[f.recordKey] = true;
+        var c = clampItemPos(f.x, f.y);
+        out.frames.push({
+          recordKey: f.recordKey, x: c.x, y: c.y,
+          w: (typeof f.w === 'number' && f.w > 0.05 && f.w <= 0.9) ? f.w : 0.30,
+          color: frameStyleById(f.color) ? f.color : 'walnut'
+        });
+      }
+    });
   }
-  if (typeof rw.lastDate === 'string') out.lastDate = rw.lastDate;
-  if (rw.history && typeof rw.history === 'object') {
-    Object.keys(rw.history).forEach(function (d) {
-      if (Array.isArray(rw.history[d])) out.history[d] = rw.history[d].filter(function (id) { return !!rewardItemById(id); });
+  if (Array.isArray(w.frameUnlocks)) {
+    out.frameUnlocks = w.frameUnlocks.filter(function (id, idx) { return !!frameStyleById(id) && w.frameUnlocks.indexOf(id) === idx; });
+  }
+  ['oak', 'walnut'].forEach(function (id) { // 初期スタイルは常時使える
+    if (out.frameUnlocks.indexOf(id) < 0) out.frameUnlocks.unshift(id);
+  });
+  if (Array.isArray(w.pendingUnlocks)) {
+    out.pendingUnlocks = w.pendingUnlocks.filter(function (id) {
+      var st = frameStyleById(id);
+      return !!st && st.unlockAt > 0;
+    });
+  }
+  // 未解放スタイルで保存されている額はウォルナットに落とす (選択肢に出ない値を持たせない)
+  out.frames.forEach(function (f) {
+    if (out.frameUnlocks.indexOf(f.color) < 0) f.color = 'walnut';
+  });
+  if (typeof w.lastDate === 'string') out.lastDate = w.lastDate;
+  if (w.history && typeof w.history === 'object') {
+    Object.keys(w.history).forEach(function (d) {
+      if (Array.isArray(w.history[d])) out.history[d] = w.history[d].filter(function (id) { return !!wallItemById(id); });
     });
   }
   return out;
 }
-/* 累計クリア回数に到達して直接届くアイテム (未所持のものだけ) */
-function milestoneGrants(rewards, totalClears) {
-  return REWARD_ITEMS.filter(function (it) {
-    return it.kind === 'grant' && totalClears >= it.grantAt && rewards.owned.indexOf(it.id) < 0;
-  }).map(function (it) { return it.id; });
-}
-/* 抽選対象に入るか: 未所持の draw アイテムで、季節物はその月の間だけ */
-function rewardDrawEligible(item, rewards, month) {
-  if (!item || item.kind !== 'draw') return false;
-  if (rewards.owned.indexOf(item.id) >= 0) return false;
+/* 抽選対象に入るか: 未所持で、季節物はその月の間だけ */
+function wallDrawEligible(item, wall, month) {
+  if (!item) return false;
+  if (wall.owned.indexOf(item.id) >= 0) return false;
   if (item.months && item.months.indexOf(month) < 0) return false;
   return true;
 }
-/* その日のごほうび抽選。生涯初回は ミニ観葉植物 を確定で返す。
- * それ以外は未所持の対象を RARITY_TABLE の重みで 1 点抽選する。
- * 対象が無ければ null。ctx: { month, firstEver } / rng: () => [0,1) */
-function drawRewardItem(rewards, ctx, rng) {
-  if (ctx.firstEver) {
-    var first = rewardItemById('plant');
-    if (first && rewards.owned.indexOf(first.id) < 0) return first.id;
-  }
-  var pool = REWARD_ITEMS.filter(function (it) { return rewardDrawEligible(it, rewards, ctx.month); });
+/* その日のごほうび抽選。未所持の対象を RARITY_TABLE の重みで 1 点抽選する。
+ * 対象が無ければ null。ctx: { month } / rng: () => [0,1) */
+function drawWallItem(wall, ctx, rng) {
+  var pool = WALL_CATALOG.filter(function (it) { return wallDrawEligible(it, wall, ctx.month); });
   if (!pool.length) return null;
   var total = 0;
   pool.forEach(function (it) { total += RARITY_TABLE[it.rarity].weight; });
@@ -1032,63 +966,34 @@ function drawRewardItem(rewards, ctx, rng) {
   }
   return pool[pool.length - 1].id; // 浮動小数点の端数保険
 }
-/* 旧 3 択方式の未選択 pending を精算する: 候補から 1 点を抽選で付与し、
- * 履歴は pending の日付に付け、lastDate もその日まで進める (同日の二重付与防止)。
- * 精算したら付与した id、無ければ null を返す。 */
-function settleLegacyPending(rewards, rng) {
-  if (!rewards.pending || !rewards.pending.choices.length) { rewards.pending = null; return null; }
-  var choices = rewards.pending.choices.filter(function (id) {
-    return rewardItemById(id) && rewards.owned.indexOf(id) < 0;
-  });
-  var date = rewards.pending.date;
-  rewards.pending = null;
-  if (!choices.length) return null;
-  var id = choices[Math.min(choices.length - 1, Math.floor(rng() * choices.length))];
-  grantRewardItems(rewards, [id]);
-  recordRewardHistory(rewards, date, [id]);
-  if (!rewards.lastDate || date > rewards.lastDate) rewards.lastDate = date;
-  return id;
-}
-/* def を持たないアイテムの既定位置: カタログ順に黄金角で散らす決定的配置 */
-function defaultItemPos(item) {
-  var idx = REWARD_ITEMS.indexOf(item);
-  if (idx < 0) idx = 0;
-  var r = 0.10 + 0.34 * Math.sqrt((idx + 0.5) / REWARD_ITEMS.length);
-  var th = idx * 2.399963; // 黄金角
-  function cl(v) { return Math.min(0.94, Math.max(0.06, v)); }
-  return { x: cl(0.5 + r * Math.cos(th)), y: cl(0.5 + r * Math.sin(th)) };
-}
-/* アイテムを既定位置に置く (z は現在の最大 + 1) */
-function placeItemDefault(rewards, id) {
-  var it = rewardItemById(id);
-  if (!it) return;
-  var z = 0;
-  Object.keys(rewards.placed).forEach(function (k) {
-    var p = rewards.placed[k];
-    if (p && typeof p.z === 'number' && p.z >= z) z = p.z + 1;
-  });
-  var def = it.def || defaultItemPos(it);
-  rewards.placed[id] = { x: def.x, y: def.y, z: z };
-}
-/* アイテムを所持に加え、未配置なら既定位置に置く */
-function grantRewardItems(rewards, ids) {
+/* アイテムを所持に加える (重複は無視)。seen には初回入手日を残す */
+function grantWallItems(wall, ids, date) {
   ids.forEach(function (id) {
-    if (!rewardItemById(id) || rewards.owned.indexOf(id) >= 0) return;
-    rewards.owned.push(id);
-    if (!rewards.placed[id]) placeItemDefault(rewards, id);
+    if (!wallItemById(id) || wall.owned.indexOf(id) >= 0) return;
+    wall.owned.push(id);
+    if (date && !wall.seen[id]) wall.seen[id] = date;
   });
-  return rewards;
+  return wall;
 }
-function recordRewardHistory(rewards, date, ids) {
+function recordWallHistory(wall, date, ids) {
   if (!ids.length) return;
-  var cur = rewards.history[date] || [];
+  var cur = wall.history[date] || [];
   ids.forEach(function (id) { if (cur.indexOf(id) < 0) cur.push(id); });
-  rewards.history[date] = cur;
+  wall.history[date] = cur;
 }
-/* 机の端でクランプ: 小物の中心は机 (比率 0〜1) の内側に収める */
+/* 壁の端でクランプ: アイテム/額の中心は壁 (比率 0〜1) の内側に収める */
 function clampItemPos(x, y) {
   function c(v) { return typeof v === 'number' && isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5; }
   return { x: c(x), y: c(y) };
+}
+/* 全データリセット: 保存キー 1 つだけを消す (他のキーは触らない)。
+ * 戻り値: そのキーに値があったか。storage は localStorage 互換オブジェクト。 */
+function resetAllData(storage, key) {
+  if (!storage || typeof storage.removeItem !== 'function' || typeof key !== 'string') return false;
+  var had = false;
+  try { had = storage.getItem(key) != null; } catch (e) { /* 読めなくても削除は試みる */ }
+  try { storage.removeItem(key); } catch (e) { return false; }
+  return had;
 }
 
 function formatTime(sec) {
@@ -1118,13 +1023,15 @@ var PureLogic = {
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   boxTapAction: boxTapAction,
-  REWARD_ITEMS: REWARD_ITEMS, RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
-  rewardItemById: rewardItemById, emptyRewards: emptyRewards,
-  normalizeRewards: normalizeRewards, milestoneGrants: milestoneGrants,
-  rewardDrawEligible: rewardDrawEligible, drawRewardItem: drawRewardItem,
-  settleLegacyPending: settleLegacyPending, defaultItemPos: defaultItemPos,
-  placeItemDefault: placeItemDefault, grantRewardItems: grantRewardItems,
-  recordRewardHistory: recordRewardHistory, clampItemPos: clampItemPos,
+  WALL_CATALOG: WALL_CATALOG,
+  FRAME_STYLES: FRAME_STYLES, WALL_SIZE_RATIO: WALL_SIZE_RATIO,
+  frameStyleById: frameStyleById, newFrameUnlocks: newFrameUnlocks, applyFrameUnlocks: applyFrameUnlocks,
+  RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
+  wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
+  emptyWall: emptyWall, normalizeWall: normalizeWall,
+  wallDrawEligible: wallDrawEligible, drawWallItem: drawWallItem,
+  grantWallItems: grantWallItems, recordWallHistory: recordWallHistory,
+  clampItemPos: clampItemPos, resetAllData: resetAllData,
   completedBoardLayout: completedBoardLayout, detailRenderPlan: detailRenderPlan,
   woodTileOrigin: woodTileOrigin, deskBgRegionCells: deskBgRegionCells, deskBgPlan: deskBgPlan, deskBgBlit: deskBgBlit,
   bitmapProbeOk: bitmapProbeOk, bitmapRetryPlan: bitmapRetryPlan,
@@ -1152,8 +1059,7 @@ function loadStore() {
   return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true };
 }
 var store = loadStore();
-store.rewards = normalizeRewards(store.rewards); // クリア報酬 (旧データには無いので空で作る)
-if (settleLegacyPending(store.rewards, Math.random)) saveStoreDeferred(); // 旧 3 択の未選択分は抽選で精算
+store.wall = normalizeWall(store.wall); // 壁インテリア (旧データには無いので空で作る。旧 store.rewards は読み捨て)
 function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 容量超過などは無視 */ }
@@ -2291,7 +2197,6 @@ function draw() {
     drawMatBackdrop(); // 盤の外側: 机が薄いベール越しにぼんやり見える
   } else {
     drawDeskBackground(v);
-    drawDeskItems(v); // クリア報酬の小物 (装飾レイヤー: ピースより奥)
     // 机でカメラが動いたらミニマップを出す (初回は現在値で初期化だけする)
     var camKey = v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
     if (lastCamKey === '') lastCamKey = camKey;
@@ -2624,7 +2529,6 @@ function stagePos(ev) {
   return { x: ev.clientX - r.left, y: ev.clientY - r.top };
 }
 stage.addEventListener('pointerdown', function (ev) {
-  if (decorMode) { decorPointerDown(ev); return; } // かざる編集中は小物のドラッグ専用
   if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
   stage.setPointerCapture(ev.pointerId);
   var p = stagePos(ev);
@@ -2687,7 +2591,6 @@ stage.addEventListener('pointerdown', function (ev) {
   }
 });
 stage.addEventListener('pointermove', function (ev) {
-  if (decorMode) { decorPointerMove(ev); return; }
   if (!pointers.has(ev.pointerId)) return;
   var p = stagePos(ev);
   pointers.set(ev.pointerId, p);
@@ -2754,7 +2657,6 @@ stage.addEventListener('pointermove', function (ev) {
   }
 });
 function endPointer(ev) {
-  if (decorMode) { decorPointerUp(); return; }
   var cancelled = ev.type === 'pointercancel';
   // 範囲選択まわりの終了処理 (この指が担当していた場合のみ)
   if (pressPending && pressPending.id === ev.pointerId) {
@@ -2872,7 +2774,7 @@ function switchSurfaceDuringDrag() {
   draw();
 }
 function switchSurface() {
-  if (!state || state.phase !== 'play' || uiHome || decorMode) return;
+  if (!state || state.phase !== 'play' || uiHome) return;
   state.surface = state.surface === 'desk' ? 'mat' : 'desk';
   selection.clear(); // 画面切替では選択は保持しない
   invalidateDeskBackdrop();
@@ -2962,20 +2864,24 @@ function onClear() {
   runConfetti();
   $('resultText').textContent = playDate + ' ・ ' + difficulty + 'ピース ・ タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
-  // クリア報酬: その日の初回クリアで節目付与 + ランダム抽選 1 点
+  // クリア報酬: その日の初回クリアでランダム抽選 1 点 (+ フレーム解放判定)
   var grants = processRewardsOnClear();
   if (grants.length) {
-    $('resultRewardLine').textContent = '机の小物が届きました：' +
+    $('resultRewardLine').textContent = '壁の小物が届きました：' +
       grants.map(function (id) {
-        var it = rewardItemById(id);
-        var stars = it && it.kind === 'draw' ? ' ' + rarityLabel(it) : '';
-        return (it ? it.name : id) + stars;
+        var it = wallItemById(id);
+        return (it ? it.name : id) + (it ? ' ' + rarityLabel(it) : '');
       }).join('、');
     $('resultRewardLine').hidden = false;
+    $('resultRewardItems').innerHTML = grants.map(function (id) {
+      var it = wallItemById(id);
+      return it ? '<span class="result-reward-thumb"><img src="wall-items/' + it.id + '.webp" alt="' + it.name + '"></span>' : '';
+    }).join('');
+    $('resultRewardItems').hidden = false;
   } else {
     $('resultRewardLine').hidden = true;
+    $('resultRewardItems').hidden = true;
   }
-  $('resultRewardBtn').hidden = true; // 3 択は廃止 (ランダム付与に変更)
   $('resultModal').hidden = false;
 }
 function runConfetti() {
@@ -3003,50 +2909,36 @@ function runConfetti() {
 }
 
 /* ---------- クリア報酬インテリア (UI) ----------
- * 保存は store.rewards (PureLogic の normalizeRewards で形を保証)。
- * 机の上ではピースより奥の装飾レイヤーとして描き、プレイ中のタップ判定は
- * 一切持たない。動かせるのは「かざる」編集モードだけ (decorMode)。
- * 小物の画像は items/<id>.webp (真上からのフラットレイ写真・切り抜き済み)。
- * 写真立て/額縁は中に直近のクリア写真をはめ込んで描く。 */
-var itemImgs = {};
-REWARD_ITEMS.forEach(function (it) {
-  var img = new Image();
-  img.onload = function () { if (state && !uiHome && !uiCollection) draw(); };
-  img.src = 'items/' + it.id + '.webp';
-  itemImgs[it.id] = img;
-});
-/* クリア時に報酬を確定させる。その日の初回クリアだけが対象で、
- * 節目の直接付与 → ランダム抽選 1 点の順に処理し、冪等にする。
+ * 保存は store.wall (PureLogic の normalizeWall で形を保証)。
+ * 付与はクリア時に確定する。届いた分は wall.pending に積み、スタート画面の
+ * 通知から開くリビールで確認すると解消する (壁画面を開いても解消)。
+ * フレームの解放も同じ作法で wall.pendingUnlocks に積み、通知から伝える。
+ * 小物の画像は wall-items/<id>.webp (壁用フラットイラスト・透過済み)。
+ * プレイ中の机にはインテリアを一切描かない (旧・装飾レイヤーは廃止)。 */
+/* クリア時に報酬を確定させる。その日の初回クリアだけ抽選対象で冪等。
+ * フレーム解放は累計クリア回数 (records 数) の到達で判定する。
  * 戻り値: 今回届いたアイテム id の配列 (結果画面の表示用) */
 function processRewardsOnClear() {
-  var rw = store.rewards;
-  var grants = milestoneGrants(rw, store.records.length);
-  if (grants.length) {
-    grantRewardItems(rw, grants);
-    recordRewardHistory(rw, playDate, grants);
-  }
-  if (rw.lastDate !== playDate) {
+  var wall = store.wall;
+  var grants = [];
+  if (wall.lastDate !== playDate) {
     var month = parseInt(playDate.split('-')[1], 10);
-    var picked = drawRewardItem(rw, { month: month, firstEver: store.records.length === 1 }, Math.random);
+    var picked = drawWallItem(wall, { month: month }, Math.random);
     if (picked) {
-      grantRewardItems(rw, [picked]);
-      recordRewardHistory(rw, playDate, [picked]);
+      grantWallItems(wall, [picked], playDate);
       grants.push(picked);
     }
-    rw.lastDate = playDate;
+    wall.lastDate = playDate;
   }
-  if (grants.length) saveStore();
+  var unlocked = applyFrameUnlocks(wall, store.records.length);
+  if (grants.length) {
+    recordWallHistory(wall, playDate, grants);
+    grants.forEach(function (id) { if (wall.pending.indexOf(id) < 0) wall.pending.push(id); });
+  }
+  if (grants.length || unlocked.length) saveStore();
   return grants;
 }
-/* ---- 写真立て/額縁にはめ込む「直近のクリア写真」 ---- */
-function latestClearRecord() {
-  var best = null;
-  store.records.forEach(function (r) {
-    if (!best || (r.clearedAt || r.date) > (best.clearedAt || best.date)) best = r;
-  });
-  return best;
-}
-/* 記録 → エントリ解決 (写真立て・コレクション共通)。picsum はキーから
+/* 記録 → エントリ解決 (額装・コレクション共通)。picsum はキーから
  * 直接作れ、URL エントリは現在のプールから引く。 */
 function entryForRecord(rec) {
   var key = recordImageKey(rec);
@@ -3054,220 +2946,471 @@ function entryForRecord(rec) {
   if (key.charAt(0) === 'p') return { type: 'picsum', id: parseInt(key.slice(1), 10) };
   return state && state.pool ? poolEntryByKey(state.pool, key) : null;
 }
-var framePhoto = { key: null, img: null };
-function framePhotoImage() {
-  var rec = latestClearRecord();
-  if (!rec) return null;
-  var key = rec.date + ':' + recordImageKey(rec);
-  if (framePhoto.key !== key) {
-    framePhoto.key = key;
-    framePhoto.img = null;
-    var url = entryThumbUrl(entryForRecord(rec));
-    if (url) loadImgCorsFallback(url).then(function (img) {
-      if (framePhoto.key === key) { framePhoto.img = img; draw(); }
-    }, function () { /* 読めなければ枠だけ表示 */ });
-  }
-  var im = framePhoto.img;
-  return (im && im.complete && im.naturalWidth > 0) ? im : null;
+/* 額装パズルの記録キー (壁への配置データが参照する安定キー) */
+function wallRecordKey(rec) {
+  return rec.date + '|' + rec.pieces + '|' + recordImageKey(rec);
 }
-/* ---- 机への描画 (装飾レイヤー: 背景の直後・ピースより奥) ---- */
-function drawDeskItems(v) {
-  var rw = store.rewards;
-  if (!rw || !rw.owned.length) return;
-  var rect = scatterRect(difficulty);
-  var ids = rw.owned.filter(function (id) { return rw.placed[id]; })
-    .sort(function (a, b) { return rw.placed[a].z - rw.placed[b].z; });
-  ids.forEach(function (id) {
-    var it = rewardItemById(id);
-    var p = rw.placed[id];
-    var c = worldToScreen(p.x * rect.w * CELL, p.y * rect.h * CELL);
-    var size = it.size * CELL * v.scale;
-    if (c.x < -size || c.x > stageW + size || c.y < -size || c.y > stageH + size) return;
-    // 接地影: 光は左上から (ピースの立体感と同方向) なので影は右下へ少し
-    sctx.fillStyle = 'rgba(30,18,6,0.20)';
-    sctx.beginPath();
-    sctx.ellipse(c.x + size * 0.05, c.y + size * 0.38, size * 0.36, size * 0.11, 0, 0, Math.PI * 2);
-    sctx.fill();
-    var x0 = c.x - size / 2, y0 = c.y - size / 2;
-    if (it.photo) {
-      var pr = it.photoRect;
-      var photo = framePhotoImage();
-      if (photo) { // 写真は cover で内側の矩形へはめ込み、枠を上から描く
-        var iw = size * pr.w, ih = size * pr.h;
-        var sc = Math.max(iw / photo.naturalWidth, ih / photo.naturalHeight);
-        var dw = photo.naturalWidth * sc, dh = photo.naturalHeight * sc;
-        sctx.save();
-        sctx.beginPath();
-        sctx.rect(x0 + size * pr.x, y0 + size * pr.y, iw, ih);
-        sctx.clip();
-        sctx.drawImage(photo, x0 + size * pr.x + (iw - dw) / 2, y0 + size * pr.y + (ih - dh) / 2, dw, dh);
-        sctx.restore();
-      } else {
-        sctx.fillStyle = 'rgba(245,240,228,0.85)';
-        sctx.fillRect(x0 + size * pr.x, y0 + size * pr.y, size * pr.w, size * pr.h);
-      }
-    }
-    var img = itemImgs[id];
-    if (img && img.complete && img.naturalWidth > 0) {
-      sctx.drawImage(img, x0, y0, size, size);
-    } else if (decorMode) {
-      // 画像が読めていないときの仮表示 (編集モードだけ: 名前を出す)
-      sctx.fillStyle = 'rgba(245,240,228,0.92)';
-      sctx.fillRect(x0, y0, size, size);
-      sctx.fillStyle = '#4a3826';
-      sctx.font = Math.max(10, Math.round(size * 0.11)) + 'px sans-serif';
-      sctx.textAlign = 'center';
-      sctx.fillText(it.name, c.x, c.y + 4);
-    }
-    if (decorMode && decorSelected === id) {
-      sctx.strokeStyle = THEMES[uiTheme].brass;
-      sctx.lineWidth = 2;
-      sctx.strokeRect(x0 - 3, y0 - 3, size + 6, size + 6);
-    }
-  });
-}
-/* ---- かざる (配置編集モード) ----
- * 専用導線 (スタート画面 / 設定シート) からのみ入る。編集中はステージの
- * ポインタ操作を小物のドラッグに付け替え、ピースとカメラは動かさない。 */
-var decorMode = false;
-var decorReturn = 'home'; // 'home' = スタート画面から / 'play' = プレイ中から
-var decorDrag = null;     // { id, offX, offY } (ワールド px)
-var decorSelected = null;
-function enterDecor(from) {
-  if (!state) return;
-  decorReturn = from;
-  if (state.surface !== 'desk') {
-    state.surface = 'desk';
-    invalidateDeskBackdrop();
-    updateSurfaceUI();
-  }
-  selection.clear();
-  decorMode = true;
-  decorSelected = null;
-  decorDrag = null;
-  uiHome = false;
-  uiCollection = false;
-  applyVisibility();
-  $('stageWrap').classList.add('decorating');
-  $('decorBar').hidden = false;
-  $('decorTray').hidden = false;
-  updateDecorBar();
-  renderDecorTray();
-  draw();
-}
-function exitDecor() {
-  if (!decorMode) return;
-  decorMode = false;
-  decorDrag = null;
-  decorSelected = null;
-  saveStore();
-  $('stageWrap').classList.remove('decorating');
-  $('decorBar').hidden = true;
-  $('decorTray').hidden = true;
-  if (decorReturn === 'home') goToStartScreen();
-  else { applyVisibility(); draw(); }
-}
-function updateDecorBar() {
-  $('decorUnplaceBtn').hidden = !decorSelected;
-}
-function bringItemToFront(id) {
-  var rw = store.rewards;
-  var p = rw.placed[id];
-  if (!p) return;
-  var z = p.z;
-  Object.keys(rw.placed).forEach(function (k) { if (rw.placed[k].z > z) z = rw.placed[k].z; });
-  p.z = z + 1;
-}
-function renderDecorTray() {
-  var rw = store.rewards;
-  var tray = $('decorTray');
-  tray.innerHTML = '';
-  if (!rw.owned.length) {
-    tray.innerHTML = '<span class="decor-empty">まだ小物がありません。今日のパズルをクリアすると届きます</span>';
-    return;
-  }
-  REWARD_ITEMS.forEach(function (it) {
-    if (rw.owned.indexOf(it.id) < 0) return;
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'decor-chip' + (rw.placed[it.id] ? ' placed' : '') + (decorSelected === it.id ? ' sel' : '');
-    var stars = it.kind === 'draw' ? rarityLabel(it) : '';
-    b.innerHTML = '<img src="items/' + it.id + '.webp" alt="">' +
-      '<span class="decor-chip-name">' + it.name + '</span>' +
-      (stars ? '<span class="decor-chip-rarity">' + stars + '</span>' : '') +
-      '<span class="decor-chip-state">' + (rw.placed[it.id] ? '配置中' : '未配置') + '</span>';
-    b.addEventListener('click', function () {
-      var rw2 = store.rewards;
-      if (rw2.placed[it.id]) {
-        bringItemToFront(it.id);
-        decorSelected = it.id;
-      } else {
-        placeItemDefault(rw2, it.id);
-        decorSelected = it.id;
-        sePlace();
-      }
-      saveStore();
-      updateDecorBar();
-      renderDecorTray();
-      draw();
-    });
-    tray.appendChild(b);
-  });
-}
-/* ワールド座標 (px) にある最前面の小物 id (なければ null) */
-function decorItemAt(wx, wy) {
-  var rw = store.rewards;
-  var rect = scatterRect(difficulty);
-  var ids = rw.owned.filter(function (id) { return rw.placed[id]; })
-    .sort(function (a, b) { return rw.placed[b].z - rw.placed[a].z; });
-  for (var i = 0; i < ids.length; i++) {
-    var it = rewardItemById(ids[i]);
-    var p = rw.placed[ids[i]];
-    var half = it.size * CELL / 2;
-    if (Math.abs(wx - p.x * rect.w * CELL) <= half && Math.abs(wy - p.y * rect.h * CELL) <= half) return ids[i];
+function recordByWallKey(key) {
+  for (var i = 0; i < store.records.length; i++) {
+    if (wallRecordKey(store.records[i]) === key) return store.records[i];
   }
   return null;
 }
-function decorPointerDown(ev) {
-  var p = stagePos(ev);
-  var w = screenToWorld(p.x, p.y);
-  var id = decorItemAt(w.x, w.y);
-  decorSelected = id;
-  if (id) {
-    bringItemToFront(id); // 最後に触ったものが最前面
-    var rect = scatterRect(difficulty);
-    var pos = store.rewards.placed[id];
-    decorDrag = { id: id, offX: w.x - pos.x * rect.w * CELL, offY: w.y - pos.y * rect.h * CELL };
+/* ---- ごほうびリビール (スタート画面の通知から開く) ---- */
+function rewardCardHtml(it) {
+  return '<img src="wall-items/' + it.id + '.webp" alt="">' +
+    '<span class="reward-name">' + it.name + '</span>' +
+    '<span class="reward-note">' + rarityLabel(it) + '</span>';
+}
+function showRewardReveal() {
+  if (!store.wall.pending.length) return;
+  var box = $('rewardChoices');
+  box.innerHTML = '';
+  store.wall.pending.forEach(function (id) {
+    var it = wallItemById(id);
+    if (!it) return;
+    var card = document.createElement('div');
+    card.className = 'reward-card';
+    card.innerHTML = rewardCardHtml(it);
+    box.appendChild(card);
+  });
+  $('rewardModal').hidden = false;
+}
+function closeRewardReveal() {
+  $('rewardModal').hidden = true;
+  if (store.wall.pending.length) {
+    store.wall.pending = [];
+    saveStore();
+    updateStartWallRow();
+  }
+}
+/* ---- フレーム解放の通知 (スタート画面の通知から開く) ---- */
+function showUnlockNotice() {
+  var list = $('unlockList');
+  list.innerHTML = '';
+  var names = [];
+  store.wall.pendingUnlocks.forEach(function (id) {
+    var st = frameStyleById(id);
+    if (!st) return;
+    names.push(st.name);
+    var row = document.createElement('div');
+    row.className = 'unlock-row';
+    row.innerHTML = '<span class="unlock-swatch" style="background:' + (st.gradient || st.color) + '"></span>' +
+      '<span class="unlock-name">' + st.name + '</span>' +
+      '<span class="unlock-cond">累計 ' + st.unlockAt + ' 回クリアで解放</span>';
+    list.appendChild(row);
+  });
+  $('unlockTitle').textContent = names.length === 1
+    ? '新しいフレーム『' + names[0] + '』が使えるようになりました'
+    : '新しいフレームが使えるようになりました';
+  $('unlockModal').hidden = false;
+}
+function closeUnlockNotice() {
+  $('unlockModal').hidden = true;
+  if (store.wall.pendingUnlocks.length) {
+    store.wall.pendingUnlocks = [];
+    saveStore();
+    updateStartWallRow();
+  }
+}
+
+/* ---------- 壁画面 (案B: 正面から見た一面の壁) ----------
+ * 所持アイテムと額装パズルを壁に自由配置する専用画面。配置は比率座標
+ * (中心) で store.wall.placed / frames に保存し、placed の配列順が
+ * アイテム同士の重なり順 (額は常にアイテムより奥に描く)。
+ * 額の中身はコレクション詳細と同じ「実ピース形状」の完成盤面レンダラーで
+ * 描く (paintWallFrame)。フレーム色は解放済みスタイルだけが選べる。 */
+var uiWall = false;
+var wallBackToHome = true;
+var wallSelected = null; // { kind: 'item' | 'frame', key: id | recordKey }
+var wallDrag = null;     // { kind, key, el, moved, startX, startY, offX, offY }
+
+function showWall(from) {
+  uiWall = true;
+  wallBackToHome = from === 'home';
+  wallSelected = null;
+  wallDrag = null;
+  // 壁を開いたら未確認のごほうび/解放は確認済み扱いにする
+  if (store.wall.pending.length || store.wall.pendingUnlocks.length) {
+    store.wall.pending = [];
+    store.wall.pendingUnlocks = [];
     saveStore();
   }
-  updateDecorBar();
-  renderDecorTray();
-  draw();
+  applyVisibility();
+  renderWall();
 }
-function decorPointerMove(ev) {
-  if (!decorDrag) return;
-  var p = stagePos(ev);
-  var w = screenToWorld(p.x, p.y);
-  var rect = scatterRect(difficulty);
-  var pos = store.rewards.placed[decorDrag.id];
-  var clamped = clampItemPos((w.x - decorDrag.offX) / (rect.w * CELL), (w.y - decorDrag.offY) / (rect.h * CELL));
-  pos.x = clamped.x;
-  pos.y = clamped.y;
-  requestDraw();
-}
-function decorPointerUp() {
-  if (!decorDrag) return;
-  decorDrag = null;
+function hideWall() {
+  uiWall = false;
+  wallSelected = null;
+  wallDrag = null;
   saveStore();
-  sePlace();
-  draw();
+  if (wallBackToHome) goToStartScreen();
+  else applyVisibility();
 }
-/* スタート画面の「机の小物」行 (所持数と、未選択のごほうび通知) */
-function updateStartDeskRow() {
-  var rw = store.rewards;
-  if (!rw) return;
-  $('deskItemsInfo').textContent = '机の小物 ' + rw.owned.length + ' / ' + REWARD_ITEMS.length;
-  $('rewardBtn').hidden = true; // 3 択は廃止: 付与はクリア時に自動 (ランダム抽選)
+function wallPlacedEntry(id) {
+  for (var i = 0; i < store.wall.placed.length; i++) if (store.wall.placed[i].id === id) return store.wall.placed[i];
+  return null;
+}
+function wallFrameEntry(key) {
+  for (var i = 0; i < store.wall.frames.length; i++) if (store.wall.frames[i].recordKey === key) return store.wall.frames[i];
+  return null;
+}
+function renderWall() {
+  var stage = $('wallStage');
+  stage.innerHTML = '';
+  store.wall.frames.forEach(function (f) { stage.appendChild(buildWallFrameEl(f)); });
+  store.wall.placed.forEach(function (p) { stage.appendChild(buildWallItemEl(p)); });
+  renderWallTray();
+  updateWallSelBar();
+}
+function buildWallItemEl(p) {
+  var it = wallItemById(p.id);
+  var el = document.createElement('div');
+  el.className = 'wall-el wall-item';
+  el.style.left = (p.x * 100) + '%';
+  el.style.top = (p.y * 100) + '%';
+  el.style.width = (wallItemWidthRatio(it) * 100) + '%';
+  el.dataset.kind = 'item';
+  el.dataset.key = p.id;
+  var img = document.createElement('img');
+  img.src = 'wall-items/' + it.id + '.webp';
+  img.alt = it.name;
+  img.draggable = false;
+  el.appendChild(img);
+  attachWallDrag(el, 'item', p.id);
+  return el;
+}
+/* フレームの装飾 (ornament) を SVG 文字列で返す小さな描画関数群。
+ * 座標系は 100x100 (額は正方形)。ribbon / crown は枠の外にはみ出す
+ * (svg に overflow: visible を付けている)。 */
+function svgStarPoints(cx, cy, r) {
+  var pts = [];
+  for (var i = 0; i < 10; i++) {
+    var rad = (i % 2 === 0) ? r : r * 0.45;
+    var a = -Math.PI / 2 + i * Math.PI / 5;
+    pts.push((cx + rad * Math.cos(a)).toFixed(1) + ',' + (cy + rad * Math.sin(a)).toFixed(1));
+  }
+  return pts.join(' ');
+}
+var ORNAMENT_SVG = {
+  line: function () {
+    return '<svg viewBox="0 0 100 100"><rect x="9.5" y="9.5" width="81" height="81" fill="none" stroke="rgba(60,45,20,0.45)" stroke-width="1.1"/></svg>';
+  },
+  corners: function () {
+    var s = '<svg viewBox="0 0 100 100">' +
+      '<rect x="9" y="9" width="82" height="82" fill="none" stroke="rgba(70,50,10,0.55)" stroke-width="1.2"/>' +
+      '<rect x="13.5" y="13.5" width="73" height="73" fill="none" stroke="rgba(70,50,10,0.4)" stroke-width="0.8"/>';
+    [[13.5, 13.5], [86.5, 13.5], [13.5, 86.5], [86.5, 86.5]].forEach(function (p) {
+      s += '<rect x="' + (p[0] - 2.4) + '" y="' + (p[1] - 2.4) + '" width="4.8" height="4.8" transform="rotate(45 ' + p[0] + ' ' + p[1] + ')" fill="#7A5A1E"/>';
+    });
+    return s + '</svg>';
+  },
+  ribbon: function () {
+    return '<svg viewBox="0 0 100 100"><g transform="translate(84 4)">' +
+      '<path d="M-2 6 L-8 15 L-3 16 L-1 9 Z" fill="#E7A6BC" stroke="#C97F9C" stroke-width="1"/>' +
+      '<path d="M3 6 L8 15 L3 16 L1 9 Z" fill="#E7A6BC" stroke="#C97F9C" stroke-width="1"/>' +
+      '<ellipse cx="-7" cy="1" rx="7" ry="4.6" transform="rotate(-24)" fill="#F0BFD2" stroke="#C97F9C" stroke-width="1"/>' +
+      '<ellipse cx="7" cy="1" rx="7" ry="4.6" transform="rotate(24)" fill="#F0BFD2" stroke="#C97F9C" stroke-width="1"/>' +
+      '<circle cx="0" cy="2" r="3" fill="#E7A6BC" stroke="#C97F9C" stroke-width="1"/></g></svg>';
+  },
+  stars: function () {
+    var pts = [[16, 5], [50, 3.5], [84, 6], [5, 50], [95, 46], [30, 95.5], [68, 94.5], [90, 89]];
+    var s = '<svg viewBox="0 0 100 100">';
+    pts.forEach(function (p) { s += '<polygon points="' + svgStarPoints(p[0], p[1], 3) + '" fill="#E8C86A"/>'; });
+    return s + '</svg>';
+  },
+  flowers: function () {
+    function flower(cx, cy, petal) {
+      var s = '';
+      for (var i = 0; i < 5; i++) {
+        var a = i * Math.PI * 2 / 5 - Math.PI / 2;
+        s += '<circle cx="' + (cx + 2.2 * Math.cos(a)).toFixed(1) + '" cy="' + (cy + 2.2 * Math.sin(a)).toFixed(1) + '" r="1.9" fill="' + petal + '"/>';
+      }
+      return s + '<circle cx="' + cx + '" cy="' + cy + '" r="1.3" fill="#E8B84B"/>';
+    }
+    var cols = ['#E7B7C5', '#FBF8F1', '#EFE3A0'];
+    var s = '<svg viewBox="0 0 100 100">';
+    [14, 38, 62, 86].forEach(function (x, i) { s += flower(x, 5, cols[i % 3]); });
+    [14, 38, 62, 86].forEach(function (x, i) { s += flower(x, 95, cols[(i + 1) % 3]); });
+    return s + '</svg>';
+  },
+  pearl: function () {
+    var s = '<svg viewBox="0 0 100 100">';
+    var inset = 8.5, dot = '<circle r="1.8" fill="#FFFDF6" stroke="rgba(170,150,110,0.7)" stroke-width="0.5" cx="';
+    for (var k = 0; k <= 8; k++) {
+      var t = (inset + 10.2 * k).toFixed(1);
+      s += dot + t + '" cy="' + inset + '"/>' + dot + t + '" cy="' + (100 - inset) + '"/>' +
+           dot + inset + '" cy="' + t + '"/>' + dot + (100 - inset) + '" cy="' + t + '"/>';
+    }
+    return s + '</svg>';
+  },
+  crown: function () {
+    return '<svg viewBox="0 0 100 100"><g transform="translate(50 -3)">' +
+      '<path d="M-12 8 L-12 -4 L-5.5 1.5 L0 -7 L5.5 1.5 L12 -4 L12 8 Z" fill="#C4A24B" stroke="#8A6D1F" stroke-width="1.2" stroke-linejoin="round"/>' +
+      '<circle cx="-12" cy="-5" r="1.8" fill="#C4A24B" stroke="#8A6D1F" stroke-width="0.8"/>' +
+      '<circle cx="0" cy="-8.5" r="1.8" fill="#C4A24B" stroke="#8A6D1F" stroke-width="0.8"/>' +
+      '<circle cx="12" cy="-5" r="1.8" fill="#C4A24B" stroke="#8A6D1F" stroke-width="0.8"/>' +
+      '<rect x="-12" y="9.5" width="24" height="2.6" fill="#C4A24B" stroke="#8A6D1F" stroke-width="0.8"/></g></svg>';
+  }
+};
+function buildWallFrameEl(f) {
+  var rec = recordByWallKey(f.recordKey);
+  var st = frameStyleById(f.color) || frameStyleById('walnut');
+  var el = document.createElement('div');
+  el.className = 'wall-el wall-frame';
+  el.dataset.kind = 'frame';
+  el.dataset.key = f.recordKey;
+  el.style.left = (f.x * 100) + '%';
+  el.style.top = (f.y * 100) + '%';
+  el.style.width = (f.w * 100) + '%';
+  var stage = $('wallStage');
+  var stageW = (stage && stage.clientWidth) || 360;
+  var framePx = Math.max(3, Math.round(stageW * f.w * st.width));
+  var box = document.createElement('div');
+  box.className = 'frame-box' + (st.shape === 'circle' ? ' circle' : '');
+  box.style.padding = framePx + 'px';
+  box.style.background = st.gradient || st.color;
+  var inner = document.createElement('div');
+  inner.className = 'frame-inner';
+  if (st.mat) {
+    inner.style.background = st.mat;
+    inner.style.padding = Math.max(3, Math.round(framePx * 0.85)) + 'px';
+  }
+  if (rec) {
+    var cv = document.createElement('canvas');
+    inner.appendChild(cv);
+    paintWallFrame(cv, rec);
+  } else {
+    var miss = document.createElement('span');
+    miss.className = 'wall-frame-missing';
+    miss.textContent = '記録がありません';
+    inner.appendChild(miss);
+  }
+  box.appendChild(inner);
+  var ornFn = ORNAMENT_SVG[st.ornament];
+  if (ornFn) {
+    var ov = document.createElement('div');
+    ov.className = 'frame-ornaments';
+    ov.innerHTML = ornFn(st);
+    box.appendChild(ov);
+  }
+  el.appendChild(box);
+  attachWallDrag(el, 'frame', f.recordKey);
+  return el;
+}
+/* 壁の額装パズル: コレクション詳細 (paintDetailBoard) と同じ辺生成・
+ * 輪郭パスを使い、余白なしで額いっぱいに完成盤面を描く。ピースの形と数は
+ * レコードの日付×難易度で決まる実物と一致する。 */
+function paintWallFrame(cv, rec) {
+  var plan = detailRenderPlan(rec.pieces);
+  var n = plan.n;
+  var sizePx = plan.sizePx;
+  cv.width = sizePx;
+  cv.height = sizePx;
+  var ctx = cv.getContext('2d');
+  ctx.fillStyle = '#ded5bf';
+  ctx.fillRect(0, 0, sizePx, sizePx);
+  ctx.fillStyle = 'rgba(90,70,40,0.65)';
+  ctx.font = '600 ' + Math.max(14, Math.round(sizePx * 0.03)) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('読み込み中…', sizePx / 2, sizePx / 2);
+  loadDetailSource(rec).then(function (src) {
+    if (!cv.isConnected) return; // 壁を作り直していたら古い描画は捨てる
+    var layout = { n: n, cellPx: sizePx / n, ox: 0, oy: 0, boardPx: sizePx };
+    var edges = generateEdges(rec.date, rec.pieces);
+    ctx.clearRect(0, 0, sizePx, sizePx);
+    for (var id = 0; id < n * n; id++) {
+      var home = pieceHome(id, n);
+      var path = detailPiecePath(edges, home.col, home.row, layout, plan.perSeg);
+      ctx.save();
+      ctx.clip(path);
+      ctx.drawImage(src, 0, 0, sizePx, sizePx);
+      ctx.restore();
+      strokePieceBevel(ctx, path, pieceRelief(layout.cellPx).bevel); // プレイ画面と揃える
+      ctx.strokeStyle = 'rgba(30,30,30,0.35)';
+      ctx.lineWidth = Math.max(1, layout.cellPx * 0.02);
+      ctx.stroke(path);
+    }
+  });
+}
+/* 壁要素のドラッグ (移動) とタップ (選択)。アイテムは掴んだ順に最前面へ */
+function attachWallDrag(el, kind, key) {
+  el.addEventListener('pointerdown', function (ev) {
+    ev.preventDefault();
+    var entry = kind === 'item' ? wallPlacedEntry(key) : wallFrameEntry(key);
+    if (!entry) return;
+    try { el.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+    if (kind === 'item') {
+      // 最後に触ったアイテムが最前面 (placed の配列順 = 重なり順)
+      store.wall.placed.splice(store.wall.placed.indexOf(entry), 1);
+      store.wall.placed.push(entry);
+      el.parentNode.appendChild(el);
+    }
+    selectWall(kind, key);
+    var rect = $('wallStage').getBoundingClientRect();
+    wallDrag = {
+      kind: kind, key: key, el: el, moved: false,
+      startX: ev.clientX, startY: ev.clientY,
+      offX: (ev.clientX - rect.left) / rect.width - entry.x,
+      offY: (ev.clientY - rect.top) / rect.height - entry.y
+    };
+  });
+  el.addEventListener('pointermove', function (ev) {
+    if (!wallDrag || wallDrag.kind !== kind || wallDrag.key !== key) return;
+    if (Math.abs(ev.clientX - wallDrag.startX) + Math.abs(ev.clientY - wallDrag.startY) > 6) wallDrag.moved = true;
+    if (!wallDrag.moved) return;
+    var rect = $('wallStage').getBoundingClientRect();
+    var entry = kind === 'item' ? wallPlacedEntry(key) : wallFrameEntry(key);
+    if (!entry) return;
+    var c = clampItemPos((ev.clientX - rect.left) / rect.width - wallDrag.offX,
+                         (ev.clientY - rect.top) / rect.height - wallDrag.offY);
+    entry.x = c.x;
+    entry.y = c.y;
+    el.style.left = (c.x * 100) + '%';
+    el.style.top = (c.y * 100) + '%';
+  });
+  function endDrag() {
+    if (!wallDrag || wallDrag.kind !== kind || wallDrag.key !== key) return;
+    var wasDrag = wallDrag.moved;
+    wallDrag = null;
+    if (wasDrag) { saveStore(); sePlace(); }
+  }
+  el.addEventListener('pointerup', endDrag);
+  el.addEventListener('pointercancel', endDrag);
+}
+function selectWall(kind, key) {
+  wallSelected = kind ? { kind: kind, key: key } : null;
+  document.querySelectorAll('#wallStage .wall-el').forEach(function (el) {
+    el.classList.toggle('sel', !!wallSelected && el.dataset.kind === kind && el.dataset.key === key);
+  });
+  updateWallSelBar();
+  renderWallTray();
+}
+function updateWallSelBar() {
+  var bar = $('wallSelBar');
+  if (!wallSelected) { bar.hidden = true; return; }
+  bar.hidden = false;
+  var isFrame = wallSelected.kind === 'frame';
+  $('wallSelName').textContent = isFrame
+    ? '額装パズル'
+    : ((wallItemById(wallSelected.key) || {}).name || '');
+  $('wallFrameColors').hidden = !isFrame;
+  if (isFrame) renderFrameColorSwatches();
+}
+/* フレーム色の選択肢: 解放済みスタイルだけを出す */
+function renderFrameColorSwatches() {
+  var box = $('wallFrameColors');
+  box.innerHTML = '';
+  var f = wallSelected && wallSelected.kind === 'frame' ? wallFrameEntry(wallSelected.key) : null;
+  FRAME_STYLES.forEach(function (st) {
+    if (store.wall.frameUnlocks.indexOf(st.id) < 0) return;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'frame-swatch' + (f && f.color === st.id ? ' active' : '');
+    b.style.background = st.gradient || st.color;
+    b.title = st.name;
+    b.setAttribute('aria-label', st.name);
+    b.addEventListener('click', function () {
+      var fr = wallFrameEntry(wallSelected.key);
+      if (!fr) return;
+      fr.color = st.id;
+      saveStore();
+      renderWall();
+      selectWall('frame', fr.recordKey);
+    });
+    box.appendChild(b);
+  });
+}
+function unplaceWallSelected() {
+  if (!wallSelected) return;
+  if (wallSelected.kind === 'item') {
+    store.wall.placed = store.wall.placed.filter(function (p) { return p.id !== wallSelected.key; });
+  } else {
+    store.wall.frames = store.wall.frames.filter(function (f) { return f.recordKey !== wallSelected.key; });
+  }
+  wallSelected = null;
+  saveStore();
+  renderWall();
+}
+/* 下部トレイ: 所持アイテム (タップで配置/選択) + 額装の導線 */
+function renderWallTray() {
+  var wall = store.wall;
+  var tray = $('wallTray');
+  if (!tray) return;
+  tray.innerHTML = '';
+  if (!wall.owned.length) {
+    tray.innerHTML = '<span class="decor-empty">まだ小物がありません。今日のパズルをクリアすると届きます</span>';
+  }
+  WALL_CATALOG.forEach(function (it) {
+    if (wall.owned.indexOf(it.id) < 0) return;
+    var placed = !!wallPlacedEntry(it.id);
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'decor-chip' + (placed ? ' placed' : '') +
+      (wallSelected && wallSelected.kind === 'item' && wallSelected.key === it.id ? ' sel' : '');
+    b.innerHTML = '<img src="wall-items/' + it.id + '.webp" alt="">' +
+      '<span class="decor-chip-name">' + it.name + '</span>' +
+      '<span class="decor-chip-rarity">' + rarityLabel(it) + '</span>' +
+      '<span class="decor-chip-state">' + (placed ? '配置中' : '未配置') + '</span>';
+    b.addEventListener('click', function () {
+      if (!wallPlacedEntry(it.id)) {
+        store.wall.placed.push({ id: it.id, x: 0.5, y: 0.45 });
+        saveStore();
+        sePlace();
+        renderWall();
+      }
+      selectWall('item', it.id);
+    });
+    tray.appendChild(b);
+  });
+  $('wallFrameCount').textContent = wall.frames.length ? '額装 ' + wall.frames.length + ' 点を表示中' : '';
+}
+/* 額装ピッカー: クリア記録の一覧 (配置済みの記録は選べない) */
+function openFramePicker() {
+  var list = $('framePickerList');
+  list.innerHTML = '';
+  var placedKeys = {};
+  store.wall.frames.forEach(function (f) { placedKeys[f.recordKey] = true; });
+  var recs = store.records.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : b.pieces - a.pieces; });
+  if (!recs.length) {
+    list.innerHTML = '<p class="picker-empty">まだクリア記録がありません。パズルをクリアすると額装できます</p>';
+  }
+  recs.forEach(function (r) {
+    var key = wallRecordKey(r);
+    var thumb = entryThumbUrl(entryForRecord(r));
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'picker-card';
+    b.disabled = !!placedKeys[key];
+    b.innerHTML = (thumb ? '<img loading="lazy" src="' + thumb + '" alt="">' : '') +
+      '<span class="picker-meta">' + r.date + ' ・ ' + r.pieces + 'ピース</span>' +
+      '<span class="picker-state">' + (placedKeys[key] ? '壁に表示中' : 'タップで額装') + '</span>';
+    b.addEventListener('click', function () {
+      store.wall.frames.push({ recordKey: key, x: 0.5, y: 0.38, w: 0.30, color: 'walnut' });
+      saveStore();
+      sePlace();
+      $('framePickerModal').hidden = true;
+      renderWall();
+      selectWall('frame', key);
+    });
+    list.appendChild(b);
+  });
+  $('framePickerModal').hidden = false;
+}
+/* スタート画面の「壁の小物」行 (所持数と、未確認のごほうび/フレーム解放の通知) */
+function updateStartWallRow() {
+  var wall = store.wall;
+  if (!wall) return;
+  $('wallItemsInfo').textContent = '壁の小物 ' + wall.owned.length + ' / ' + WALL_CATALOG.length;
+  $('rewardBtn').hidden = !wall.pending.length;
+  var pendU = wall.pendingUnlocks;
+  $('unlockBtn').hidden = !pendU.length;
+  if (pendU.length === 1) {
+    var ust = frameStyleById(pendU[0]);
+    $('unlockBtn').textContent = '🖼 新しいフレーム『' + (ust ? ust.name : '') + '』が使えるようになりました →';
+  } else if (pendU.length > 1) {
+    $('unlockBtn').textContent = '🖼 新しいフレームが ' + pendU.length + ' 種使えるようになりました →';
+  }
 }
 
 /* ---------- 画面遷移 ----------
@@ -3278,10 +3421,11 @@ var uiCollection = false;
 var collectionBackToHome = false; // クリア画面経由で開いたコレクションの「戻る」はプレイ画面でなくスタート画面へ
 var firstStart = true; // 初回だけ true。起動時は進捗があっても必ずスタート画面から (机へ自動復帰しない)
 function applyVisibility() {
-  $('startView').hidden = !uiHome || uiCollection;
-  $('playView').hidden = uiHome || uiCollection;
+  $('startView').hidden = !uiHome || uiCollection || uiWall;
+  $('playView').hidden = uiHome || uiCollection || uiWall;
   $('collectionView').hidden = !uiCollection;
-  if (!uiHome && !uiCollection) resizeStage();
+  $('wallView').hidden = !uiWall;
+  if (!uiHome && !uiCollection && !uiWall) resizeStage();
 }
 function showCollection() {
   uiCollection = true;
@@ -3346,8 +3490,8 @@ var detailSeq = 0; // 非同期読み込みの競合ガード (開き直した�
 
 function openDetail(r) {
   detailRecord = r;
-  var rewardNames = (store.rewards.history[r.date] || []).map(function (id) {
-    var it = rewardItemById(id);
+  var rewardNames = (store.wall.history[r.date] || []).map(function (id) {
+    var it = wallItemById(id);
     return it ? it.name : id;
   });
   $('detailText').innerHTML =
@@ -3526,7 +3670,7 @@ function updateSettingsPauseBtn() {
   btn.textContent = state.paused ? '再開する' : '一時停止する';
 }
 function openSettings() {
-  if (!state || state.phase !== 'play' || uiHome || uiCollection || decorMode) return;
+  if (!state || state.phase !== 'play' || uiHome || uiCollection || uiWall) return;
   settingsAutoPaused = false;
   if (timerRunning()) { pauseTimer(); settingsAutoPaused = true; persistProgress(); }
   updateSettingsPauseBtn();
@@ -3649,23 +3793,34 @@ function wireControls() {
     $('resultCopyBtn').textContent = 'コピーしました';
     setTimeout(function () { $('resultCopyBtn').textContent = '結果をコピー'; }, 1500);
   });
-  /* クリア報酬: ごほうびの 3 択と、机をかざる (配置編集) の導線 */
-  $('rewardLaterBtn').addEventListener('click', function () { $('rewardModal').hidden = true; });
-  $('decorBtn').addEventListener('click', function () { enterDecor('home'); });
-  $('settingsDecorBtn').addEventListener('click', function () {
-    closeSettings();
-    enterDecor('play');
+  /* クリア報酬: ごほうびリビール / フレーム解放通知 / 壁をかざる の導線 */
+  $('rewardBtn').addEventListener('click', function () { showRewardReveal(); });
+  $('rewardLaterBtn').addEventListener('click', function () { closeRewardReveal(); });
+  $('rewardWallBtn').addEventListener('click', function () {
+    closeRewardReveal();
+    showWall('home');
   });
-  $('decorDoneBtn').addEventListener('click', function () { exitDecor(); });
-  $('decorUnplaceBtn').addEventListener('click', function () {
-    if (decorSelected && store.rewards.placed[decorSelected]) {
-      delete store.rewards.placed[decorSelected]; // 所持はそのまま、配置だけ外す (トレイから再配置できる)
-      decorSelected = null;
-      saveStore();
-      updateDecorBar();
-      renderDecorTray();
-      draw();
-    }
+  $('unlockBtn').addEventListener('click', function () { showUnlockNotice(); });
+  $('unlockCloseBtn').addEventListener('click', function () { closeUnlockNotice(); });
+  $('wallBtn').addEventListener('click', function () { showWall('home'); });
+  $('settingsWallBtn').addEventListener('click', function () {
+    closeSettings();
+    showWall('play');
+  });
+  $('wallBack').addEventListener('click', function () { hideWall(); });
+  $('wallUnplaceBtn').addEventListener('click', function () { unplaceWallSelected(); });
+  $('wallFrameBtn').addEventListener('click', function () { openFramePicker(); });
+  $('framePickerClose').addEventListener('click', function () { $('framePickerModal').hidden = true; });
+  $('wallStage').addEventListener('pointerdown', function (ev) {
+    if (ev.target === $('wallStage')) selectWall(null); // 壁の何もない所をタップで選択解除
+  });
+  /* 全データリセット (設定シート内・危険操作): 専用の確認モーダルを挟み、
+   * 確定したら保存キーを丸ごと消して再読み込みし、初期状態に戻す */
+  $('settingsResetBtn').addEventListener('click', function () { $('resetConfirmModal').hidden = false; });
+  $('resetNoBtn').addEventListener('click', function () { $('resetConfirmModal').hidden = true; });
+  $('resetYesBtn').addEventListener('click', function () {
+    resetAllData(localStorage, STORE_KEY);
+    location.reload();
   });
   window.addEventListener('resize', resizeStage);
 }
@@ -3819,7 +3974,7 @@ function renderStartScreen() {
       $('resumeInfo').textContent = difficulty + 'ピース ・ マットに置いたピース ' + onMat + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
     }
   }
-  updateStartDeskRow();
+  updateStartWallRow();
 }
 
 /* ---------- ゲーム開始 ---------- */

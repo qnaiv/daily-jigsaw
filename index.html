@@ -50,11 +50,12 @@
       <button id="collectionBtn" class="text-link" type="button">コレクション →</button>
     </nav>
 
-    <!-- クリア報酬の小物: 所持数とかざる導線。未選択のごほうびがある間だけ通知も出す -->
+    <!-- 壁の小物: 所持数とかざる導線。未受け取りのごほうび / フレーム解放がある間だけ通知も出す -->
     <div class="start-desk">
-      <span id="deskItemsInfo" class="desk-items-info">机の小物 0 / 13</span>
-      <button id="decorBtn" class="text-link" type="button">机をかざる →</button>
-      <button id="rewardBtn" class="text-link reward-notice" type="button" hidden>🎁 今日のごほうびが届いています →</button>
+      <span id="wallItemsInfo" class="desk-items-info">壁の小物 0 / 50</span>
+      <button id="wallBtn" class="text-link" type="button">壁をかざる →</button>
+      <button id="rewardBtn" class="text-link reward-notice" type="button" hidden>🎁 ごほうびが届いています →</button>
+      <button id="unlockBtn" class="text-link reward-notice" type="button" hidden>🖼 新しいフレームが使えるようになりました →</button>
     </div>
 
     <!-- テーマ切替はプレイ中の設定シートと共通 (data-theme-opt で配線・同期する) -->
@@ -106,16 +107,27 @@
     <div id="bgmToast" aria-hidden="true"></div>
     <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" type="button" aria-label="閉じる">×</button></div>
     <div id="loadingOverlay">読み込み中…</div>
-    <!-- かざる (配置編集) モードのバーとトレイ。編集中は通常の HUD を隠す -->
-    <div id="decorBar" hidden>
-      <span class="decor-title">机をかざる</span>
-      <span class="decor-hint">小物をドラッグで移動できます</span>
-      <button id="decorUnplaceBtn" class="btn decor-btn" type="button" hidden>しまう</button>
-      <button id="decorDoneBtn" class="btn decor-btn" type="button">完了</button>
-    </div>
-    <div id="decorTray" hidden></div>
   </div>
 </main>
+
+<!-- 壁画面 (案B): 一面の壁に額装パズルと壁アイテムを飾る。配置は比率座標で保存 -->
+<section id="wallView" hidden>
+  <div class="collection-header">
+    <button id="wallBack" class="btn" type="button">← 戻る</button>
+    <h2>壁をかざる</h2>
+  </div>
+  <div id="wallStage"></div>
+  <div id="wallSelBar" hidden>
+    <span id="wallSelName"></span>
+    <span id="wallFrameColors"></span>
+    <button id="wallUnplaceBtn" class="btn" type="button">しまう</button>
+  </div>
+  <div class="wall-actions">
+    <button id="wallFrameBtn" class="btn" type="button">額装する</button>
+    <span id="wallFrameCount" class="wall-frame-count"></span>
+  </div>
+  <div id="wallTray"></div>
+</section>
 
 <section id="collectionView" hidden>
   <div class="collection-header">
@@ -137,7 +149,7 @@
       <button id="settingsPreviewBtn" class="btn settings-item" type="button">完成図を見る</button>
       <button id="settingsCollectionBtn" class="btn settings-item" type="button">コレクション</button>
       <button id="settingsHomeBtn" class="btn settings-item" type="button">スタート画面に戻る</button>
-      <button id="settingsDecorBtn" class="btn settings-item" type="button">机をかざる</button>
+      <button id="settingsWallBtn" class="btn settings-item" type="button">壁をかざる</button>
       <div class="settings-theme">
         <span class="settings-section-label">テーマ</span>
         <div class="settings-theme-btns">
@@ -161,6 +173,7 @@
         <ul id="photoCredits" class="credit-list"></ul>
       </div>
       <button id="settingsRestartBtn" class="btn settings-item danger" type="button">やりなおす</button>
+      <button id="settingsResetBtn" class="btn settings-item danger" type="button">データをリセット</button>
     </div>
     <button class="btn modal-close" type="button" data-settings-close>閉じる</button>
   </div>
@@ -204,8 +217,8 @@
     <p id="resultText"></p>
     <p id="resultBadge" class="praise" hidden>完成図を見ずにクリア！すごい！</p>
     <p id="resultRewardLine" class="reward-line" hidden></p>
+    <div id="resultRewardItems" class="reward-choices" hidden></div>
     <div class="result-actions">
-      <button id="resultRewardBtn" class="btn" type="button" hidden>今日のごほうびを選ぶ</button>
       <button id="resultCopyBtn" class="btn" type="button">結果をコピー</button>
       <button id="resultCollectionBtn" class="btn" type="button">コレクションを見る</button>
       <button id="resultCloseBtn" class="btn btn-underline" type="button">閉じる</button>
@@ -224,14 +237,49 @@
   </div>
 </div>
 
-<!-- クリア報酬の 3 択 (あとで選ぶ場合はスタート画面の通知から開き直せる) -->
+<!-- クリア報酬のリビール (毎日の初回クリアでランダム付与。未確認分はスタート画面の通知から開き直せる) -->
 <div id="rewardModal" class="modal" hidden>
   <div class="modal-backdrop"></div>
   <div class="modal-body reward-body">
-    <h2>今日のごほうび</h2>
-    <p class="reward-sub">どれを机に迎えますか？<br>選ばなかったものは次回の候補に戻ります</p>
+    <h2>ごほうびが届きました</h2>
+    <p class="reward-sub">壁にかざれる小物です</p>
     <div id="rewardChoices" class="reward-choices"></div>
-    <button id="rewardLaterBtn" class="btn btn-underline" type="button">あとで選ぶ</button>
+    <div class="result-actions">
+      <button id="rewardWallBtn" class="btn" type="button">壁をかざる</button>
+      <button id="rewardLaterBtn" class="btn btn-underline" type="button">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- フレーム解放の通知 -->
+<div id="unlockModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body reward-body">
+    <h2 id="unlockTitle">新しいフレームが使えるようになりました</h2>
+    <div id="unlockList"></div>
+    <button id="unlockCloseBtn" class="btn" type="button">閉じる</button>
+  </div>
+</div>
+
+<!-- 額装するコレクション記録の選択 -->
+<div id="framePickerModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body reward-body">
+    <h2>額装するパズルを選ぶ</h2>
+    <div id="framePickerList"></div>
+    <button id="framePickerClose" class="btn btn-underline" type="button">閉じる</button>
+  </div>
+</div>
+
+<!-- 全データリセットの確認 -->
+<div id="resetConfirmModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body result-body">
+    <p>データをリセットしますか？<br>コレクション、進行中のパズル、集めたアイテム、設定がすべて消えます。元に戻せません。</p>
+    <div class="result-actions">
+      <button id="resetYesBtn" class="btn danger-btn" type="button">リセットする</button>
+      <button id="resetNoBtn" class="btn" type="button">やめる</button>
+    </div>
   </div>
 </div>
 
