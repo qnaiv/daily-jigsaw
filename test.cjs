@@ -110,11 +110,11 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 {
   const pool = JSON.parse(require('fs').readFileSync(__dirname + '/data/images.json', 'utf8'));
   const entries = L.poolEntries(pool);
-  ok(pool.baseDate === '2026-11-07' && entries.length === 422, 'images.json: 基準日と 422 件のエントリ (picsum 365 + URL 57)');
+  ok(pool.baseDate === '2026-11-07' && entries.length === 705, 'images.json: 基準日と 705 件のエントリ (picsum 365 + URL 340)');
   ok(entries.filter(e => e.type === 'picsum').length === 365, 'プール: picsum エントリ 365 件');
   const urls = entries.filter(e => e.type === 'url');
-  ok(urls.length === 57 && urls.every(e => e.fullUrl && e.thumbUrl && e.source && e.license), 'プール: URL エントリ 57 件に URL/出典/ライセンスがある');
-  ok(urls.filter(e => e.license.indexOf('CC BY') === 0).length === 21 && urls.filter(e => e.license.indexOf('CC BY') === 0).every(e => e.attribution), 'プール: CC BY 21 件は全て attribution 付き');
+  ok(urls.length === 340 && urls.every(e => e.fullUrl && e.thumbUrl && e.source && e.license), 'プール: URL エントリ 340 件に URL/出典/ライセンスがある');
+  ok(urls.filter(e => e.license.indexOf('CC BY') === 0).length === 122 && urls.filter(e => e.license.indexOf('CC BY') === 0).every(e => e.attribution), 'プール: CC BY 122 件は全て attribution 付き');
   ok(L.pickPoolEntry('2026-11-07', pool) === entries[0], '基準日 → entries[0]');
   ok(L.pickPoolEntry('2026-11-08', pool) === entries[1], '基準日+1 → entries[1]');
   ok(L.pickPoolEntry('2026-11-07', pool) === L.pickPoolEntry('2026-11-07', pool), '同じ日付では常に同じエントリ');
@@ -1173,7 +1173,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.pickPoolEntry('2026-11-08', gpool) === gentries[1] && L.pickPoolEntry('2026-11-07', gpool) === gentries[0], 'グループ省略: 従来の日付のみ選択と一致 (旧挙動不変)');
   const realPool = JSON.parse(read2('data/images.json'));
   const rp = [0, 1, 2].map(g => L.pickPoolEntry('2026-11-08', realPool, g));
-  ok(rp[0] !== rp[1] && rp[1] !== rp[2] && rp[0] !== rp[2], 'グループ選択: 実プール (422件) でも3グループが別エントリ');
+  ok(rp[0] !== rp[1] && rp[1] !== rp[2] && rp[0] !== rp[2], 'グループ選択: 実プール (705件) でも3グループが別エントリ');
 
   // お題キーの保存/移行の配線 (newGameState / persistProgress)
   ok(appSrc2.indexOf('pickPoolEntry(playDate, pool, difficultyGroup(difficulty))') !== -1, 'お題: 新規開始はグループ選択で引く');
