@@ -284,10 +284,10 @@ button { font: inherit; cursor: pointer; }
 .start-difficulty { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 10px; width: 100%; }
 /* ピース数チップ (2026-11-08 再設計): 表示中の箱のグループ分だけを
  * コンパクトなピルで出す。選択中は緑に広がり想定時間も中に出る */
-.diff-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 2px 8px; }
+.diff-chips { display: flex; flex-wrap: nowrap; justify-content: center; gap: 6px; padding: 2px 4px; width: 100%; box-sizing: border-box; }
 .diff-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  min-height: 38px; padding: 7px 16px;
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0;
+  min-height: 38px; padding: 7px 12px;
   background: var(--panel); color: var(--ink);
   border: 1px solid var(--line); border-radius: 999px;
   box-shadow: 0 1px 2px var(--shadow-soft);
@@ -679,8 +679,8 @@ button { font: inherit; cursor: pointer; }
 
 @media (max-width: 640px) {
   .start-title-text { font-size: 26px; }
-  .diff-chip { padding: 7px 13px; }
-  .diff-chip .diff-num { font-size: 14px; }
+  .diff-chip { padding: 6px 8px; }
+  .diff-chip .diff-num { font-size: 12.5px; }
 }
 
 /* ---- クリア報酬インテリア ---- */
