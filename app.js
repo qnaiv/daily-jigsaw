@@ -308,9 +308,12 @@ function pieceOutlinePoints(edges, col, row, perSeg) {
 }
 
 /* ---- グリッド / 塊 / 完成判定 ----
- * 塊 (cluster) = { pieces:[id...], surface:'desk'|'mat', gx, gy }
+ * 塊 (cluster) = { pieces:[id...], surface:'desk', gx, gy }
  * (gx, gy) は塊の anchor ピース (id最小) が置かれているグリッド座標。
  * ピース id = row * n + col, ホーム座標 = (col, row)。
+ * 面は机1つだけ (2026-11-08 にマット概念を廃止)。盤面は机ワールドの
+ * [0,n]×[0,n] の領域で、旧マット座標と一致する。surface フィールドは
+ * 旧セーブ互換のために残すが常に 'desk' で、判定には使わない。
  */
 function pieceHome(id, n) { return { col: id % n, row: Math.floor(id / n) }; }
 function clusterAnchorId(cluster) { return Math.min.apply(null, cluster.pieces); }
@@ -342,7 +345,6 @@ function findRelativeSnap(drag, others, n) {
       if (home.col + d[0] < 0 || home.col + d[0] >= n || home.row + d[1] < 0 || home.row + d[1] >= n) return;
       if (dragSet.has(nid) || !otherPos.has(nid)) return;
       var q = otherPos.get(nid);
-      if (q.surface !== drag.surface) return;
       var needX = q.gx - d[0] - offX, needY = q.gy - d[1] - offY;
       var dist = Math.hypot(drag.gx - needX, drag.gy - needY);
       if (dist <= SNAP_DIST && (!best || dist < best.dist)) {
@@ -391,11 +393,10 @@ function absorbMerges(others, moving, n, opts) {
 
 /* 範囲選択: 矩形 (セル座標・正規化済み {x0,y0,x1,y1}、x0<x1, y0<y1 前提) と
  * 交差するピースを持つ塊を返す。ピースの矩形は [gx, gx+1] × [gy, gy+1] で、
- * 辺だけが接する場合は交差とみなさない。surface を渡すとその面の塊だけに絞る。 */
-function clustersInRect(clusters, n, rect, surface) {
+ * 辺だけが接する場合は交差とみなさない。 */
+function clustersInRect(clusters, n, rect) {
   var pos = piecePositions(clusters, n);
   return clusters.filter(function (cl) {
-    if (surface && cl.surface !== surface) return false;
     for (var i = 0; i < cl.pieces.length; i++) {
       var p = pos.get(cl.pieces[i]);
       if (p && p.gx < rect.x1 && p.gx + 1 > rect.x0 && p.gy < rect.y1 && p.gy + 1 > rect.y0) return true;
@@ -524,13 +525,13 @@ function boxPatternIndex(dateStr, group) {
 }
 function boxPatternForDate(dateStr, group) { return BOX_PATTERNS[boxPatternIndex(dateStr, group)]; }
 
-/* 完成判定 (内部のみ): 全ピースがマット上にあり、各ピースがホーム座標に一致 */
+/* 完成判定 (内部のみ): 全ピースが盤面上のホーム座標に一致 */
 function isComplete(clusters, n) {
   var pos = piecePositions(clusters, n);
   if (pos.size !== n * n) return false;
   for (var id = 0; id < n * n; id++) {
     var p = pos.get(id), home = pieceHome(id, n);
-    if (!p || p.surface !== 'mat' || p.gx !== home.col || p.gy !== home.row) return false;
+    if (!p || p.gx !== home.col || p.gy !== home.row) return false;
   }
   return true;
 }
@@ -1046,7 +1047,7 @@ function wallItemWidthRatio(item) {
  * 所持済みを対象から外すので、ここに入っていれば二重に届くことはない */
 var WALL_STARTER_ITEMS = ['w007', 'w030', 'w037']; // ユーカリリース / 葉っぱガーランド / ハートガーランド
 function emptyWall() {
-  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], sizeStage: 0, pendingExpand: false, lastDate: null, history: {} };
+  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], sizeStage: 0, pendingExpand: false, lastDate: null, grantDates: {}, history: {} };
 }
 /* 保存データの形が崩れていても使える形に寄せる (旧データには wall 自体がない)。
  * placed は配列順 = 重なり順を保ち、同じアイテム/記録の重複は先勝ちで落とす。 */
@@ -1126,6 +1127,17 @@ function normalizeWall(w) {
     if (out.frameUnlocks.indexOf(f.color) < 0) f.color = 'walnut';
   });
   if (typeof w.lastDate === 'string') out.lastDate = w.lastDate;
+  // ごほうびの付与済み日 (グループ別)。旧形式 (lastDate のみ) は両グループ
+  // 付与済みとして引き継ぎ、二重付与を防ぐ
+  out.grantDates = {};
+  if (w.grantDates && typeof w.grantDates === 'object') {
+    ['0', '1'].forEach(function (g) {
+      if (typeof w.grantDates[g] === 'string') out.grantDates[g] = w.grantDates[g];
+    });
+  }
+  if (out.lastDate && out.grantDates['0'] === undefined && out.grantDates['1'] === undefined) {
+    out.grantDates = { '0': out.lastDate, '1': out.lastDate };
+  }
   if (w.history && typeof w.history === 'object') {
     Object.keys(w.history).forEach(function (d) {
       if (Array.isArray(w.history[d])) out.history[d] = w.history[d].filter(function (id) { return !!wallItemById(id); });
@@ -1329,6 +1341,17 @@ function loadStore() {
 var store = loadStore();
 store.uiTheme = normalizeUiTheme(store.uiTheme); // 旧テーマ値は無効値として既定 'walnut' に落とす
 store.wall = normalizeWall(store.wall); // 壁インテリア (旧データには無いので空で作る。旧 store.rewards は読み捨て)
+/* お題のラウンド (第N回) 情報。無いセーブではここで作る: 既に遊んだ形跡が
+ * ある人は「実日付 = 仮想日付」になる位置から、新規の人は第1回から */
+function normalizeRound(r, s) {
+  if (r && typeof r.n === 'number' && r.n >= 1 && typeof r.unlockedAt === 'number') {
+    return { n: Math.floor(r.n), unlockedAt: r.unlockedAt };
+  }
+  var hasActivity = (s.records && s.records.length > 0) || (s.progress && Object.keys(s.progress).length > 0);
+  var n = hasActivity ? Math.max(1, daysBetween(jstTodayString(), BASE_DATE_FALLBACK) + 1) : 1;
+  return { n: n, unlockedAt: Date.now() };
+}
+if (!store.round) { store.round = normalizeRound(null, store); saveStore(); }
 function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 容量超過などは無視 */ }
@@ -1896,16 +1919,42 @@ function findRecord(date, pieces) {
 }
 function computeStreak() {
   var days = new Set(store.records.map(function (r) { return r.date; }));
-  var today = jstTodayString();
-  var cur = days.has(today) ? today : addDays(today, -1);
+  // ラウンド制: 仮想日付 (playDate) を末尾に、連続した回を数える
+  var cur = days.has(playDate) ? playDate : addDays(playDate, -1);
   var streak = 0;
   while (days.has(cur)) { streak++; cur = addDays(cur, -1); }
   return streak;
 }
 
 /* ---------- 画面状態 ---------- */
-var todayStr = jstTodayString();
-var playDate = todayStr; // 日付移動は廃止: 常に今日のお題だけ
+var todayStr = jstTodayString(); // 実日付 (ラウンド移行時の位置合わせにだけ使う)
+/* お題は日替わりではなく、その人の「第N回」(ラウンド制、2026-11-08 変更)。
+ * ラウンド N の仮想日付 = 基準日 + (N-1) 日で、記録・進捗・お題・箱柄の
+ * 日付キーは全て仮想日付で動く。新しいラウンドは前回の解放から24時間
+ * 以上たってから、1回の確認で1つだけ進む (何日空けても次は1つだけ。
+ * 1ラウンド = パズルA/B の2種が上限)。遊び途中のパズルがある回は
+ * 取り上げない (終わるまで次へ進まない) */
+var ROUND_INTERVAL_MS = 24 * 60 * 60 * 1000;
+function roundDate(n) { return addDays(BASE_DATE_FALLBACK, n - 1); }
+var playDate = roundDate(store.round.n);
+function currentRoundInProgress() {
+  var byDiff = store.progress[playDate];
+  if (!byDiff) return false;
+  return Object.keys(byDiff).some(function (k) {
+    var p = byDiff[k];
+    return !!(p && p.started && !p.cleared);
+  });
+}
+function maybeAdvanceRound() {
+  if (!store.round) return false;
+  if (Date.now() - store.round.unlockedAt < ROUND_INTERVAL_MS) return false;
+  if (currentRoundInProgress()) return false;
+  store.round = { n: store.round.n + 1, unlockedAt: Date.now() };
+  playDate = roundDate(store.round.n);
+  saveStore();
+  return true;
+}
+maybeAdvanceRound(); // 起動時に期限が来ていれば次の回へ
 var difficulty = DIFFICULTIES.indexOf(store.lastDifficulty) >= 0 ? store.lastDifficulty : 36;
 /* 箱カルーセル: グループごとに最後に選んだ難易度を覚える (スワイプで
  * 行き来しても各箱の選択が保たれる)。初期値はグループの代表値 */
@@ -1943,11 +1992,10 @@ function newGameState(pool) {
     author: null, authorUrl: null,
     n: Math.round(Math.sqrt(difficulty)),
     edges: generateEdges(playDate, difficulty),
-    surface: 'desk',
     phase: gameStarted ? 'play' : 'box', // 'box' = スタート画面 (未開封)
     gameStarted: gameStarted,
     opening: false,
-    clusters: gameStarted ? prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: c.surface, gx: c.gx, gy: c.gy }; }) : [],
+    clusters: gameStarted ? prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy }; }) : [],
     elapsedBase: prog.elapsedSec || 0,
     moves: prog.moves || 0,
     previewViewed: !!prog.previewViewed,
@@ -1955,7 +2003,7 @@ function newGameState(pool) {
     mergeFlash: null,                 // { ids:Set, start:ms } 合体フィードバック
     cleared: !!prog.cleared,
     started: false, paused: false, timerStart: 0,
-    views: { desk: null, mat: null }, // {scale, tx, ty} scaleFit も保持
+    views: { desk: null }, // {scale, tx, ty} scaleFit も保持
     bitmaps: new Map(),               // pieceId -> {canvas, path, cellPx, marginPx}
     bitmapFailures: new Map(),        // pieceId -> プローブ連続失敗回数 (作り直しポリシー用)
     srcCanvas: null, boardPx: 0,
@@ -2038,25 +2086,18 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function fetchCredit() {
+  // トップ画面にクレジットは出さない (ユーザー指定)。帰属表示は設定シートの
+  // クレジットモーダル (photoCredits) に集約。ここでは記録用の著者名だけ取る
   var e = state.entry;
-  if (e && e.type === 'url') {
-    // 外部コレクション: タイトルと出典 (CC BY は attribution 全文) を出す
-    var line = escapeHtml(e.title || '');
-    var credit = e.attribution ? escapeHtml(e.attribution)
-      : escapeHtml(e.source || '') + (e.license ? '（' + escapeHtml(e.license) + '）' : '');
-    if (credit) line += (line ? ' — ' : '') + credit;
-    $('themeCredit').textContent = line;
-    return;
-  }
+  if (e && e.type === 'url') return;
   if (!state.imageId) return;
   fetch('https://picsum.photos/id/' + state.imageId + '/info')
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (info) {
       if (!info) return;
       state.author = info.author; state.authorUrl = info.url;
-      $('themeCredit').innerHTML = 'Photo by <a href="' + info.url + '" target="_blank" rel="noopener">' + info.author + '</a>';
     })
-    .catch(function () { /* クレジットなしでも遊べる */ });
+    .catch(function () { /* 著者名なしでも遊べる */ });
 }
 
 /* ---------- ピース画像の事前描画 (オフスクリーン) ---------- */
@@ -2249,29 +2290,22 @@ function resizeStage() {
   if (state && !state.views.desk) fitViews();
   draw();
 }
-function fitView(surface) {
+function fitView() {
+  // 机ワールド = 散らばり領域そのもの (盤面 [0,n]² を含む)。
+  // fit (表示100%) とズーム下限はこの領域に追随する。
   var n = state.n;
-  var worldW, worldH, ox, oy;
-  if (surface === 'mat') {
-    worldW = (n + 2) * CELL; worldH = (n + 2) * CELL;
-    ox = -CELL; oy = -CELL;
-  } else {
-    // 机ワールド = 散らばり領域そのもの (旧来より縦横に広い)。
-    // fit (表示100%) とズーム下限はこの領域に追随する。
-    var r = scatterRect(n * n);
-    worldW = r.w * CELL; worldH = r.h * CELL;
-    ox = r.x0 * CELL; oy = r.y0 * CELL;
-  }
+  var r = scatterRect(n * n);
+  var worldW = r.w * CELL, worldH = r.h * CELL;
+  var ox = r.x0 * CELL, oy = r.y0 * CELL;
   var fit = Math.min(stageW / worldW, stageH / worldH);
   return { scale: fit, fit: fit, tx: (stageW - worldW * fit) / 2 - ox * fit, ty: (stageH - worldH * fit) / 2 - oy * fit };
 }
 function fitViews() {
   if (!stageW || !stageH) return; // プレイ画面が非表示の間はフィット計算しない (表示時に resizeStage が行う)
-  state.views.desk = fitView('desk');
-  state.views.mat = fitView('mat');
+  state.views.desk = fitView();
   invalidateDeskBackdrop(); // 机カメラが変わるので背景レイヤーを作り直す
 }
-function view() { return state.views[state.surface]; }
+function view() { return state.views.desk; }
 function worldToScreen(wx, wy) { var v = view(); return { x: wx * v.scale + v.tx, y: wy * v.scale + v.ty }; }
 function screenToWorld(sx, sy) { var v = view(); return { x: (sx - v.tx) / v.scale, y: (sy - v.ty) / v.scale }; }
 
@@ -2437,41 +2471,36 @@ function requestDraw() {
 }
 
 function draw() {
-  if (!state || !state.srcCanvas || !state.views[state.surface]) return;
+  if (!state || !state.srcCanvas || !state.views.desk) return;
   sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  var isMat = state.surface === 'mat';
   var v = view(), n = state.n;
-  if (isMat) {
-    drawMatBackdrop(); // 盤の外側: 机が薄いベール越しにぼんやり見える
-  } else {
-    drawDeskBackground(v);
-    // 机でカメラが動いたらミニマップを出す (初回は現在値で初期化だけする)
-    var camKey = v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
-    if (lastCamKey === '') lastCamKey = camKey;
-    else if (camKey !== lastCamKey) { lastCamKey = camKey; pokeMinimap(); }
+  drawDeskBackground(v);
+  // 机でカメラが動いたらミニマップを出す (初回は現在値で初期化だけする)
+  var camKey = v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
+  if (lastCamKey === '') lastCamKey = camKey;
+  else if (camKey !== lastCamKey) { lastCamKey = camKey; pokeMinimap(); }
+  // 盤面: 机の上に置かれた組み立て場所 ([0,n]×[0,n] セル)。マット色の板と
+  // グリッドを敷き、その上にピースを重ねる (面は机1つだけ)
+  var tl = worldToScreen(0, 0), br = worldToScreen(n * CELL, n * CELL);
+  sctx.fillStyle = THEMES[uiTheme].mat;
+  sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  sctx.fillStyle = 'rgba(0,0,0,0.12)';
+  sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  sctx.strokeStyle = 'rgba(255,255,255,0.75)';
+  sctx.lineWidth = 2;
+  sctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  sctx.strokeStyle = 'rgba(255,255,255,0.16)';
+  sctx.lineWidth = 1;
+  sctx.beginPath();
+  for (var g = 1; g < n; g++) {
+    var gp = worldToScreen(g * CELL, g * CELL);
+    sctx.moveTo(tl.x, gp.y); sctx.lineTo(br.x, gp.y);
+    sctx.moveTo(gp.x, tl.y); sctx.lineTo(gp.x, br.y);
   }
-  if (isMat) {
-    var tl = worldToScreen(0, 0), br = worldToScreen(n * CELL, n * CELL);
-    sctx.fillStyle = THEMES[uiTheme].mat; // 盤そのものはベールを被せずクッキリ
-    sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-    sctx.fillStyle = 'rgba(0,0,0,0.12)';
-    sctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-    sctx.strokeStyle = 'rgba(255,255,255,0.75)';
-    sctx.lineWidth = 2;
-    sctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-    sctx.strokeStyle = 'rgba(255,255,255,0.16)';
-    sctx.lineWidth = 1;
-    sctx.beginPath();
-    for (var g = 1; g < n; g++) {
-      var gp = worldToScreen(g * CELL, g * CELL);
-      sctx.moveTo(tl.x, gp.y); sctx.lineTo(br.x, gp.y);
-      sctx.moveTo(gp.x, tl.y); sctx.lineTo(gp.x, br.y);
-    }
-    sctx.stroke();
-  }
+  sctx.stroke();
   // 表示範囲のカリング: 画面内にある塊だけ描く
   var wTl = screenToWorld(0, 0), wBr = screenToWorld(stageW, stageH);
-  var ordered = state.clusters.filter(function (c) { return c.surface === state.surface; });
+  var ordered = state.clusters.slice();
   if (drag && drag.cluster) {
     // ドラッグ中の塊 (範囲選択時はグループ全塊) を最前面に描く
     var tops = drag.group ? drag.group.map(function (g) { return g.cluster; }) : [drag.cluster];
@@ -2496,7 +2525,6 @@ function draw() {
   if (selection.size) {
     var brass = THEMES[uiTheme].brass;
     selection.forEach(function (cl) {
-      if (cl.surface !== state.surface) return;
       var anchor = pieceHome(clusterAnchorId(cl), n);
       cl.pieces.forEach(function (id) {
         var home = pieceHome(id, n);
@@ -2526,7 +2554,7 @@ function draw() {
 var minimapHideTimer = null;
 var lastCamKey = ''; // draw() がカメラ変化を検知するための前回値
 function pokeMinimap() {
-  if (!state || state.surface !== 'desk') return;
+  if (!state) return;
   var mm = $('minimap');
   if (!mm) return;
   mm.classList.add('on');
@@ -2561,7 +2589,6 @@ function drawMinimap() {
   ctx.save();
   ctx.beginPath(); ctx.rect(lay.ox, lay.oy, lay.w, lay.h); ctx.clip();
   state.clusters.forEach(function (cl) {
-    if (cl.surface !== 'desk') return;
     ctx.fillStyle = selection.has(cl) ? THEMES[uiTheme].brass : 'rgba(255,255,255,0.92)';
     var anchor = pieceHome(clusterAnchorId(cl), n);
     cl.pieces.forEach(function (id) {
@@ -2591,7 +2618,6 @@ function hexToRgba(hex, alpha) {
 function eachVisiblePiece(fn) {
   var n = state.n;
   state.clusters.forEach(function (cl) {
-    if (cl.surface !== state.surface) return;
     var anchor = pieceHome(clusterAnchorId(cl), n);
     cl.pieces.forEach(function (id) {
       var home = pieceHome(id, n);
@@ -2652,57 +2678,14 @@ function drawClusterOn(ctx, v, cl, wTl, wBr) {
   });
 }
 
-/* ---------- マット画面の背景: 机をぼんやり見せる ----------
- * マット盤の外側には、机 (テクスチャ + 机上の塊) を薄いベール越しに見せる。
- * 机レイヤーはオフスクリーンに描いて使い回す: マット表示中は机側のカメラも
- * 塊も変わらないので、盤の状態が変わったとき (afterBoardChange 等) だけ
- * 再描画すればよい。ぼかし専用処理はせず、0.6倍の低解像度で描いて拡大する
- * ことで柔らかくし、さらに無色のベール (中立グレー・不透明度 0.65) を
- * 被せて机の見え方は 3.5割ほどに落とす。 */
-var DESK_BACKDROP_SCALE = 0.6;
-var deskBackdrop = null;
-var deskBackdropDirty = true;
-function invalidateDeskBackdrop() { deskBackdropDirty = true; }
-function ensureDeskBackdrop() {
-  var dv = state && state.views.desk;
-  if (!dv || !stageW || !stageH) { deskBackdrop = null; return; }
-  if (!deskBackdropDirty && deskBackdrop) return;
-  var bw = Math.max(1, Math.round(stageW * dpr * DESK_BACKDROP_SCALE));
-  var bh = Math.max(1, Math.round(stageH * dpr * DESK_BACKDROP_SCALE));
-  if (!deskBackdrop) deskBackdrop = document.createElement('canvas');
-  // 寸法が同じなら width/height に触らない: 代入は実体の再確保 (全消去) に
-  // なるため、盤面が変わるたびに大きな canvas を確保し直すとメモリ圧が
-  // 上がり、他の canvas の実体喪失 (ピースの透明化) を招きやすい。
-  if (deskBackdrop.width !== bw) deskBackdrop.width = bw;
-  if (deskBackdrop.height !== bh) deskBackdrop.height = bh;
-  var bctx = deskBackdrop.getContext('2d');
-  bctx.setTransform(bw / stageW, 0, 0, bh / stageH, 0, 0); // 以後の座標は CSS px でよい
-  drawDeskBackgroundOn(bctx, dv, stageW, stageH);
-  var wTl = { x: (0 - dv.tx) / dv.scale, y: (0 - dv.ty) / dv.scale };
-  var wBr = { x: (stageW - dv.tx) / dv.scale, y: (stageH - dv.ty) / dv.scale };
-  state.clusters.forEach(function (cl) {
-    if (cl.surface === 'desk') drawClusterOn(bctx, dv, cl, wTl, wBr);
-  });
-  deskBackdropDirty = false;
-}
-/* マット画面の下地: ぼんやりした机 + ベール。机レイヤーが作れない初期状態では
- * 従来どおりマット色ベタ塗りに落とす。盤そのものは draw() 側でこの上に描く。 */
-function drawMatBackdrop() {
-  ensureDeskBackdrop();
-  if (deskBackdrop) {
-    sctx.drawImage(deskBackdrop, 0, 0, stageW, stageH);
-    // ベールは無色 (中立グレー) にする: マット色で染めると盤外まで緑/赤に
-    // 見えてしまうため、色味のない半透明で机の濃さだけを落とす (ユーザー指定)
-    sctx.fillStyle = 'rgba(17,17,17,0.65)';
-  } else {
-    sctx.fillStyle = THEMES[uiTheme].mat;
-  }
-  sctx.fillRect(0, 0, stageW, stageH);
-}
+/* マット画面 (机をベール越しに見せる背景) は面の統合で廃止した。
+ * 背景レイヤーの無効化フックは呼び出し箇所が残っているため空関数で受ける */
+function invalidateDeskBackdrop() { /* 面の統合により不要 (互換のため残置) */ }
+
 /* ヒットテスト: 画面座標 → 塊 (最前面優先) */
 function hitCluster(sx, sy) {
   var w = screenToWorld(sx, sy);
-  var list = state.clusters.filter(function (c) { return c.surface === state.surface; });
+  var list = state.clusters;
   for (var i = list.length - 1; i >= 0; i--) {
     var cl = list[i];
     var box = clusterWorldBox(cl);
@@ -2722,11 +2705,10 @@ function hitCluster(sx, sy) {
 }
 
 /* ---------- 操作 (ドラッグ / ピンチ / パン / ズーム) ---------- */
-var drag = null;         // { cluster, grabDX, grabDY, startSurface, moved, group }
+var drag = null;         // { cluster, grabDX, grabDY, moved, group }
 var pointers = new Map();
 var pinch = null;        // { d0, scale0, cx, cy, tx0, ty0 }
 var panStart = null;     // { sx, sy, tx, ty }
-var zoneHot = false;
 
 /* ---------- 範囲選択 (長押し方式・セッション限りで保存しない) ----------
  * 空き地を長押し (450ms・ほぼ静止) すると選択モードに入り、ドラッグで矩形を描く。
@@ -2768,7 +2750,7 @@ function finishSelRect() {
   var a = screenToWorld(Math.min(r.x0, r.x1), Math.min(r.y0, r.y1));
   var b = screenToWorld(Math.max(r.x0, r.x1), Math.max(r.y0, r.y1));
   var rect = { x0: a.x / CELL, y0: a.y / CELL, x1: b.x / CELL, y1: b.y / CELL };
-  selection = new Set(clustersInRect(state.clusters, state.n, rect, state.surface));
+  selection = new Set(clustersInRect(state.clusters, state.n, rect));
   draw();
 }
 
@@ -2786,7 +2768,7 @@ stage.addEventListener('pointerdown', function (ev) {
     // (旧実装は drag を捨てていたため、塊が浮いたまま未保存になることがあった)
     // 範囲選択の長押し判定・矩形はピンチが優先なので打ち切る (ピンチ中は選択操作をしない)
     cancelPressAndRect();
-    if (drag) { settleDrag(); showDropZone(false); zoneHot = false; }
+    if (drag) settleDrag();
     panStart = null;
     var pts = Array.from(pointers.values());
     pinch = {
@@ -2808,7 +2790,7 @@ stage.addEventListener('pointerdown', function (ev) {
     drag = {
       cluster: hit.cluster,
       grabDX: w.x / CELL - hit.cluster.gx, grabDY: w.y / CELL - hit.cluster.gy,
-      startSurface: state.surface, moved: false, group: null
+      moved: false, group: null
     };
     if (inSelection && selection.size > 1) {
       // 範囲選択のグループドラッグ: 選択全塊の相対オフセットを掴んだ塊基準で保持する
@@ -2818,7 +2800,6 @@ stage.addEventListener('pointerdown', function (ev) {
     }
     seGrab(); // 掴んだ音 (紙の「サッ」)
     startTimerOnce();
-    showDropZone(true);
   } else if (state.cleared) {
     panStart = { sx: p.x, sy: p.y, tx: view().tx, ty: view().ty };
   } else {
@@ -2876,14 +2857,6 @@ stage.addEventListener('pointermove', function (ev) {
   }
   if (drag) {
     drag.moved = true;
-    var zone = $('dropZone');
-    var inZone = !zone.hidden && p.y <= 64;
-    zone.classList.toggle('hot', inZone);
-    if (inZone && !zoneHot) {
-      zoneHot = true;
-      switchSurfaceDuringDrag();
-    }
-    if (!inZone) zoneHot = false;
     var w = screenToWorld(p.x, p.y);
     drag.cluster.gx = w.x / CELL - drag.grabDX;
     drag.cluster.gy = w.y / CELL - drag.grabDY;
@@ -2914,10 +2887,6 @@ function endPointer(ev) {
     pressPending = null;
     if (wasTap && !cancelled) {
       clearSelection(); // 空き地を短くタップ → 選択解除
-      // マット画面で盤の外側をタップしたら机に戻る (盤の中のタップは従来どおり)。
-      // 空き地タップだけがここを通る (ピースはドラッグ、パンは panStart 経由、
-      // 長押しは selRect 経由) ので、パン/ドラッグ/ピンチとは誤判定しない。
-      if (state && state.surface === 'mat' && isOutsideBoardCell(pp.wx / CELL, pp.wy / CELL, state.n)) switchSurface();
     }
   }
   if (selRect && selRect.id === ev.pointerId) {
@@ -2926,7 +2895,7 @@ function endPointer(ev) {
   }
   pointers.delete(ev.pointerId);
   if (pointers.size < 2) pinch = null;
-  if (pointers.size === 1 && !drag && state && state.views[state.surface]) {
+  if (pointers.size === 1 && !drag && state && state.views.desk) {
     // ピンチから1本指に戻る: 残った指の現在位置でパンの基準を取り直し、
     // そのままパンへ移行する (基準が古いままだと視点が跳ねる)
     var rest = Array.from(pointers.values())[0];
@@ -2935,8 +2904,6 @@ function endPointer(ev) {
   if (pointers.size === 0) {
     if (drag) settleDrag();
     panStart = null;
-    showDropZone(false);
-    zoneHot = false;
   }
 }
 stage.addEventListener('pointerup', endPointer);
@@ -3000,39 +2967,8 @@ function afterBoardChange() {
   draw();
   if (!state.cleared && isComplete(state.clusters, state.n)) onClear();
 }
-function showDropZone(show) {
-  var zone = $('dropZone');
-  zone.hidden = !show;
-  $('dropZoneLabel').textContent = state.surface === 'desk' ? 'マット' : '机';
-}
-/* ドラッグ中に画面を切り替える: 掴んでいる塊を新しい画面側へ移し、ドラッグを継続する */
-function switchSurfaceDuringDrag() {
-  if (!drag) return;
-  state.surface = state.surface === 'desk' ? 'mat' : 'desk';
-  if (drag.group) {
-    // 範囲選択: グループ全塊が一緒に画面を移る (選択は維持される)
-    drag.group.forEach(function (g) { g.cluster.surface = state.surface; });
-  } else {
-    drag.cluster.surface = state.surface;
-  }
-  // 切替先でのドロップゾーンは「戻る」方向を案内する
-  $('dropZoneLabel').textContent = state.surface === 'desk' ? 'マット' : '机';
-  invalidateDeskBackdrop(); // 塊が面を移ったので机レイヤーを作り直す
-  updateSurfaceUI();
-  draw();
-}
-function switchSurface() {
-  if (!state || state.phase !== 'play' || uiHome) return;
-  state.surface = state.surface === 'desk' ? 'mat' : 'desk';
-  selection.clear(); // 画面切替では選択は保持しない
-  invalidateDeskBackdrop();
-  updateSurfaceUI();
-  draw();
-}
+/* 面は机1つだけになったので、切替 UI はズーム表示の更新のみ */
 function updateSurfaceUI() {
-  $('surfaceLabel').textContent = state.surface === 'desk' ? '作業机' : 'パズルマット';
-  $('surfaceBtn').textContent = state.surface === 'desk' ? 'マットを開く' : '机に戻る';
-  if (state.surface !== 'desk') hideMinimap(); // ミニマップは机画面だけのもの
   updateZoomLabel();
 }
 function clampZoom(s) {
@@ -3084,9 +3020,9 @@ setInterval(function () {
 }, 500);
 function updateProgressUI() {
   var pos = piecePositions(state.clusters, state.n);
-  var onMat = 0;
-  pos.forEach(function (p) { if (p.surface === 'mat') onMat++; });
-  $('progressText').textContent = 'マット ' + onMat + ' / ' + difficulty + ' ・ 塊 ' + state.clusters.length;
+  var onBoard = 0, n = state.n;
+  pos.forEach(function (p) { if (p.gx >= 0 && p.gx < n && p.gy >= 0 && p.gy < n) onBoard++; });
+  $('progressText').textContent = '盤面 ' + onBoard + ' / ' + difficulty + ' ・ 塊 ' + state.clusters.length;
   $('timerText').textContent = formatTime(currentElapsed());
 }
 
@@ -3332,13 +3268,17 @@ function runConfetti() {
 function processRewardsOnClear() {
   var wall = store.wall;
   var grants = [];
-  if (wall.lastDate !== playDate) {
+  // ごほうびはパズルA/B それぞれで1日 (1ラウンド) に1回ずつ貰える
+  var g = difficultyGroup(difficulty);
+  if (!wall.grantDates || typeof wall.grantDates !== 'object') wall.grantDates = {};
+  if (wall.grantDates[String(g)] !== playDate) {
     var month = parseInt(playDate.split('-')[1], 10);
     var picked = drawWallItem(wall, { month: month }, Math.random);
     if (picked) {
       grantWallItems(wall, [picked], playDate);
       grants.push(picked);
     }
+    wall.grantDates[String(g)] = playDate;
     wall.lastDate = playDate;
   }
   var unlocked = applyFrameUnlocks(wall, store.records.length);
@@ -3628,7 +3568,10 @@ function buildWallShareImage() {
   if (!stage || !stage.clientWidth) return Promise.resolve(null);
   var unit = stage.clientWidth, s = wallSize();
   var worldW = unit * s.w, worldH = stage.clientHeight * s.h;
-  var k = Math.min(2, 1800 / worldW);
+  // 合成キャンバスが大きすぎると Firefox Android のタイル描画で帯状の
+  // ノイズが入ることがあるため、幅は 1600px を上限にする。各描画段の
+  // 合間には 1 フレーム待って描画を確定させてから次を重ねる
+  var k = Math.min(2, 1600 / worldW);
   if (k < 0.5) k = 0.5;
   var W = Math.round(worldW * k), H = Math.round(worldH * k);
   var footer = Math.round(30 * k) + 18;
@@ -3643,13 +3586,16 @@ function buildWallShareImage() {
       ctx.drawImage(r.cv, Math.round(f.x * W - r.size / 2), Math.round(f.y * H - r.size / 2), r.size, r.size);
     });
   });
-  return Promise.all(frameJobs).then(function () {
+  var flushFrame = function () {
+    return new Promise(function (res) { requestAnimationFrame(function () { requestAnimationFrame(res); }); });
+  };
+  return Promise.all(frameJobs).then(flushFrame).then(function () {
     var itemJobs = store.wall.placed.map(function (p) {
       return new Promise(function (res) {
         var it = wallItemById(p.id);
         if (!it) { res(); return; }
         var img = new Image();
-        img.onload = function () {
+        var draw = function () {
           var wpx = wallItemWidthRatio(it) * unit * k;
           var hpx = wpx * img.naturalHeight / Math.max(1, img.naturalWidth);
           ctx.save();
@@ -3660,12 +3606,16 @@ function buildWallShareImage() {
           ctx.restore();
           res();
         };
+        img.onload = function () {
+          // デコード完了前に描くと Firefox で帯状の欠けが出るため decode を待つ
+          if (img.decode) img.decode().then(draw, draw); else draw();
+        };
         img.onerror = function () { res(); };
         img.src = 'wall-items/' + it.id + '.webp';
       });
     });
     return Promise.all(itemJobs);
-  }).then(function () {
+  }).then(flushFrame).then(function () {
     ctx.fillStyle = '#F7F2E7';
     ctx.fillRect(0, H, W, footer);
     ctx.textBaseline = 'middle';
@@ -4852,9 +4802,15 @@ function goToStartScreen() {
   bgmEnterTitle(); // タイトル画面では音を出さない (id 19)
   uiHome = true;
   uiCollection = false;
-  renderStartScreen();
+  if (maybeAdvanceRound() && state && state.pool) { startGame(state.pool); }
+  else renderStartScreen();
   applyVisibility();
 }
+/* アプリに戻ってきたときもラウンドの解放を確認する */
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden || !uiHome) return;
+  if (maybeAdvanceRound() && state && state.pool) startGame(state.pool);
+});
 function renderCollection() {
   var recs = store.records.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : b.pieces - a.pieces; });
   var days = new Set(recs.map(function (r) { return r.date; }));
@@ -4863,9 +4819,9 @@ function renderCollection() {
     return d + 'ピース: ' + c;
   }).join(' ／ ');
   $('collectionStats').innerHTML =
-    '<span class="stat">クリア日数 <b>' + days.size + '</b></span>' +
+    '<span class="stat">クリアしたお題 <b>' + days.size + '</b></span>' +
     '<span class="stat">総クリア数 <b>' + recs.length + '</b></span>' +
-    '<span class="stat">連続日数 <b>' + computeStreak() + '</b></span>' +
+    '<span class="stat">連続クリア <b>' + computeStreak() + '</b>回</span>' +
     '<span class="stat">' + perDiff + '</span>';
   $('collectionEmpty').hidden = recs.length > 0;
   var grid = $('collectionGrid');
@@ -4932,11 +4888,17 @@ function loadDetailSource(r) {
   var url = entryPhotoUrl(entryForRecord(r), size);
   if (!url) return Promise.resolve(makeFallbackCanvas(r.date));
   return loadImgCorsFallback(url).then(function (img) {
-    var side = Math.min(img.naturalWidth, img.naturalHeight);
-    var cv = document.createElement('canvas');
-    cv.width = size; cv.height = size;
-    cv.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
-    return cv;
+    var draw = function () {
+      var side = Math.min(img.naturalWidth, img.naturalHeight);
+      var cv = document.createElement('canvas');
+      cv.width = size; cv.height = size;
+      cv.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+      return cv;
+    };
+    // load 直後 (デコード前) に描くと Firefox で帯状の描画欠けが出るため、
+    // decode() の完了を待ってからキャンバスへ転写する
+    if (img.decode) return img.decode().then(draw, draw);
+    return draw();
   }, function () { return makeFallbackCanvas(r.date); });
 }
 /* 完成盤面用のピース輪郭パス (盤面座標)。buildPiecePath と同じ組み立てだが、
@@ -5044,18 +5006,24 @@ function buildDifficultySeg() {
 function giftBoxEl(g) { return $('giftBox' + g); }
 function activeGiftBox() { return giftBoxEl(uiBoxGroup); }
 /* カルーセルの表示位置を uiBoxGroup に合わせる (スワイプ判定と競合しない
- * よう、プログラム側のスクロール中はガードを立てる) */
-function syncBoxCarousel() {
+ * よう、プログラム側のスクロール中はガードを立てる)。スライド幅 = 表示幅
+ * なので位置はグループ番号 × 表示幅で決まる */
+function syncBoxCarousel(smooth, targetGroup) {
   var car = $('boxCarousel');
   if (!car || !car.clientWidth) return;
-  var slide = car.querySelector('.box-slide[data-group="' + uiBoxGroup + '"]');
-  if (!slide) return;
-  var cr = car.getBoundingClientRect(), sr = slide.getBoundingClientRect();
-  var target = car.scrollLeft + (sr.left + sr.width / 2) - (cr.left + cr.width / 2);
+  var g = typeof targetGroup === 'number' ? targetGroup : uiBoxGroup;
+  var target = g * car.clientWidth;
   if (Math.abs(car.scrollLeft - target) < 2) return;
   boxScrollGuard = true;
-  car.scrollLeft = target;
-  setTimeout(function () { boxScrollGuard = false; }, 160);
+  if (smooth && car.scrollTo) car.scrollTo({ left: target, behavior: 'smooth' });
+  else car.scrollLeft = target;
+  setTimeout(function () { boxScrollGuard = false; }, smooth ? 480 : 160);
+}
+/* 矢印ボタンから箱を切り替える */
+function gotoBoxGroup(g) {
+  if (g === uiBoxGroup) return;
+  syncBoxCarousel(true, g);
+  onBoxGroupChanged(g);
 }
 /* スワイプで箱が切り替わった: そのグループで最後に選んだ難易度に移る */
 function onBoxGroupChanged(g) {
@@ -5072,14 +5040,9 @@ function onBoxGroupChanged(g) {
     renderStartScreen();
   }
 }
-/* 箱タップ: 手前の箱なら開封、のぞいている隣の箱ならそちらへ寄せる */
+/* 箱タップ: 手前の箱なら開封、隣の箱ならそちらへ寄せる */
 function onGiftBoxTap(g) {
-  if (g !== uiBoxGroup) {
-    uiBoxGroup = g;
-    syncBoxCarousel();
-    onBoxGroupChanged(g);
-    return;
-  }
+  if (g !== uiBoxGroup) { gotoBoxGroup(g); return; }
   openBox();
 }
 
@@ -5150,7 +5113,6 @@ function restartPuzzle() {
 }
 
 function wireControls() {
-  $('surfaceBtn').addEventListener('click', switchSurface);
   $('zoomInBtn').addEventListener('click', function () { zoomBy(1.3); });
   $('zoomOutBtn').addEventListener('click', function () { zoomBy(1 / 1.3); });
   $('settingsBtn').addEventListener('click', openSettings);
@@ -5227,6 +5189,8 @@ function wireControls() {
       if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onGiftBoxTap(g); }
     });
   });
+  $('boxPrev').addEventListener('click', function () { gotoBoxGroup(0); });
+  $('boxNext').addEventListener('click', function () { gotoBoxGroup(1); });
   // カルーセルのスワイプ: スクロールが落ち着いたら手前の箱のグループへ寄せる
   var boxScrollTimer = null;
   $('boxCarousel').addEventListener('scroll', function () {
@@ -5234,15 +5198,9 @@ function wireControls() {
     if (boxScrollTimer) clearTimeout(boxScrollTimer);
     boxScrollTimer = setTimeout(function () {
       var car = $('boxCarousel');
-      var cr = car.getBoundingClientRect();
-      var carCenter = cr.left + cr.width / 2;
-      var best = 0, bestDist = Infinity;
-      car.querySelectorAll('.box-slide').forEach(function (s, i) {
-        var sr = s.getBoundingClientRect();
-        var dist = Math.abs(sr.left + sr.width / 2 - carCenter);
-        if (dist < bestDist) { bestDist = dist; best = i; }
-      });
-      onBoxGroupChanged(best);
+      if (!car.clientWidth) return;
+      var g = Math.round(car.scrollLeft / car.clientWidth);
+      onBoxGroupChanged(Math.max(0, Math.min(1, g)));
     }, 130);
   }, { passive: true });
   $('collectionBtn').addEventListener('click', function () {
@@ -5389,27 +5347,28 @@ function giftFlowerSvg(cx, cy, s, petal, center) {
 }
 /* 包装柄はテーマごとの色 (THEMES[uiTheme].box) で描く。柄の種類と日付ローテーションは不変。
  * 原色の大きな柄は廃止し、彩度を落とした細かい柄に統一している。 */
-function giftPatternDef(patternId) {
+function giftPatternDef(patternId, uid) {
   var pal = THEMES[uiTheme].box[patternId] || THEMES[uiTheme].box['dots-red'];
+  var pid = 'giftPat' + (uid || '');
   var body;
   switch (patternId) {
     case 'dots-red': // 細ドット
       body = '<rect width="30" height="30" fill="' + pal.bg + '"/>' +
         '<circle cx="8" cy="8" r="2.4" fill="' + pal.fg + '"/><circle cx="23" cy="23" r="2.4" fill="' + pal.fg + '"/>' +
         '<circle cx="23" cy="8" r="1.3" fill="' + pal.fg2 + '"/><circle cx="8" cy="23" r="1.3" fill="' + pal.fg2 + '"/>';
-      return '<pattern id="giftPat" width="30" height="30" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+      return '<pattern id="' + pid + '" width="30" height="30" patternUnits="userSpaceOnUse">' + body + '</pattern>';
     case 'stripes-mint': // 細ストライプ
       body = '<rect width="22" height="22" fill="' + pal.bg + '"/><rect width="5" height="22" fill="' + pal.fg + '"/>';
-      return '<pattern id="giftPat" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' + body + '</pattern>';
+      return '<pattern id="' + pid + '" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' + body + '</pattern>';
     case 'stars-navy': // 小さな星
       body = '<rect width="40" height="40" fill="' + pal.bg + '"/>' +
         '<polygon points="0,-3.6 1.1,-1.2 3.6,-1.2 1.6,0.9 2.3,3.5 0,2 -2.3,3.5 -1.6,0.9 -3.6,-1.2 -1.1,-1.2" transform="translate(11,12)" fill="' + pal.fg + '"/>' +
         '<polygon points="0,-2.4 0.7,-0.8 2.4,-0.8 1.1,0.6 1.6,2.3 0,1.3 -1.6,2.3 -1.1,0.6 -2.4,-0.8 -0.7,-0.8" transform="translate(30,30)" fill="' + pal.fg2 + '"/>' +
         '<circle cx="31" cy="9" r="1.1" fill="' + pal.fg2 + '"/><circle cx="7" cy="33" r="1.1" fill="' + pal.fg + '"/>';
-      return '<pattern id="giftPat" width="40" height="40" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+      return '<pattern id="' + pid + '" width="40" height="40" patternUnits="userSpaceOnUse">' + body + '</pattern>';
     case 'gingham-pink': // 細ギンガム
       body = '<rect width="24" height="24" fill="' + pal.bg + '"/><rect width="24" height="12" fill="' + pal.fg + '" opacity="0.45"/><rect width="12" height="24" fill="' + pal.fg + '" opacity="0.45"/>';
-      return '<pattern id="giftPat" width="24" height="24" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+      return '<pattern id="' + pid + '" width="24" height="24" patternUnits="userSpaceOnUse">' + body + '</pattern>';
     case 'confetti': // 小紋 (小さな粒と線)
       body = '<rect width="34" height="34" fill="' + pal.bg + '"/>' +
         '<rect x="5" y="7" width="5" height="1.8" fill="' + pal.fg + '" transform="rotate(30 7 8)"/>' +
@@ -5418,16 +5377,17 @@ function giftPatternDef(patternId) {
         '<circle cx="28" cy="27" r="1.4" fill="' + pal.fg + '"/>' +
         '<rect x="6" y="26" width="4.4" height="1.6" fill="' + pal.fg2 + '" transform="rotate(12 8 27)"/>' +
         '<circle cx="11" cy="16" r="1.2" fill="' + pal.fg + '"/>';
-      return '<pattern id="giftPat" width="34" height="34" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+      return '<pattern id="' + pid + '" width="34" height="34" patternUnits="userSpaceOnUse">' + body + '</pattern>';
     default: // floral-retro: 小花
       body = '<rect width="42" height="42" fill="' + pal.bg + '"/>' + giftFlowerSvg(12, 12, 0.8, pal.fg, pal.fg2) + giftFlowerSvg(32, 32, 0.55, pal.fg, pal.fg2) +
         '<circle cx="33" cy="10" r="1.4" fill="' + pal.fg2 + '"/><circle cx="9" cy="34" r="1.4" fill="' + pal.fg2 + '"/>';
-      return '<pattern id="giftPat" width="42" height="42" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+      return '<pattern id="' + pid + '" width="42" height="42" patternUnits="userSpaceOnUse">' + body + '</pattern>';
   }
 }
-function giftBoxSvg(patternId) {
+function giftBoxSvg(patternId, uid) {
+  var pid = 'giftPat' + (uid || '');
   function face(points, shade) {
-    var s = '<polygon points="' + points + '" fill="url(#giftPat)"/>';
+    var s = '<polygon points="' + points + '" fill="url(#' + pid + ')"/>';
     if (shade > 0) s += '<polygon points="' + points + '" fill="#000000" opacity="' + shade + '"/>';
     return s + '<polygon points="' + points + '" fill="none" stroke="rgba(60,30,10,0.35)" stroke-width="1"/>';
   }
@@ -5452,7 +5412,7 @@ function giftBoxSvg(patternId) {
     '<polygon points="54,163 326,163 362,117 92,117" fill="rgba(43,24,6,0.20)" filter="url(#giftShSoft)"/>' +
     '<polygon points="62,161 318,161 354,117 98,117" fill="rgba(43,24,6,0.32)" filter="url(#giftShCore)"/>';
   return '<svg viewBox="0 0 416 190" role="img" aria-label="包装されたパズルの箱">' +
-    '<defs>' + giftPatternDef(patternId) + shadowDefs + '</defs>' +
+    '<defs>' + giftPatternDef(patternId, uid) + shadowDefs + '</defs>' +
     shadow +
     face('316,128 352,84 352,114 316,158', 0.30) +  /* 右側面 */
     face('64,128 316,128 316,158 64,158', 0.16) +   /* 正面 */
@@ -5509,16 +5469,30 @@ function renderStartScreen() {
   [0, 1].forEach(function (g) {
     var box = giftBoxEl(g);
     box.classList.remove('opening');
-    box.innerHTML = giftBoxSvg(boxPatternForDate(playDate, g).id);
+    box.innerHTML = giftBoxSvg(boxPatternForDate(playDate, g).id, g);
     box.hidden = false;
     box.classList.toggle('rippling', g === uiBoxGroup);
   });
   var dots = $('boxDots').children;
   for (var di = 0; di < dots.length; di++) dots[di].classList.toggle('active', di === uiBoxGroup);
+  $('boxPrev').hidden = uiBoxGroup === 0;
+  $('boxNext').hidden = uiBoxGroup === 1;
   syncBoxCarousel();
   $('startHint').hidden = false;
   $('startHint').textContent = mode === 'resume' ? '箱をタップしてつづきから' : '箱をタップ';
   $('collectionCount').textContent = 'クリアした絵 ' + store.records.length + '点';
+  // 次のラウンドまでの目安 (プレイ途中の回では出さない)
+  var roundNote = '';
+  if (!currentRoundInProgress() && store.round) {
+    var remain = store.round.unlockedAt + ROUND_INTERVAL_MS - Date.now();
+    if (remain > 0) {
+      var hh = Math.floor(remain / 3600000);
+      var mm = Math.ceil((remain % 3600000) / 60000);
+      if (mm === 60) { hh += 1; mm = 0; }
+      roundNote = '次のお題まで あと' + (hh > 0 ? hh + '時間' + (mm > 0 ? mm + '分' : '') : Math.max(1, mm) + '分');
+    }
+  }
+  $('roundNote').textContent = roundNote;
   $('resumePanel').hidden = !startedAlready;
   if (startedAlready) {
     if (mode === 'cleared') {
@@ -5528,9 +5502,9 @@ function renderStartScreen() {
       $('resumeInfo').textContent = difficulty + 'ピース ・ クリア済み ・ ベストタイム ' + formatTime(best);
     } else {
       var pos = piecePositions(state.clusters, state.n);
-      var onMat = 0;
-      pos.forEach(function (p) { if (p.surface === 'mat') onMat++; });
-      $('resumeInfo').textContent = difficulty + 'ピース ・ マットに置いたピース ' + onMat + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
+      var onBoard = 0, nn = state.n;
+      pos.forEach(function (p) { if (p.gx >= 0 && p.gx < nn && p.gy >= 0 && p.gy < nn) onBoard++; });
+      $('resumeInfo').textContent = difficulty + 'ピース ・ 盤面に置いたピース ' + onBoard + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
     }
   }
   updateStartWallRow();
@@ -5546,9 +5520,7 @@ function startGame(pool) {
   // スタート画面: 未開封なら包装された箱 (柄は日付×難易度グループで決定的)、開始済みなら続きからパネル
   renderStartScreen();
   $('fadeVeil').classList.remove('on');
-  var d = new Date(dateToMs(playDate));
-  $('themeDateLabel').textContent = d.getUTCFullYear() + '年' + (d.getUTCMonth() + 1) + '月' + d.getUTCDate() + '日のお題';
-  $('themeCredit').textContent = '';
+  $('themeDateLabel').textContent = '第' + store.round.n + '回のお題';
   $('photoCredits').innerHTML = poolEntries(pool)
     .filter(function (e) { return e.type === 'url' && e.attribution; })
     .map(function (e) { return '<li>' + escapeHtml(e.title || '') + ' — ' + escapeHtml(e.attribution) + '</li>'; })

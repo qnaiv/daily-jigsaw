@@ -98,7 +98,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.isComplete(moved, n) === false, '1つずらすと完成判定 = 偽');
   const desk = clusters.map(c => ({ ...c }));
   desk[0] = { ...desk[0], surface: 'desk' };
-  ok(L.isComplete(desk, n) === false, '1つ机側にあると完成判定 = 偽');
+  ok(L.isComplete(desk, n) === true, '面の概念なし: 位置が合っていれば surface 値によらず完成');
   ok(L.isComplete(clusters.slice(1), n) === false, '1つ欠けると完成判定 = 偽');
   // 塊 (クラスター) 単位でも正しく判定できる
   const merged = [{ pieces: clusters.slice(0, 50).flatMap(c => c.pieces), surface: 'mat', gx: 0, gy: 0 }]
@@ -158,7 +158,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const stranger = { pieces: [55], surface: 'desk', gx: 4.1, gy: 3.1 }; // 隣同士ではない
   ok(L.findRelativeSnap(stranger, [a], n) === null, '隣でないピースは絶対にくっつかない');
   const otherSurface = { pieces: [1], surface: 'mat', gx: 4.1, gy: 3.0 };
-  ok(L.findRelativeSnap(otherSurface, [a], n) === null, '違う画面 (机/マット) ではくっつかない');
+  ok(!!L.findRelativeSnap(otherSurface, [a], n), '面の概念なし: surface 値が違ってもくっつく');
   ok(L.snapToGrid(2.4) === 2 && L.snapToGrid(2.5) === 3 && L.snapToGrid(-1.6) === -2, 'グリッド吸着は最寄りの整数へ');
 }
 
@@ -317,14 +317,13 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const c1 = { pieces: [0], surface: 'desk', gx: 2, gy: 2 };          // ピース矩形 [2,3]×[2,3]
   const c2 = { pieces: [55], surface: 'desk', gx: 5, gy: 5 };
   const c3 = { pieces: [11, 12], surface: 'desk', gx: 7, gy: 1 };      // ピース11が(7,1)、12が(8,1)
-  const c4 = { pieces: [3], surface: 'mat', gx: 2, gy: 2 };            // c1 と同じ位置だがマット側
+  const c4 = { pieces: [3], surface: 'mat', gx: 2, gy: 2 };            // c1 と同じ位置 (旧マット側の値)
   const all = [c1, c2, c3, c4];
-  ok(eq(L.clustersInRect(all, n, { x0: 1.5, y0: 1.5, x1: 2.5, y1: 2.5 }, 'desk'), [c1]), '範囲選択: 矩形と交差したピースの塊が選ばれる');
-  ok(eq(L.clustersInRect(all, n, { x0: 3, y0: 2, x1: 4, y1: 3 }, 'desk'), []), '範囲選択: 辺だけ接する矩形は交差とみなさない');
-  ok(eq(L.clustersInRect(all, n, { x0: 7.5, y0: 0.5, x1: 8.5, y1: 1.5 }, 'desk'), [c3]), '範囲選択: 塊の1ピースでも交差すれば塊全体が選ばれる');
-  ok(eq(L.clustersInRect(all, n, { x0: 5.5, y0: 5.5, x1: 9, y1: 9 }, 'desk'), [c2]), '範囲選択: 部分的な重なりでも選ばれる');
-  ok(eq(L.clustersInRect(all, n, { x0: -10, y0: -10, x1: 20, y1: 20 }, 'mat'), [c4]), '範囲選択: 面 (机/マット) で絞れる');
-  ok(L.clustersInRect(all, n, { x0: -10, y0: -10, x1: 20, y1: 20 }).length === 4, '範囲選択: 面を指定しなければ両面が対象');
+  ok(eq(L.clustersInRect(all, n, { x0: 1.5, y0: 1.5, x1: 2.5, y1: 2.5 }), [c1, c4]), '範囲選択: 矩形と交差したピースの塊が選ばれる');
+  ok(eq(L.clustersInRect(all, n, { x0: 3, y0: 2, x1: 4, y1: 3 }), []), '範囲選択: 辺だけ接する矩形は交差とみなさない');
+  ok(eq(L.clustersInRect(all, n, { x0: 7.5, y0: 0.5, x1: 8.5, y1: 1.5 }), [c3]), '範囲選択: 塊の1ピースでも交差すれば塊全体が選ばれる');
+  ok(eq(L.clustersInRect(all, n, { x0: 5.5, y0: 5.5, x1: 9, y1: 9 }), [c2]), '範囲選択: 部分的な重なりでも選ばれる');
+  ok(L.clustersInRect(all, n, { x0: -10, y0: -10, x1: 20, y1: 20 }).length === 4, '範囲選択: 全面が対象 (面の絞り込みなし)');
   // --- shiftClusters ---
   const src = [{ pieces: [0, 1], surface: 'desk', gx: 3.5, gy: 2.25 }];
   const shifted = L.shiftClusters(src, 2, -1);
@@ -1245,6 +1244,15 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // コレクション詳細のチップ (ティア色)
   ok(appSrc2.indexOf('upper-chip') !== -1 && appSrc2.indexOf('frameTier(r.pieces)') !== -1 && appSrc2.indexOf('上級クリア') !== -1, 'コレクション詳細: ティア対象の記録にチップを出す');
   ok(css2.indexOf('.upper-chip') !== -1, 'コレクション詳細: チップの CSS がある');
+
+  // 2026-11-08 追加分: 箱の柄分離 / 矢印 / ラウンド制 / 面の統合 / 共有の描画欠け対策
+  ok(appSrc2.indexOf("var pid = 'giftPat' + (uid || '')") !== -1 && appSrc2.indexOf('giftBoxSvg(boxPatternForDate(playDate, g).id, g)') !== -1, '箱の柄: SVG パターン ID を箱ごとに分けて AB で被らない');
+  ok(html2.indexOf('id="boxPrev"') !== -1 && html2.indexOf('id="boxNext"') !== -1 && css2.indexOf('@keyframes arrowSwayL') !== -1 && css2.indexOf('flex: 0 0 100%') !== -1, '箱カルーセル: スライド幅100%で中央寄せし、左右端にふよふよ浮く矢印を出す');
+  ok(html2.indexOf('themeCredit') === -1 && html2.indexOf('start-footer') === -1, 'トップ画面: コピーライト/クレジット表記を出さない');
+  ok(appSrc2.indexOf('function maybeAdvanceRound(') !== -1 && appSrc2.indexOf('ROUND_INTERVAL_MS') !== -1 && appSrc2.indexOf("'第' + store.round.n + '回のお題'") !== -1 && appSrc2.indexOf('function roundDate(') !== -1, 'ラウンド制: 第N回のお題が24時間ごとに順番に出る');
+  ok(appSrc2.indexOf('wall.grantDates[String(g)]') !== -1 && appSrc2.indexOf('grantDates: {}') !== -1, 'ごほうび: パズルA/B それぞれで貰える (グループ別 grantDates)');
+  ok(appSrc2.indexOf('function switchSurface(') === -1 && html2.indexOf('surfaceBtn') === -1 && html2.indexOf('dropZone') === -1, '面の統合: マット切替 UI (ボタン/ドロップゾーン) はない');
+  ok(appSrc2.indexOf('img.decode()') !== -1 && appSrc2.indexOf('1600 / worldW') !== -1, '壁共有: decode 完了後に描き、合成サイズを抑えて帯状ノイズを防ぐ');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

@@ -32,19 +32,21 @@
       <p class="start-meta">
         <span id="themeDateLabel">読み込み中…</span>
         <span class="start-meta-sep">・</span>
-        <span id="streakBadge" class="streak" title="連続クリア日数">連続 <span id="streakNum">0</span>日</span>
+        <span id="streakBadge" class="streak" title="連続クリア回数">連続 <span id="streakNum">0</span>回</span>
       </p>
-      <p class="start-creditline">
-        <span id="themeCredit" class="credit"></span>
-        <span id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</span>
-      </p>
+      <p id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</p>
     </header>
 
     <!-- 箱は2つ (難易度グループごと) を横スワイプで切り替えるカルーセル。
-         表示中の箱の下に、そのグループのピース数チップをコンパクトに置く -->
-    <div id="boxCarousel" class="box-carousel">
-      <div class="box-slide" data-group="0"><div class="gift-box" id="giftBox0" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div></div>
-      <div class="box-slide" data-group="1"><div class="gift-box" id="giftBox1" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div></div>
+         表示中の箱の下に、そのグループのピース数チップをコンパクトに置く。
+         スワイプ可能は左右端にふよふよ浮く矢印でも示す -->
+    <div class="box-carousel-wrap">
+      <div id="boxCarousel" class="box-carousel">
+        <div class="box-slide" data-group="0"><div class="gift-box" id="giftBox0" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div></div>
+        <div class="box-slide" data-group="1"><div class="gift-box" id="giftBox1" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div></div>
+      </div>
+      <button id="boxPrev" class="box-arrow box-arrow-prev" type="button" aria-label="前の箱" hidden>‹</button>
+      <button id="boxNext" class="box-arrow box-arrow-next" type="button" aria-label="次の箱" hidden>›</button>
     </div>
     <div id="boxDots" class="box-dots" aria-hidden="true"><span class="box-dot"></span><span class="box-dot"></span></div>
     <p id="startHint" class="start-hint">箱をタップ</p>
@@ -52,6 +54,7 @@
     <div class="start-difficulty">
       <div id="difficultySeg" class="diff-chips" role="group" aria-label="難易度"></div>
     </div>
+    <p id="roundNote" class="round-note"></p>
 
     <div id="resumePanel" hidden>
       <p id="resumeInfo" class="resume-info"></p>
@@ -94,10 +97,6 @@
       <label class="start-audio-row"><span>効果音（SE）</span><input type="checkbox" id="seToggleStart"></label>
     </div>
 
-    <footer class="start-footer">
-      <span>写真: <a href="https://picsum.photos" target="_blank" rel="noopener">Lorem Picsum</a> / Wikimedia Commons / The Met / Cleveland Museum of Art</span>
-      <a href="https://github.com/qnaiv/daily-jigsaw" target="_blank" rel="noopener">GitHub</a>
-    </footer>
   </div>
 </section>
 
@@ -105,15 +104,12 @@
 <main id="playView" hidden>
   <div id="stageWrap">
     <canvas id="stage"></canvas>
-    <div id="dropZone" hidden>ここで離すと <span id="dropZoneLabel">マット</span> へ移動</div>
-    <div id="surfaceLabel">作業机</div>
     <div id="selectChip" hidden>範囲選択</div>
     <div id="hud">
-      <span id="progressText">マット 0 / 0</span>
+      <span id="progressText">盤面 0 / 0</span>
       <span id="timerText" class="mono">00:00</span>
     </div>
     <button id="settingsBtn" class="fab" type="button" aria-label="設定">⚙</button>
-    <button id="surfaceBtn" class="fab fab-surface" type="button">マットを開く</button>
     <div id="zoomCtl">
       <button id="zoomOutBtn" class="zoom-btn" type="button" aria-label="縮小">−</button>
       <span id="zoomLabel" class="mono">100%</span>
