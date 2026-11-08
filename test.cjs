@@ -1200,7 +1200,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('prog.imgKey = state.imageKey') !== -1, 'お題: 開始確定 (persistProgress) で imgKey を保存する');
 
   // 箱の柄は難易度グループで引く (renderStartScreen)
-  ok(appSrc2.indexOf('boxPatternForDate(playDate, difficultyGroup(difficulty))') !== -1, '箱の柄: スタート画面は選択中難易度のグループで柄を引く');
+  ok(appSrc2.indexOf('boxPatternForDate(playDate, g)') !== -1 && html2.indexOf('id="giftBox0"') !== -1 && html2.indexOf('id="giftBox1"') !== -1, '箱の柄: スタート画面は2つの箱をグループごとの柄で描く');
 
   // 装飾ティアの対象
   ok(L.frameTier(36) === 'silver' && L.frameTier(225) === 'silver', 'ティア: 36/225 が銀');
@@ -1234,9 +1234,13 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf("star.className = 'diff-star ' + tier") !== -1 && appSrc2.indexOf('frameTier(d)') !== -1, '難易度カード: ティアに ★ を付ける配線がある');
   ok(appSrc2.indexOf("tier === 'royal' ? '★★' : '★'") !== -1, '難易度カード: 最上位は ★★');
   ok(css2.indexOf('.diff-star') !== -1 && css2.indexOf('.diff-star.silver') !== -1 && css2.indexOf('.diff-star.royal') !== -1, '難易度カード: ★ の CSS (銀/特別含む) がある');
-  ok(appSrc2.indexOf('function diffGroupHead(') !== -1 && appSrc2.indexOf("'パズルA'") !== -1 && appSrc2.indexOf("'パズルB'") !== -1, '難易度: グループ見出し (パズルA/B) がある');
-  ok(appSrc2.indexOf('diff-swatch') !== -1 && appSrc2.indexOf('giftPatternDef(pat.id)') !== -1, '難易度: 見出しに箱の柄アイコンを出す');
-  ok(css2.indexOf('.diff-group-head') !== -1, '難易度: グループ見出しの CSS がある');
+  // スタート画面再設計 (2026-11-08): 箱カルーセル + ピース数チップ。
+  // 「パズルA/B」の文言は出さず、箱の柄そのものでグループを区別する
+  ok(html2.indexOf('id="boxCarousel"') !== -1 && html2.indexOf('id="boxDots"') !== -1 && appSrc2.indexOf('function syncBoxCarousel(') !== -1 && appSrc2.indexOf('function onBoxGroupChanged(') !== -1, '箱カルーセル: 2箱のスワイプ切替とドットがある');
+  ok(appSrc2.indexOf("'パズルA'") === -1 && appSrc2.indexOf("'パズルB'") === -1 && html2.indexOf('パズルA') === -1, '箱カルーセル: 「パズルA/B」の文言は出さない');
+  ok(appSrc2.indexOf("'diff-chip'") !== -1 && css2.indexOf('.diff-chip') !== -1 && css2.indexOf('.box-carousel') !== -1, '難易度チップ: ピース数は箱の下にコンパクトなチップで出す');
+  ok(css2.indexOf('.gift-box.rippling') !== -1 && css2.indexOf('scale(1.45)') !== -1, '箱の波紋: 手前の箱だけに大きく濃い波紋を出す');
+  ok(html2.indexOf('class="nav-btn"') !== -1 && css2.indexOf('.nav-btn') !== -1, 'スタート導線: コレクション/壁はボタンらしい見た目');
 
   // コレクション詳細のチップ (ティア色)
   ok(appSrc2.indexOf('upper-chip') !== -1 && appSrc2.indexOf('frameTier(r.pieces)') !== -1 && appSrc2.indexOf('上級クリア') !== -1, 'コレクション詳細: ティア対象の記録にチップを出す');

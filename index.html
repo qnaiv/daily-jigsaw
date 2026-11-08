@@ -40,31 +40,38 @@
       </p>
     </header>
 
-    <div id="giftBox" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div>
+    <!-- 箱は2つ (難易度グループごと) を横スワイプで切り替えるカルーセル。
+         表示中の箱の下に、そのグループのピース数チップをコンパクトに置く -->
+    <div id="boxCarousel" class="box-carousel">
+      <div class="box-slide" data-group="0"><div class="gift-box" id="giftBox0" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div></div>
+      <div class="box-slide" data-group="1"><div class="gift-box" id="giftBox1" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div></div>
+    </div>
+    <div id="boxDots" class="box-dots" aria-hidden="true"><span class="box-dot"></span><span class="box-dot"></span></div>
     <p id="startHint" class="start-hint">箱をタップ</p>
+
+    <div class="start-difficulty">
+      <div id="difficultySeg" class="diff-chips" role="group" aria-label="難易度"></div>
+    </div>
 
     <div id="resumePanel" hidden>
       <p id="resumeInfo" class="resume-info"></p>
       <button id="freshStartBtn" class="fresh-link" type="button">はじめから遊ぶ</button>
     </div>
 
-    <div class="start-difficulty">
-      <span class="start-difficulty-label">難易度</span>
-      <div id="difficultySeg" class="diff-groups" role="group" aria-label="難易度"></div>
-      <p id="difficultyTime" class="diff-time"></p>
-    </div>
-
-    <nav class="start-links">
-      <button id="collectionBtn" class="text-link" type="button">コレクション →</button>
+    <nav class="start-nav">
+      <button id="collectionBtn" class="nav-btn" type="button">
+        <span class="nav-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 16.5l4.5-4 3.5 3 3-2.5 6 5.5"/><circle cx="9" cy="9" r="1.4"/></svg></span>
+        <span class="nav-text"><span class="nav-label">コレクション</span><span class="nav-sub" id="collectionCount"></span></span>
+        <span class="nav-arrow">→</span>
+      </button>
+      <button id="wallBtn" class="nav-btn" type="button">
+        <span class="nav-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3.5" width="16" height="13" rx="1"/><rect x="7" y="6.5" width="6" height="6"/><circle cx="16.8" cy="9.5" r="1.8"/><path d="M4 20.5h16"/></svg></span>
+        <span class="nav-text"><span class="nav-label">壁をかざる</span><span class="nav-sub" id="wallItemsInfo">壁の小物 0 / 50</span></span>
+        <span class="nav-arrow">→</span>
+      </button>
+      <button id="rewardBtn" class="nav-btn notice" type="button" hidden>🎁 ごほうびが届いています →</button>
+      <button id="unlockBtn" class="nav-btn notice" type="button" hidden>🖼 新しいフレームが使えるようになりました →</button>
     </nav>
-
-    <!-- 壁の小物: 所持数とかざる導線。未受け取りのごほうび / フレーム解放がある間だけ通知も出す -->
-    <div class="start-desk">
-      <span id="wallItemsInfo" class="desk-items-info">壁の小物 0 / 50</span>
-      <button id="wallBtn" class="text-link" type="button">壁をかざる →</button>
-      <button id="rewardBtn" class="text-link reward-notice" type="button" hidden>🎁 ごほうびが届いています →</button>
-      <button id="unlockBtn" class="text-link reward-notice" type="button" hidden>🖼 新しいフレームが使えるようになりました →</button>
-    </div>
 
     <!-- テーマ切替はプレイ中の設定シートと共通 (data-theme-opt で配線・同期する) -->
     <div class="start-theme" role="group" aria-label="テーマ">

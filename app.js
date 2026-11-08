@@ -1907,6 +1907,12 @@ function computeStreak() {
 var todayStr = jstTodayString();
 var playDate = todayStr; // 日付移動は廃止: 常に今日のお題だけ
 var difficulty = DIFFICULTIES.indexOf(store.lastDifficulty) >= 0 ? store.lastDifficulty : 36;
+/* 箱カルーセル: グループごとに最後に選んだ難易度を覚える (スワイプで
+ * 行き来しても各箱の選択が保たれる)。初期値はグループの代表値 */
+var groupDifficulty = { 0: 36, 1: 100 };
+groupDifficulty[difficultyGroup(difficulty)] = difficulty;
+var uiBoxGroup = difficultyGroup(difficulty); // いま手前に出ている箱のグループ
+var boxScrollGuard = false; // プログラム側のスクロール中はスワイプ判定しない
 var state = null; // ゲーム開始時に構築
 
 function newGameState(pool) {
@@ -4998,79 +5004,88 @@ function renderDetailPuzzle(r) {
 }
 
 /* ---------- コントロール配線 ---------- */
-/* 難易度セレクタ (案D: 重なったカード)。傾きはカード位置で決定的に決める。
- * 選択中カードの想定時間はカード列の下に1行だけ出す。 */
+/* 難易度セレクタ (2026-11-08 再設計): 箱カルーセルでグループを切り替え、
+ * 表示中の箱のグループのピース数だけをコンパクトなチップで出す。
+ * 選択中のチップは緑に広がり、想定時間もその中に出す (別行の表示は廃止) */
 var DIFF_TIME_LABELS = { 16: '1〜3分', 36: '3〜8分', 64: '10〜20分', 100: '20〜40分', 225: '1〜2時間', 400: '2〜4時間', 1024: '1〜2日' };
 var DIFF_SUB_LABELS = { 16: 'かんたん', 1024: 'おに' };
-var DIFF_TILTS = [-3, -1.2, 2.2, -2, 1.4, -0.6, 2.5];
-/* グループ見出し: その日の箱の包装柄アイコン + 「パズルA / パズルB」だけの
- * 簡素な表示 (ユーザー指定: 説明文は付けない)。柄はグループごとに違うので、
- * アイコンがそのまま「別の箱 = 別のパズル」の目印になる */
-function diffGroupHead(g) {
-  var head = document.createElement('div');
-  head.className = 'diff-group-head';
-  var pat = boxPatternForDate(playDate, g);
-  var sw = document.createElement('span');
-  sw.className = 'diff-swatch';
-  sw.innerHTML = '<svg viewBox="0 0 44 30" aria-hidden="true"><defs>' +
-    giftPatternDef(pat.id).replace(/giftPat/g, 'giftPatG' + g) +
-    '</defs><rect x="1" y="1" width="42" height="28" rx="4" fill="url(#giftPatG' + g + ')"/></svg>';
-  head.appendChild(sw);
-  var name = document.createElement('span');
-  name.className = 'diff-group-name';
-  name.textContent = g === 0 ? 'パズルA' : 'パズルB';
-  head.appendChild(name);
-  return head;
-}
 function buildDifficultySeg() {
   var seg = $('difficultySeg');
   seg.innerHTML = '';
-  var lastGroup = -1, row = null;
-  DIFFICULTIES.forEach(function (d, i) {
-    var g = difficultyGroup(d);
-    if (g !== lastGroup) {
-      lastGroup = g;
-      seg.appendChild(diffGroupHead(g));
-      row = document.createElement('div');
-      row.className = 'diff-fan';
-      row.setAttribute('role', 'group');
-      seg.appendChild(row);
-    }
+  var g = difficultyGroup(difficulty);
+  DIFFICULTIES.forEach(function (d) {
+    if (difficultyGroup(d) !== g) return;
     var b = document.createElement('button');
     b.type = 'button';
-    b.className = 'diff-card' + (d === difficulty ? ' active' : '');
-    b.style.setProperty('--tilt', DIFF_TILTS[i % DIFF_TILTS.length] + 'deg');
-    b.style.zIndex = d === difficulty ? 20 : i + 1;
+    var sel = d === difficulty;
+    b.className = 'diff-chip' + (sel ? ' active' : '');
     var num = document.createElement('span');
     num.className = 'diff-num';
-    num.textContent = d;
+    num.textContent = sel
+      ? d + ' ・ ' + (DIFF_SUB_LABELS[d] ? DIFF_SUB_LABELS[d] + ' ・ ' : '') + DIFF_TIME_LABELS[d]
+      : String(d);
     b.appendChild(num);
-    if (DIFF_SUB_LABELS[d]) {
-      var sub = document.createElement('span');
-      sub.className = 'diff-sub';
-      sub.textContent = DIFF_SUB_LABELS[d];
-      b.appendChild(sub);
-    }
     var tier = frameTier(d);
-    if (tier) { // 装飾ティアのカードにはティア色の ★ (最上位は ★★)
+    if (tier) { // 装飾ティアのチップにはティア色の ★ (最上位は ★★)
       var star = document.createElement('span');
       star.className = 'diff-star ' + tier;
       star.textContent = tier === 'royal' ? '★★' : '★';
       b.appendChild(star);
     }
-    b.setAttribute('aria-pressed', d === difficulty ? 'true' : 'false');
+    b.setAttribute('aria-pressed', sel ? 'true' : 'false');
     b.addEventListener('click', function () {
       if (d === difficulty) return;
       if (state) persistProgress();
       difficulty = d;
+      groupDifficulty[difficultyGroup(d)] = d;
       store.lastDifficulty = d;
       saveStore();
       startGame(state.pool);
     });
-    row.appendChild(b);
+    seg.appendChild(b);
   });
-  var subLabel = DIFF_SUB_LABELS[difficulty];
-  $('difficultyTime').textContent = (subLabel ? subLabel + ' ・ ' : '') + '想定 ' + DIFF_TIME_LABELS[difficulty];
+}
+/* 手前に出ている箱 (グループ g) の要素 */
+function giftBoxEl(g) { return $('giftBox' + g); }
+function activeGiftBox() { return giftBoxEl(uiBoxGroup); }
+/* カルーセルの表示位置を uiBoxGroup に合わせる (スワイプ判定と競合しない
+ * よう、プログラム側のスクロール中はガードを立てる) */
+function syncBoxCarousel() {
+  var car = $('boxCarousel');
+  if (!car || !car.clientWidth) return;
+  var slide = car.querySelector('.box-slide[data-group="' + uiBoxGroup + '"]');
+  if (!slide) return;
+  var cr = car.getBoundingClientRect(), sr = slide.getBoundingClientRect();
+  var target = car.scrollLeft + (sr.left + sr.width / 2) - (cr.left + cr.width / 2);
+  if (Math.abs(car.scrollLeft - target) < 2) return;
+  boxScrollGuard = true;
+  car.scrollLeft = target;
+  setTimeout(function () { boxScrollGuard = false; }, 160);
+}
+/* スワイプで箱が切り替わった: そのグループで最後に選んだ難易度に移る */
+function onBoxGroupChanged(g) {
+  if (g === uiBoxGroup) return;
+  uiBoxGroup = g;
+  var d = groupDifficulty[g];
+  if (d !== difficulty) {
+    if (state) persistProgress();
+    difficulty = d;
+    store.lastDifficulty = d;
+    saveStore();
+    startGame(state.pool);
+  } else {
+    renderStartScreen();
+  }
+}
+/* 箱タップ: 手前の箱なら開封、のぞいている隣の箱ならそちらへ寄せる */
+function onGiftBoxTap(g) {
+  if (g !== uiBoxGroup) {
+    uiBoxGroup = g;
+    syncBoxCarousel();
+    onBoxGroupChanged(g);
+    return;
+  }
+  openBox();
 }
 
 /* ---------- タイマーの一時停止/再開 ---------- */
@@ -5210,10 +5225,31 @@ function wireControls() {
     $('freshConfirmModal').hidden = true;
     restartPuzzle();
   });
-  $('giftBox').addEventListener('click', openBox);
-  $('giftBox').addEventListener('keydown', function (ev) {
-    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openBox(); }
+  [0, 1].forEach(function (g) {
+    var box = giftBoxEl(g);
+    box.addEventListener('click', function () { onGiftBoxTap(g); });
+    box.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onGiftBoxTap(g); }
+    });
   });
+  // カルーセルのスワイプ: スクロールが落ち着いたら手前の箱のグループへ寄せる
+  var boxScrollTimer = null;
+  $('boxCarousel').addEventListener('scroll', function () {
+    if (boxScrollGuard) return;
+    if (boxScrollTimer) clearTimeout(boxScrollTimer);
+    boxScrollTimer = setTimeout(function () {
+      var car = $('boxCarousel');
+      var cr = car.getBoundingClientRect();
+      var carCenter = cr.left + cr.width / 2;
+      var best = 0, bestDist = Infinity;
+      car.querySelectorAll('.box-slide').forEach(function (s, i) {
+        var sr = s.getBoundingClientRect();
+        var dist = Math.abs(sr.left + sr.width / 2 - carCenter);
+        if (dist < bestDist) { bestDist = dist; best = i; }
+      });
+      onBoxGroupChanged(best);
+    }, 130);
+  }, { passive: true });
   $('collectionBtn').addEventListener('click', function () {
     collectionBackToHome = false;
     showCollection();
@@ -5441,7 +5477,7 @@ function openBox() {
   var action = boxTapAction({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters });
   state.opening = true; // 開封アニメーション中の連打を無効化 (CSS 側でも pointer-events: none)
   seLid(); // 蓋が開く音 (紙の擦れ + ノック)
-  var box = $('giftBox');
+  var box = activeGiftBox();
   box.classList.add('opening');
   var veil = $('fadeVeil');
   setTimeout(function () { veil.classList.add('on'); }, 270); // 蓋が開ききる頃から暗転を始める
@@ -5473,11 +5509,21 @@ function renderStartScreen() {
   if (!state) return;
   var mode = startPanelMode({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters });
   var startedAlready = mode !== 'box';
-  $('giftBox').classList.remove('opening');
-  $('giftBox').innerHTML = giftBoxSvg(boxPatternForDate(playDate, difficultyGroup(difficulty)).id);
-  $('giftBox').hidden = false;
+  // 箱は2つとも描く (グループごとの柄)。波紋は手前の箱だけに出す
+  uiBoxGroup = difficultyGroup(difficulty);
+  [0, 1].forEach(function (g) {
+    var box = giftBoxEl(g);
+    box.classList.remove('opening');
+    box.innerHTML = giftBoxSvg(boxPatternForDate(playDate, g).id);
+    box.hidden = false;
+    box.classList.toggle('rippling', g === uiBoxGroup);
+  });
+  var dots = $('boxDots').children;
+  for (var di = 0; di < dots.length; di++) dots[di].classList.toggle('active', di === uiBoxGroup);
+  syncBoxCarousel();
   $('startHint').hidden = false;
   $('startHint').textContent = mode === 'resume' ? '箱をタップしてつづきから' : '箱をタップ';
+  $('collectionCount').textContent = 'クリアした絵 ' + store.records.length + '点';
   $('resumePanel').hidden = !startedAlready;
   if (startedAlready) {
     if (mode === 'cleared') {
