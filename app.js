@@ -72,14 +72,16 @@ function difficultyGroup(pieces) {
   if (pieces === 100 || pieces === 225 || pieces === 400 || pieces === 1024 || pieces === 1225) return 1;
   return 0;
 }
-/* 装飾ティア: グループ内の順位で額装飾と ★ の色が変わる。
- * 中位 (36 / 225) = 'silver'、上位 (64 / 400) = 'gold'、
+/* 装飾ティア: 難易度 ladder の絶対位置で額装飾と ★ の色が変わる
+ * (2026-11-09 ステージ制への転換に合わせ再設計。旧2グループ内の順位制は廃止)。
+ * 100 = 'bronze' (銅)、225 = 'silver' (銀)、400 = 'gold' (金)、
  * 最上位 (1024) = 'royal' (金 + 全周ライン)。旧 1225 は 'gold' 扱いで維持。
- * 対象外 (16 / 100 など) は null。 */
+ * 対象外 (16 / 36 / 64) は null。 */
 function frameTier(pieces) {
   if (pieces === 1024) return 'royal';
-  if (pieces === 64 || pieces === 400 || pieces === 1225) return 'gold';
-  if (pieces === 36 || pieces === 225) return 'silver';
+  if (pieces === 400 || pieces === 1225) return 'gold';
+  if (pieces === 225) return 'silver';
+  if (pieces === 100) return 'bronze';
   return null;
 }
 /* 装飾ティア対象か (旧称「上級」)。銀・金・特別装飾いずれかの記録に付く */
@@ -3382,7 +3384,7 @@ function onClear() {
   $('resultDateLine').textContent = 'ステージ ' + playStage + ' ・ ' + difficulty + 'ピース';
   $('resultStatLine').textContent = 'タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
-  var clearTier = frameTier(difficulty); // 装飾ティア (銀/金/特別) のときだけティア色のバッジを出す
+  var clearTier = frameTier(difficulty); // 装飾ティア (銅/銀/金/特別) のときだけティア色のバッジを出す
   $('resultUpperBadge').hidden = !clearTier;
   $('resultUpperBadge').className = 'cert-badge cert-badge-upper' + (clearTier && clearTier !== 'gold' ? ' ' + clearTier : '');
   var boardHost = $('resultBoard');
@@ -4455,6 +4457,7 @@ function paintFrameUnit(ctx, st, U, board, boardState, seedKey, upperPieces) {
  * tier: 'silver' = 銀キャップ / 'gold' = 金キャップ /
  * 'royal' = 金キャップ + 額の全周に細い金ライン (最上位 1024 専用、案B) */
 var CAP_COLORS = {
+  bronze: { fill: '#b26a35', edge: '#86501f' },
   silver: { fill: '#b9bfc7', edge: '#8f979f' },
   gold: { fill: '#c9a24b', edge: '#a48034' },
   royal: { fill: '#c9a24b', edge: '#a48034' }

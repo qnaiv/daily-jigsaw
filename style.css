@@ -328,9 +328,11 @@ button { font: inherit; cursor: pointer; }
 /* ティアの ★ は数字の下に小さく置く (無い難易度も高さを揃える) */
 .diff-chip .diff-star { line-height: 1; height: 10px; font-size: 9px; color: #c9a227; }
 .diff-chip .diff-star.silver { color: #9aa3ab; }
+.diff-chip .diff-star.bronze { color: #b26a35; }
 .diff-chip .diff-star.royal { font-size: 8.5px; letter-spacing: -1.5px; }
 .diff-chip.active { background: var(--mat); color: var(--mat-ink); border-color: transparent; }
 .diff-chip.active .diff-star.silver { color: #cfd6da; }
+.diff-chip.active .diff-star.bronze { color: #e0aa72; }
 /* 次のラウンドまでの目安 (ラウンド制) */
 .round-note { margin: 2px 0 0; min-height: 15px; width: 100%; text-align: center; color: var(--paper-dim); font-size: 11.5px; font-weight: 600; letter-spacing: .08em; }
 
@@ -557,6 +559,10 @@ button { font: inherit; cursor: pointer; }
   background: linear-gradient(180deg, #eef0f2, #b9bfc7);
   border-color: #7d868e; color: #2f353a;
 }
+.upper-chip.bronze {
+  background: linear-gradient(180deg, #e8b57e, #b26a35);
+  border-color: #86501f; color: #40230a;
+}
 .upper-chip.royal { border: 2px solid #8a6410; box-shadow: inset 0 0 0 1.5px rgba(255,244,200,.85); }
 
 /* ---------- モーダル / 設定シート ---------- */
@@ -613,6 +619,10 @@ button { font: inherit; cursor: pointer; }
 .cert-badge-upper.silver {
   background: linear-gradient(180deg, #eef0f2, #b9bfc7 55%, #9aa3ab);
   color: #2f353a; border-color: #7d868e;
+}
+.cert-badge-upper.bronze {
+  background: linear-gradient(180deg, #e8b57e, #b26a35 55%, #9c5c28);
+  color: #40230a; border-color: #86501f;
 }
 .cert-badge-upper.royal {
   border: 2px solid #8a6410;

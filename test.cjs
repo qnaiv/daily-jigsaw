@@ -1210,12 +1210,13 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('stageBoxPatternIndex(playStage)') !== -1 && html2.indexOf('id="giftBox"') !== -1 && html2.indexOf('id="giftBox0"') === -1, '箱の柄: スタート画面は箱1つをステージ番号の柄で描く');
 
   // 装飾ティアの対象
-  ok(L.frameTier(36) === 'silver' && L.frameTier(225) === 'silver', 'ティア: 36/225 が銀');
-  ok(L.frameTier(64) === 'gold' && L.frameTier(400) === 'gold' && L.frameTier(1225) === 'gold', 'ティア: 64/400 (と旧1225) が金');
+  ok(L.frameTier(100) === 'bronze', 'ティア: 100 が銅');
+  ok(L.frameTier(225) === 'silver', 'ティア: 225 が銀');
+  ok(L.frameTier(400) === 'gold' && L.frameTier(1225) === 'gold', 'ティア: 400 (と旧1225) が金');
   ok(L.frameTier(1024) === 'royal', 'ティア: 1024 が特別装飾 (royal)');
-  ok(L.frameTier(16) === null && L.frameTier(100) === null && L.frameTier(784) === null && L.frameTier(0) === null, 'ティア: 16/100 等は対象外');
-  ok(L.isUpperTier(36) && L.isUpperTier(64) && L.isUpperTier(225) && L.isUpperTier(400) && L.isUpperTier(1024), '上級: ティア対象はすべて isUpperTier');
-  ok(!L.isUpperTier(16) && !L.isUpperTier(100) && !L.isUpperTier(784) && !L.isUpperTier(0), '上級: 16/100 等は対象外');
+  ok(L.frameTier(16) === null && L.frameTier(36) === null && L.frameTier(64) === null && L.frameTier(784) === null && L.frameTier(0) === null, 'ティア: 16/36/64 等は対象外');
+  ok(L.isUpperTier(100) && L.isUpperTier(225) && L.isUpperTier(400) && L.isUpperTier(1024), '上級: ティア対象はすべて isUpperTier');
+  ok(!L.isUpperTier(16) && !L.isUpperTier(36) && !L.isUpperTier(64) && !L.isUpperTier(784) && !L.isUpperTier(0), '上級: 16/36/64 等は対象外');
 
   // 装飾ティアは額の外側4隅に付けるフラットな三角キャップ (案F6)。
   // 銀/金で色が変わり、最上位 (royal) は全周の金ラインが加わる (案B)。
