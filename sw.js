@@ -8,7 +8,7 @@
  *  - 対象は同一オリジンの GET のみ。写真プール等の外部オリジンは素通しする
  * キャッシュを丸ごと入れ替えたいときは VERSION を上げる。 */
 
-var VERSION = 'v12';
+var VERSION = 'v13';
 var STATIC_CACHE = 'daily-jigsaw-static-' + VERSION;
 var AUDIO_CACHE = 'daily-jigsaw-audio-' + VERSION;
 var KNOWN_CACHES = [STATIC_CACHE, AUDIO_CACHE];

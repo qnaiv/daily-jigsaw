@@ -544,14 +544,15 @@ function scatterRect(pieces) {
   return { x0: -Math.floor((w - n) / 2), y0: -Math.floor((h - n) / 2), w: w, h: h };
 }
 
-/* 机の境界 (机の有限化の可動範囲): 散らばり領域を中心から縦横2倍に
- * 広げた矩形。ズーム下限は fit の 50% なので、最低倍率では散らばり
- * 領域のちょうど2倍の幅が見える — その見える範囲全部をピースの
- * 可動範囲にする (ユーザー指示 2026-11-10: 最低倍率で移動できる
- * 範囲は全部使えるように)。初期散らばりと fit は散らばり領域のまま */
+/* 机の境界 (机の有限化の可動範囲): 散らばり領域を中心から縦横4倍に
+ * 広げた矩形 (ユーザー指示 2026-11-10: ×2→まだ狭い→×4 で確定)。
+ * 境界の外は drawDeskBoundary のベールで暗く見える化するので、
+ * 運べないエリアが見て分かる。初期散らばりと fit は散らばり領域のまま */
+var DESK_BOUNDS_FACTOR = 4;
 function deskBounds(pieces) {
   var r = scatterRect(pieces);
-  return { x0: r.x0 - r.w / 2, y0: r.y0 - r.h / 2, w: r.w * 2, h: r.h * 2 };
+  var ex = r.w * (DESK_BOUNDS_FACTOR - 1) / 2, ey = r.h * (DESK_BOUNDS_FACTOR - 1) / 2;
+  return { x0: r.x0 - ex, y0: r.y0 - ey, w: r.w * DESK_BOUNDS_FACTOR, h: r.h * DESK_BOUNDS_FACTOR };
 }
 
 /* 初期散らばり: 全ピースを机にぶちまけた状態にする (自由配置)。
@@ -3001,12 +3002,31 @@ function requestDraw() {
   requestAnimationFrame(function () { drawQueued = false; draw(); });
 }
 
+/* 机の境界の見える化: 可動範囲 (deskBounds) の外側を無彩色の半透明
+ * ベールで落とし、境界に細い明線を引く。「見えない壁」で止められる
+ * 感覚を無くすため (ユーザー指示 2026-11-10)。色味は付けない
+ * (盤外ベールの無彩色ルールと同じ)。ピースより下・机より上に描く */
+function drawDeskBoundary(v) {
+  var r = deskRect();
+  var x0 = r.x0 * CELL * v.scale + v.tx, y0 = r.y0 * CELL * v.scale + v.ty;
+  var x1 = (r.x0 + r.w) * CELL * v.scale + v.tx, y1 = (r.y0 + r.h) * CELL * v.scale + v.ty;
+  sctx.fillStyle = 'rgba(38,32,24,0.34)';
+  if (y0 > 0) sctx.fillRect(0, 0, stageW, y0);
+  if (y1 < stageH) sctx.fillRect(0, y1, stageW, stageH - y1);
+  if (x0 > 0) sctx.fillRect(0, Math.max(0, y0), x0, Math.min(stageH, y1) - Math.max(0, y0));
+  if (x1 < stageW) sctx.fillRect(x1, Math.max(0, y0), stageW - x1, Math.min(stageH, y1) - Math.max(0, y0));
+  sctx.strokeStyle = 'rgba(255,250,238,0.5)';
+  sctx.lineWidth = 2;
+  sctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+}
+
 function draw() {
   if (!state || !state.srcCanvas || !state.views.desk) return;
   carryClusterPos();
   sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   var v = view(), n = state.n;
   drawDeskBackground(v);
+  drawDeskBoundary(v);
   // 机でカメラが動いたらミニマップを出す (初回は現在値で初期化だけする)
   var camKey = v.scale.toFixed(4) + '|' + v.tx.toFixed(1) + '|' + v.ty.toFixed(1);
   if (lastCamKey === '') lastCamKey = camKey;
@@ -4561,8 +4581,9 @@ function wallPreviewKey() {
   var w = store.wall;
   return JSON.stringify([w.paper, w.sizeStage, w.frames, w.placed, w.catsPlaced, store.records.length]);
 }
-/* 帯のアスペクト (幅/高さ)。壁の下地を左右へ延長する量を決めるため
- * キャッシュキーにも混ぜる (向き・サイズが変わったら描き直す) */
+/* 帯のアスペクト (幅/高さ)。壁の下地を左右へ延長する量を決める。
+ * キャッシュキーには混ぜない (起動直後のレイアウト揺れで本描画の
+ * 表示が止まるバグがあったため) */
 function wallPreviewAspect() {
   var s = wallSize();
   var dispW = ($('startWallBand') || {}).clientWidth || 412;
@@ -4579,7 +4600,12 @@ function updateWallPreview() {
   var cap = window.innerWidth <= 700 ? window.innerHeight * 0.28 : Infinity;
   band.style.height = Math.round(Math.min(natH, cap)) + 'px';
   var aspect = wallPreviewAspect();
-  var key = wallPreviewKey() + '@' + Math.round(aspect * 100);
+  // キャッシュキーは壁の内容だけにする。アスペクトを混ぜると、起動直後の
+  // レイアウト確定 (URLバー収納等) でアスペクトが揺れたときに完了コール
+  // バックのキー照合が外れ、本描画が二度と表示されない (開いた直後は
+  // 壁紙だけで、ボタンを押すと装飾が出るバグの原因)。描画済みキャンバスは
+  // フィット描画で吸収するので、アスペクト違いは見た目に影響しない
+  var key = wallPreviewKey();
   var ctx = cv.getContext('2d');
   if (!ctx) return;
   // 案1 (全体フィット + 下地の左右延長): 壁全体が帯に収まるよう描き、
@@ -4606,7 +4632,7 @@ function updateWallPreview() {
       wallPreviewBusyKey = '';
       if (!full) return;
       wallPreviewCache = { key: key, cv: full };
-      if (wallPreviewKey() + '@' + Math.round(wallPreviewAspect() * 100) === key && !$('startView').hidden) updateWallPreview();
+      if (wallPreviewKey() === key && !$('startView').hidden) updateWallPreview();
     });
   }, 30);
 }

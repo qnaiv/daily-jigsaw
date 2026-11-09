@@ -1296,7 +1296,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(html2.indexOf('id="startWallBand"') !== -1 && html2.indexOf('id="wallPreviewCanvas"') !== -1 && html2.indexOf('start-wallwrap') !== -1 && appSrc2.indexOf('function updateWallPreview(') !== -1 && appSrc2.indexOf('function renderWallPreviewCanvas(') !== -1 && appSrc2.indexOf('wallPreviewCache') !== -1, '壁帯プレビュー: スタート画面最上部に飾った壁を描き、壁が変わらない間はキャッシュを使う');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
   ok(appSrc2.indexOf('renderWallPreviewCanvas(aspect)') !== -1 && appSrc2.indexOf('padX + f.x * W') !== -1 && appSrc2.indexOf('padX + p.x * W') !== -1, '壁帯プレビュー: 帯が横長な分は下地を左右延長し、額と小物と猫は壁座標のまま描く (横の切れ目なし)');
-  ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決めキャッシュキーに混ぜる');
+  ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決める');
+  ok(appSrc2.indexOf("wallPreviewKey() + '@'") === -1 && appSrc2.indexOf('wallPreviewCache = { key: key, cv: full }') !== -1, '壁帯プレビュー: キャッシュキーは壁の内容だけ (アスペクトを混ぜると起動直後のレイアウト揺れで装飾が出ないバグになる)');
   // 机の有限化 (PBI #27): クランプは平行移動のみ、範囲内は冪等でセーブが変わらない
   const deskRect36 = L.scatterRect(36);
   const clBounds = L.clusterCellBounds({ pieces: [0, 1, 7], gx: 2, gy: 3 }, 6);
@@ -1314,15 +1315,16 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.clampClusterToRect(bigCl, 6, deskRect36).gx === bigCl.gx && L.clampClusterToRect(bigCl, 6, deskRect36).gy === bigCl.gy, '有限化: 盤面全体の塊でも机に収まり位置が壊れない');
   const grpT = L.clampClustersTranslation([{ pieces: [0], gx: -8, gy: 0 }, { pieces: [1], gx: -3, gy: 0 }], 6, deskRect36);
   ok(grpT.dx === 3 && grpT.dy === 0, '有限化: グループは和集合でクランプされ相対配置が保たれる');
-  // 机の境界は散らばり領域の縦横2倍 (最低倍率 = fit×0.5 で見える全範囲が可動範囲)
+  // 机の境界は散らばり領域の縦横4倍 (×2→まだ狭い→×4 でユーザー確定)
   const db36 = L.deskBounds(36);
-  ok(db36.w === deskRect36.w * 2 && db36.h === deskRect36.h * 2 && db36.x0 === deskRect36.x0 - deskRect36.w / 2 && db36.y0 === deskRect36.y0 - deskRect36.h / 2, '有限化: 机の境界は散らばり領域を中心に縦横2倍');
+  ok(db36.w === deskRect36.w * 4 && db36.h === deskRect36.h * 4 && db36.x0 === deskRect36.x0 - deskRect36.w * 1.5 && db36.y0 === deskRect36.y0 - deskRect36.h * 1.5, '有限化: 机の境界は散らばり領域を中心に縦横4倍');
   const edgeCl = { pieces: [0], surface: 'desk', gx: deskRect36.x0 - 3, gy: 0 };
   ok(L.normalizeClustersToRect([edgeCl], 6, db36)[0] === edgeCl, '有限化: 散らばり領域の外でも机の範囲内なら動かない (v11 の端より外が使える)');
   const farDb = L.clampClusterToRect(farCl, 6, db36);
   const farDbBounds = L.clusterCellBounds({ pieces: [5], gx: farDb.gx, gy: farDb.gy }, 6);
   ok(farDbBounds.minX === db36.x0 && farDbBounds.maxY === db36.y0 + db36.h, '有限化: 救済の着地点は広がった机の端');
   ok(appSrc2.indexOf('function deskRect() { return deskBounds(') !== -1, '有限化: クランプとカメラは deskBounds を境界に使う');
+  ok(appSrc2.indexOf('function drawDeskBoundary(') !== -1 && appSrc2.indexOf('drawDeskBoundary(v);') !== -1, '有限化: 境界の外はベールで暗くし見える化する (見えない壁の解消)');
   ok(appSrc2.indexOf('function clampCamera(') !== -1 && (appSrc2.match(/clampCamera\(\);/g) || []).length >= 5, '有限化: カメラクランプがパン/ピンチ/端スクロール/ズーム/ホイールの全経路に入っている');
   ok(appSrc2.indexOf('normalizeClustersToRect(prog.clusters') !== -1 && appSrc2.indexOf('normalizeClustersInDesk(); // 保存は必ず') !== -1, '有限化: 読み込み時の救済と保存前の正規化が入っている');
   ok(html2.indexOf('id="fitViewBtn"') !== -1, '有限化: プレイ画面に全体表示ボタンがある');
