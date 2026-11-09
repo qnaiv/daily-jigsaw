@@ -577,7 +577,21 @@ var BOX_PATTERNS = [
   { id: 'stars-navy', name: '紺に小星' },
   { id: 'gingham-pink', name: '細ギンガム' },
   { id: 'confetti', name: '小紋' },
-  { id: 'floral-retro', name: '小花' }
+  { id: 'floral-retro', name: '小花' },
+  { id: 'plaid', name: '格子' },
+  { id: 'hearts', name: 'ハート' },
+  { id: 'moons', name: '月と星' },
+  { id: 'leaves', name: '葉っぱ' },
+  { id: 'waves', name: '青海波' },
+  { id: 'triangles', name: '三角' },
+  { id: 'diamonds', name: 'ダイヤ' },
+  { id: 'snow', name: '雪の結晶' },
+  { id: 'sakura', name: '花びら' },
+  { id: 'clouds', name: '雲' },
+  { id: 'checkers', name: '市松' },
+  { id: 'music', name: '音符' },
+  { id: 'polka-big', name: '大ドット' },
+  { id: 'grid', name: '方眼' }
 ];
 /* グループ指定時は (日数×2 + グループ) で引く (お題画像のグループ選択と同じリズム):
  * 同じ日でもグループごとに別の柄になり、翌日は全グループの柄が変わる。
@@ -1635,7 +1649,21 @@ var THEMES = {
       'stars-navy': { bg: '#2c3a55', fg: '#c9a227', fg2: '#e8ddc8' },
       'gingham-pink': { bg: '#e9d5cf', fg: '#a05a52', fg2: '#a05a52' },
       'confetti': { bg: '#f2ead6', fg: '#8a6d3b', fg2: '#33523f' },
-      'floral-retro': { bg: '#a9603f', fg: '#f3e3c2', fg2: '#33523f' }
+      'floral-retro': { bg: '#a9603f', fg: '#f3e3c2', fg2: '#33523f' },
+      'plaid': { bg: '#f0e7d3', fg: '#33523f', fg2: '#c9a227' },
+      'hearts': { bg: '#7a3b3a', fg: '#f3e3c2', fg2: '#c9a227' },
+      'moons': { bg: '#2c3a55', fg: '#e8ddc8', fg2: '#c9a227' },
+      'leaves': { bg: '#efe6d0', fg: '#5c7350', fg2: '#c9a227' },
+      'waves': { bg: '#33523f', fg: '#e8ddc8', fg2: '#c9a227' },
+      'triangles': { bg: '#f2ead6', fg: '#a9603f', fg2: '#33523f' },
+      'diamonds': { bg: '#efe6d0', fg: '#7a3b3a', fg2: '#c9a227' },
+      'snow': { bg: '#44506b', fg: '#f5efe4', fg2: '#c9a227' },
+      'sakura': { bg: '#e9d5cf', fg: '#c47a74', fg2: '#a05a52' },
+      'clouds': { bg: '#efe6d0', fg: '#7d9bb3', fg2: '#c9a227' },
+      'checkers': { bg: '#f2ead6', fg: '#33523f', fg2: '#c9a227' },
+      'music': { bg: '#efe6d0', fg: '#7a3b3a', fg2: '#33523f' },
+      'polka-big': { bg: '#33523f', fg: '#f3e3c2', fg2: '#c9a227' },
+      'grid': { bg: '#fbf5e6', fg: '#8a6d3b', fg2: '#a05a52' }
     }
   },
   oak: {
@@ -1649,7 +1677,21 @@ var THEMES = {
       'stars-navy': { bg: '#aebfd0', fg: '#fbfaf7', fg2: '#cf6f4f' },
       'gingham-pink': { bg: '#f7e8e4', fg: '#e0a89c', fg2: '#e0a89c' },
       'confetti': { bg: '#fdfaf2', fg: '#cf6f4f', fg2: '#9db89a' },
-      'floral-retro': { bg: '#dfa184', fg: '#fdf6ec', fg2: '#9db89a' }
+      'floral-retro': { bg: '#dfa184', fg: '#fdf6ec', fg2: '#9db89a' },
+      'plaid': { bg: '#fbfaf7', fg: '#9db89a', fg2: '#cf6f4f' },
+      'hearts': { bg: '#f7e8e4', fg: '#cf6f4f', fg2: '#d9a441' },
+      'moons': { bg: '#aebfd0', fg: '#fbfaf7', fg2: '#d9a441' },
+      'leaves': { bg: '#fbfaf7', fg: '#7d9b6e', fg2: '#cf6f4f' },
+      'waves': { bg: '#9db89a', fg: '#fbfaf7', fg2: '#d9a441' },
+      'triangles': { bg: '#fdfaf2', fg: '#cf6f4f', fg2: '#9db89a' },
+      'diamonds': { bg: '#fbfaf7', fg: '#d9a441', fg2: '#cf6f4f' },
+      'snow': { bg: '#7d9bb3', fg: '#fdfaf2', fg2: '#d9a441' },
+      'sakura': { bg: '#f7e8e4', fg: '#e0a89c', fg2: '#cf6f4f' },
+      'clouds': { bg: '#fbfaf7', fg: '#aebfd0', fg2: '#d9a441' },
+      'checkers': { bg: '#fdfaf2', fg: '#9db89a', fg2: '#cf6f4f' },
+      'music': { bg: '#fbfaf7', fg: '#cf6f4f', fg2: '#9db89a' },
+      'polka-big': { bg: '#9db89a', fg: '#fdfaf2', fg2: '#cf6f4f' },
+      'grid': { bg: '#fdfaf2', fg: '#b9c4a8', fg2: '#cf6f4f' }
     }
   },
   greenmat: {
@@ -1663,7 +1705,21 @@ var THEMES = {
       'stars-navy': { bg: '#232c42', fg: '#b08d4f', fg2: '#e8ddc8' },
       'gingham-pink': { bg: '#4a3230', fg: '#8a5a52', fg2: '#8a5a52' },
       'confetti': { bg: '#33291f', fg: '#b08d4f', fg2: '#5e2f35' },
-      'floral-retro': { bg: '#5e2f35', fg: '#d9b98c', fg2: '#b08d4f' }
+      'floral-retro': { bg: '#5e2f35', fg: '#d9b98c', fg2: '#b08d4f' },
+      'plaid': { bg: '#2e2620', fg: '#5e2f35', fg2: '#b08d4f' },
+      'hearts': { bg: '#5e2f35', fg: '#e8ddc8', fg2: '#b08d4f' },
+      'moons': { bg: '#232c42', fg: '#e8ddc8', fg2: '#b08d4f' },
+      'leaves': { bg: '#2e2620', fg: '#8aa873', fg2: '#b08d4f' },
+      'waves': { bg: '#1f3125', fg: '#e8ddc8', fg2: '#b08d4f' },
+      'triangles': { bg: '#33291f', fg: '#b08d4f', fg2: '#8a5a52' },
+      'diamonds': { bg: '#2e2620', fg: '#b08d4f', fg2: '#e8ddc8' },
+      'snow': { bg: '#31405c', fg: '#e8ddc8', fg2: '#b08d4f' },
+      'sakura': { bg: '#4a3230', fg: '#c48a80', fg2: '#b08d4f' },
+      'clouds': { bg: '#2e2620', fg: '#7d8aa0', fg2: '#b08d4f' },
+      'checkers': { bg: '#33291f', fg: '#5e2f35', fg2: '#b08d4f' },
+      'music': { bg: '#2e2620', fg: '#d9b98c', fg2: '#b08d4f' },
+      'polka-big': { bg: '#5e2f35', fg: '#e8ddc8', fg2: '#b08d4f' },
+      'grid': { bg: '#2e2620', fg: '#6b543a', fg2: '#b08d4f' }
     }
   },
   linen: {
@@ -1677,7 +1733,21 @@ var THEMES = {
       'stars-navy': { bg: '#44506b', fg: '#e8ddc8', fg2: '#b8862e' },
       'gingham-pink': { bg: '#f3e3da', fg: '#b98a7a', fg2: '#b98a7a' },
       'confetti': { bg: '#faf3e0', fg: '#b8862e', fg2: '#476b4f' },
-      'floral-retro': { bg: '#b98a5e', fg: '#faf0da', fg2: '#476b4f' }
+      'floral-retro': { bg: '#b98a5e', fg: '#faf0da', fg2: '#476b4f' },
+      'plaid': { bg: '#f7efdb', fg: '#aebf9c', fg2: '#b8862e' },
+      'hearts': { bg: '#f3e3da', fg: '#cf8f7a', fg2: '#b8862e' },
+      'moons': { bg: '#44506b', fg: '#e8ddc8', fg2: '#b8862e' },
+      'leaves': { bg: '#faf3e0', fg: '#6d8a5f', fg2: '#b8862e' },
+      'waves': { bg: '#476b4f', fg: '#f7efdb', fg2: '#b8862e' },
+      'triangles': { bg: '#faf3e0', fg: '#b98a5e', fg2: '#476b4f' },
+      'diamonds': { bg: '#f7efdb', fg: '#b8862e', fg2: '#b98a7a' },
+      'snow': { bg: '#5a6a86', fg: '#faf3e0', fg2: '#b8862e' },
+      'sakura': { bg: '#f3e3da', fg: '#cf9a8a', fg2: '#b98a5e' },
+      'clouds': { bg: '#faf3e0', fg: '#9db4c6', fg2: '#b8862e' },
+      'checkers': { bg: '#faf3e0', fg: '#476b4f', fg2: '#b8862e' },
+      'music': { bg: '#f7efdb', fg: '#a05a52', fg2: '#476b4f' },
+      'polka-big': { bg: '#476b4f', fg: '#faf3e0', fg2: '#b8862e' },
+      'grid': { bg: '#fbf7ec', fg: '#bfb088', fg2: '#b8862e' }
     }
   }
 };
@@ -5841,6 +5911,96 @@ function giftPatternDef(patternId, uid) {
         '<rect x="6" y="26" width="4.4" height="1.6" fill="' + pal.fg2 + '" transform="rotate(12 8 27)"/>' +
         '<circle cx="11" cy="16" r="1.2" fill="' + pal.fg + '"/>';
       return '<pattern id="' + pid + '" width="34" height="34" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'plaid': // 格子 (太バンド + 細ライン)
+      body = '<rect width="36" height="36" fill="' + pal.bg + '"/>' +
+        '<rect y="5" width="36" height="13" fill="' + pal.fg + '" opacity="0.38"/><rect x="5" width="13" height="36" fill="' + pal.fg + '" opacity="0.38"/>' +
+        '<rect y="25" width="36" height="2.2" fill="' + pal.fg2 + '" opacity="0.85"/><rect x="25" width="2.2" height="36" fill="' + pal.fg2 + '" opacity="0.85"/>';
+      return '<pattern id="' + pid + '" width="36" height="36" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'hearts': // ハート
+      body = '<rect width="36" height="36" fill="' + pal.bg + '"/>' +
+        '<path d="M0,2.8 C-0.6,0.8 -2.8,-0.8 -4.6,0.2 C-6.8,1.4 -6.6,4.8 -3.8,7.4 L0,10.6 L3.8,7.4 C6.6,4.8 6.8,1.4 4.6,0.2 C2.8,-0.8 0.6,0.8 0,2.8 Z" transform="translate(11,7)" fill="' + pal.fg + '"/>' +
+        '<path d="M0,2.8 C-0.6,0.8 -2.8,-0.8 -4.6,0.2 C-6.8,1.4 -6.6,4.8 -3.8,7.4 L0,10.6 L3.8,7.4 C6.6,4.8 6.8,1.4 4.6,0.2 C2.8,-0.8 0.6,0.8 0,2.8 Z" transform="translate(27,23) scale(0.62)" fill="' + pal.fg2 + '"/>' +
+        '<circle cx="29" cy="9" r="1.3" fill="' + pal.fg2 + '"/><circle cx="8" cy="29" r="1.3" fill="' + pal.fg + '"/>';
+      return '<pattern id="' + pid + '" width="36" height="36" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'moons': // 三日月と星
+      body = '<rect width="44" height="44" fill="' + pal.bg + '"/>' +
+        '<path fill-rule="evenodd" fill="' + pal.fg + '" transform="translate(14,15)" d="M-8,0 A8,8 0 1 1 8,0 A8,8 0 1 1 -8,0 Z M-3.7,0 A6.2,6.2 0 1 1 8.7,0 A6.2,6.2 0 1 1 -3.7,0 Z"/>' +
+        '<polygon points="0,-3 0.9,-0.9 3,0 0.9,0.9 0,3 -0.9,0.9 -3,0 -0.9,-0.9" transform="translate(33,11)" fill="' + pal.fg2 + '"/>' +
+        '<circle cx="35" cy="30" r="1.5" fill="' + pal.fg2 + '"/><circle cx="10" cy="36" r="1.2" fill="' + pal.fg + '"/><circle cx="24" cy="24" r="1" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="' + pid + '" width="44" height="44" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'leaves': // 葉っぱ
+      body = '<rect width="40" height="40" fill="' + pal.bg + '"/>' +
+        '<g transform="translate(12,13) rotate(28)"><path d="M0,-7.5 C4.2,-3.5 4.2,3.5 0,8.5 C-4.2,3.5 -4.2,-3.5 0,-7.5 Z" fill="' + pal.fg + '"/><path d="M0,-5.5 L0,6.5" stroke="' + pal.bg + '" stroke-width="1.1"/></g>' +
+        '<g transform="translate(30,30) rotate(-152) scale(0.78)"><path d="M0,-7.5 C4.2,-3.5 4.2,3.5 0,8.5 C-4.2,3.5 -4.2,-3.5 0,-7.5 Z" fill="' + pal.fg2 + '"/><path d="M0,-5.5 L0,6.5" stroke="' + pal.bg + '" stroke-width="1.1"/></g>' +
+        '<circle cx="32" cy="9" r="1.4" fill="' + pal.fg2 + '"/><circle cx="8" cy="33" r="1.4" fill="' + pal.fg + '"/>';
+      return '<pattern id="' + pid + '" width="40" height="40" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'waves': // 青海波 (同心円の鱗)
+      body = '<rect width="36" height="36" fill="' + pal.bg + '"/>';
+      [[0, 0], [18, 0], [36, 0], [9, 9], [27, 9], [0, 18], [18, 18], [36, 18], [9, 27], [27, 27], [0, 36], [18, 36], [36, 36]].forEach(function (c) {
+        body += '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="8.6" fill="' + pal.bg + '" stroke="' + pal.fg + '" stroke-width="1.7"/>' +
+          '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="4.6" fill="none" stroke="' + pal.fg2 + '" stroke-width="1.3"/>';
+      });
+      return '<pattern id="' + pid + '" width="36" height="36" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'triangles': // 三角
+      body = '<rect width="26" height="26" fill="' + pal.bg + '"/>' +
+        '<polygon points="7,4 13,4 10,10" fill="' + pal.fg + '"/>' +
+        '<polygon points="19,14 25,14 22,20" fill="' + pal.fg2 + '"/>' +
+        '<polygon points="2,16 8,16 5,22" fill="' + pal.fg + '" opacity="0.65"/>' +
+        '<circle cx="21" cy="6" r="1.2" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="' + pid + '" width="26" height="26" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'diamonds': // ダイヤ (ハーレクイン)
+      body = '<rect width="30" height="30" fill="' + pal.bg + '"/>' +
+        '<polygon points="15,2.5 24,15 15,27.5 6,15" fill="' + pal.fg + '" opacity="0.88"/>' +
+        '<polygon points="15,11 19,15 15,19 11,15" fill="' + pal.fg2 + '"/>' +
+        '<circle cx="2.5" cy="2.5" r="1.2" fill="' + pal.fg2 + '"/><circle cx="27.5" cy="27.5" r="1.2" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="' + pid + '" width="30" height="30" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'snow': // 雪の結晶 (6方向のアスター)
+      function flake(cx, cy, r, col) {
+        var s = '<g transform="translate(' + cx + ',' + cy + ')" stroke="' + col + '" stroke-width="1.7" stroke-linecap="round">';
+        for (var i = 0; i < 3; i++) s += '<line x1="' + (-r) + '" y1="0" x2="' + r + '" y2="0" transform="rotate(' + (i * 60) + ')"/>';
+        return s + '</g><circle cx="' + cx + '" cy="' + cy + '" r="1.6" fill="' + col + '"/>';
+      }
+      body = '<rect width="40" height="40" fill="' + pal.bg + '"/>' + flake(13, 13, 6.4, pal.fg) + flake(31, 30, 4.4, pal.fg2) +
+        '<circle cx="33" cy="9" r="1.3" fill="' + pal.fg + '"/><circle cx="8" cy="34" r="1.3" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="' + pid + '" width="40" height="40" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'sakura': // 花びら (1枚ずつ散らす)
+      function petal(cx, cy, rot, s, col) {
+        return '<path d="M0,-6.5 C1.4,-4.2 3.4,-2.2 3.4,0.8 C3.4,3.8 1.8,5.8 0,7.2 C-1.8,5.8 -3.4,3.8 -3.4,0.8 C-3.4,-2.2 -1.4,-4.2 0,-6.5 Z" transform="translate(' + cx + ',' + cy + ') rotate(' + rot + ') scale(' + s + ')" fill="' + col + '"/>';
+      }
+      body = '<rect width="42" height="42" fill="' + pal.bg + '"/>' + petal(12, 12, 24, 1, pal.fg) + petal(31, 27, -38, 0.82, pal.fg) + petal(30, 9, 96, 0.6, pal.fg2) + petal(10, 33, -110, 0.55, pal.fg2);
+      return '<pattern id="' + pid + '" width="42" height="42" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'clouds': // 雲 (もこもこの重なり)
+      body = '<rect width="44" height="44" fill="' + pal.bg + '"/>';
+      [[0, 12], [15, 12], [30, 12], [45, 12], [-7, 27], [8, 27], [23, 27], [38, 27], [0, 42], [15, 42], [30, 42], [45, 42]].forEach(function (c) {
+        body += '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="7.6" fill="' + pal.fg + '" opacity="0.30"/>';
+      });
+      body += '<circle cx="36" cy="19" r="1.4" fill="' + pal.fg2 + '"/><circle cx="12" cy="35" r="1.4" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="' + pid + '" width="44" height="44" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'checkers': // 市松
+      body = '<rect width="26" height="26" fill="' + pal.bg + '"/>' +
+        '<rect width="13" height="13" fill="' + pal.fg + '" opacity="0.85"/><rect x="13" y="13" width="13" height="13" fill="' + pal.fg + '" opacity="0.85"/>' +
+        '<circle cx="19.5" cy="6.5" r="1.6" fill="' + pal.fg2 + '"/><circle cx="6.5" cy="19.5" r="1.6" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="' + pid + '" width="26" height="26" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'music': // 音符 (8分音符)
+      function note(cx, cy, s, col) {
+        return '<g transform="translate(' + cx + ',' + cy + ') scale(' + s + ')" fill="' + col + '">' +
+          '<ellipse cx="0" cy="5.4" rx="3.1" ry="2.3" transform="rotate(-18 0 5.4)"/>' +
+          '<rect x="2.5" y="-7" width="1.15" height="12.2"/>' +
+          '<path d="M3.65,-7 C6.2,-6.2 7.2,-4.4 6.7,-1.8 C5.7,-3.6 4.7,-4.3 3.65,-4.5 Z"/></g>';
+      }
+      body = '<rect width="42" height="42" fill="' + pal.bg + '"/>' + note(12, 14, 1, pal.fg) + note(31, 31, 0.78, pal.fg2) +
+        '<circle cx="33" cy="9" r="1.3" fill="' + pal.fg + '"/>';
+      return '<pattern id="' + pid + '" width="42" height="42" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'polka-big': // 大ドット
+      body = '<rect width="34" height="34" fill="' + pal.bg + '"/>' +
+        '<circle cx="9" cy="9" r="4.6" fill="' + pal.fg + '"/><circle cx="26" cy="26" r="4.6" fill="' + pal.fg + '"/>' +
+        '<circle cx="26" cy="9" r="1.9" fill="' + pal.fg2 + '"/><circle cx="9" cy="26" r="1.9" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="' + pid + '" width="34" height="34" patternUnits="userSpaceOnUse">' + body + '</pattern>';
+    case 'grid': // 方眼
+      body = '<rect width="20" height="20" fill="' + pal.bg + '"/>' +
+        '<path d="M20,0.5 L0,0.5 L0,20" fill="none" stroke="' + pal.fg + '" stroke-width="1" opacity="0.6"/>' +
+        '<circle cx="10" cy="10" r="1.2" fill="' + pal.fg2 + '"/>';
+      return '<pattern id="' + pid + '" width="20" height="20" patternUnits="userSpaceOnUse">' + body + '</pattern>';
     default: // floral-retro: 小花
       body = '<rect width="42" height="42" fill="' + pal.bg + '"/>' + giftFlowerSvg(12, 12, 0.8, pal.fg, pal.fg2) + giftFlowerSvg(32, 32, 0.55, pal.fg, pal.fg2) +
         '<circle cx="33" cy="10" r="1.4" fill="' + pal.fg2 + '"/><circle cx="9" cy="34" r="1.4" fill="' + pal.fg2 + '"/>';

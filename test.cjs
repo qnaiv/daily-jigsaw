@@ -208,13 +208,13 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
 /* 8. 箱の包装柄の決定性 (同じ日付なら誰でも同じ柄・完成写真は載せない前提の柄選択) */
 {
-  ok(L.BOX_PATTERNS.length === 6, '箱の包装柄は6種');
+  ok(L.BOX_PATTERNS.length === 20, '箱の包装柄は20種');
   ok(L.boxPatternForDate('2026-11-07').id === L.boxPatternForDate('2026-11-07').id, '箱の柄: 同じ日付で常に同じ柄');
   const seen = new Set();
-  for (let d = 0; d < 6; d++) seen.add(L.boxPatternForDate(L.addDays('2026-11-07', d)).id);
-  ok(seen.size === 6, '箱の柄: 連続6日で6柄すべてが順に現れる');
-  ok(L.boxPatternForDate(L.addDays('2026-11-07', 6)).id === L.boxPatternForDate('2026-11-07').id, '箱の柄: 7日目に同じ柄へ戻る (ローテーション)');
-  ok(L.boxPatternForDate('2026-11-06').id === L.BOX_PATTERNS[5].id, '箱の柄: 基準日前日は末尾の柄 (負の日数でも決定的)');
+  for (let d = 0; d < L.BOX_PATTERNS.length; d++) seen.add(L.boxPatternForDate(L.addDays('2026-11-07', d)).id);
+  ok(seen.size === L.BOX_PATTERNS.length, '箱の柄: 連続20日で20柄すべてが順に現れる');
+  ok(L.boxPatternForDate(L.addDays('2026-11-07', L.BOX_PATTERNS.length)).id === L.boxPatternForDate('2026-11-07').id, '箱の柄: 一周 (20日) で同じ柄へ戻る (ローテーション)');
+  ok(L.boxPatternForDate('2026-11-06').id === L.BOX_PATTERNS[L.BOX_PATTERNS.length - 1].id, '箱の柄: 基準日前日は末尾の柄 (負の日数でも決定的)');
   // グループ指定: 同じ日でもグループごとに別の柄、ペア内は同じ、翌日は全グループ変わる
   ok(L.boxPatternIndex('2026-11-07', 0) === 0 && L.boxPatternIndex('2026-11-07', 1) === 1 && L.boxPatternIndex('2026-11-07', 2) === 2, '箱の柄 (グループ): 基準日はグループ 0/1/2 で別の柄');
   const g0 = L.boxPatternForDate('2026-11-08', 0), g1 = L.boxPatternForDate('2026-11-08', 1), g2 = L.boxPatternForDate('2026-11-08', 2);
@@ -222,7 +222,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.boxPatternForDate('2026-11-08', L.difficultyGroup(16)).id === L.boxPatternForDate('2026-11-08', L.difficultyGroup(36)).id, '箱の柄 (グループ): ペア内 (16と36) は同じ柄');
   ok(L.boxPatternForDate('2026-11-08', 1) === L.boxPatternForDate('2026-11-08', 1), '箱の柄 (グループ): 同日・同グループは決定的');
   ok([0, 1, 2].every(g => L.boxPatternForDate(L.addDays('2026-11-08', 1), g).id !== L.boxPatternForDate('2026-11-08', g).id), '箱の柄 (グループ): 翌日は全グループの柄が変わる');
-  ok(L.boxPatternIndex('2026-11-08') === 1 && L.boxPatternIndex('2026-11-06') === 5, '箱の柄 (グループ省略): 従来の日付のみ選択と一致 (旧挙動不変)');
+  ok(L.boxPatternIndex('2026-11-08') === 1 && L.boxPatternIndex('2026-11-06') === L.BOX_PATTERNS.length - 1, '箱の柄 (グループ省略): 従来の日付のみ選択と一致 (旧挙動不変)');
 }
 
 /* 9. 机の上での合体 (相対スナップ): 正しい相対位置に置けば必ず1つの塊になり、塊として動かせる */
@@ -1291,7 +1291,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // コレクション解放 = クリアした絵のキー集合
   ok(L.unlockedImageKeys(recsA).size === 2 && L.unlockedImageKeys(recsA).has('p100'), 'ステージ: 解放した絵のキーが集まる');
   // 箱の柄はステージで回る
-  ok([1, 2, 3, 4, 5, 6].every(s => L.stageBoxPatternIndex(s) === s - 1) && L.stageBoxPatternIndex(7) === 0, 'ステージ: 箱の柄はステージ番号で6種ローテーション');
+  ok([1, 2, 3, 4, 5, 6].every(s => L.stageBoxPatternIndex(s) === s - 1) && L.stageBoxPatternIndex(7) === 6 && L.stageBoxPatternIndex(21) === 0, 'ステージ: 箱の柄はステージ番号で20種ローテーション');
   // 進捗移行と報酬配線 + コレクション再プレイ配線
   ok(appSrc2.indexOf('function migrateProgressToStages(') !== -1 && appSrc2.indexOf('store.stageMigrated') !== -1, 'ステージ移行: 旧進行中データを imgKey のステージへ移す');
   ok(appSrc2.indexOf('function startReplayFromDetail(') !== -1 && html2.indexOf('id="detailPlayBtn"') !== -1, 'コレクション: 解放済みの絵は詳細から再プレイできる');
