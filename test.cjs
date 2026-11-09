@@ -828,12 +828,12 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 {
   // カタログの健全性
   const ids = L.WALL_CATALOG.map(it => it.id);
-  ok(L.WALL_CATALOG.length === 50, '壁: カタログは 50 点');
-  ok(new Set(ids).size === ids.length && ids.every((id, i) => id === 'w' + String(i + 1).padStart(3, '0')), '壁: id は w001..w050 で一意・連番');
+  ok(L.WALL_CATALOG.length === 200, '壁: カタログは 200 点');
+  ok(new Set(ids).size === ids.length && ids.every((id, i) => id === 'w' + String(i + 1).padStart(3, '0')), '壁: id は w001..w200 で一意・連番');
   ok(L.WALL_CATALOG.every(it => it.name && ['S', 'M', 'L'].includes(it.size)), '壁: 全点に名前・サイズ感がある');
-  ok(L.WALL_CATALOG.filter(it => it.rarity === 3).length === 3, '壁: ★3 は 3 点');
-  ok(L.WALL_CATALOG.filter(it => it.rarity === 2).length === 15, '壁: ★2 は 15 点');
-  ok(L.WALL_CATALOG.filter(it => it.rarity === 1).length === 32, '壁: ★1 は 32 点');
+  ok(L.WALL_CATALOG.filter(it => it.rarity === 3).length === 12, '壁: ★3 は 12 点');
+  ok(L.WALL_CATALOG.filter(it => it.rarity === 2).length === 60, '壁: ★2 は 60 点');
+  ok(L.WALL_CATALOG.filter(it => it.rarity === 1).length === 128, '壁: ★1 は 128 点');
   ok(L.wallItemById('w018').rarity === 3 && L.wallItemById('w028').rarity === 3 && L.wallItemById('w045').rarity === 3, '壁: ★3 は #18 ハーフリース / #28 折り鶴 / #45 星型ランタン');
   ok(L.WALL_SIZE_RATIO.S < L.WALL_SIZE_RATIO.M && L.WALL_SIZE_RATIO.M < L.WALL_SIZE_RATIO.L, '壁: サイズ比 S<M<L');
   ok(L.rarityLabel(L.wallItemById('w018')) === '★3' && L.rarityLabel(L.wallItemById('w001')) === '★1' && L.rarityLabel(null) === '', '壁: レア度ラベル');
@@ -842,7 +842,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // 季節ゲート
   const seasonal = {};
   L.WALL_CATALOG.filter(it => it.months).forEach(it => { seasonal[it.id] = it.months; });
-  ok(eq(seasonal, { w001: [3, 4, 5], w003: [6], w004: [7, 8], w009: [10, 11], w015: [6, 7] }), '壁: 季節ゲートは 5 点だけ・月が仕様どおり');
+  ok(eq(seasonal, { w001: [3, 4, 5], w003: [6], w004: [7, 8], w009: [10, 11], w015: [6, 7], w071: [6, 7], w128: [12, 1, 2], w143: [12, 1], w144: [12, 1], w145: [12, 1], w146: [12, 1], w147: [2], w148: [2], w149: [3], w150: [3], w151: [5], w152: [5], w153: [3, 4, 5], w154: [4, 5], w155: [6], w156: [7], w157: [7, 8], w158: [7, 8], w159: [7, 8], w160: [9, 10], w161: [10, 11], w162: [10], w163: [10], w164: [10], w165: [12], w166: [12], w167: [12], w168: [12, 1, 2], w169: [12], w170: [12], w171: [12], w172: [2] }), '壁: 季節ゲートは 37 点・月が仕様どおり');
   ok(L.wallDrawEligible(L.wallItemById('w001'), L.emptyWall(), 4) === true && L.wallDrawEligible(L.wallItemById('w001'), L.emptyWall(), 6) === false, '壁: 桜は春のみ抽選対象');
 
   // 抽選: 季節外は絶対に出ない / 所持済みは出ない / 全所持は null / ★3 は希少 (rng 全域スイープ)
@@ -851,7 +851,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
     const id = L.drawWallItem(L.emptyWall(), { month: 12 }, () => i / 400);
     if (id) seenDec.add(id);
   }
-  ok([...seenDec].every(id => { const it = L.wallItemById(id); return !it.months; }), '壁抽選: 12月は季節物が一切出ない');
+  ok([...seenDec].every(id => { const it = L.collectibleById(id); return !it || !it.months || it.months.includes(12); }), '壁抽選: 12月に出る季節物は12月ゲートのものだけ');
+  ok([...seenDec].some(id => { const it = L.collectibleById(id); return it && it.months && it.months.includes(12); }), '壁抽選: 12月はクリスマス等の季節物が出る');
   ok(seenDec.size >= 30, '壁抽選: 通年アイテムには広く届く (' + seenDec.size + ' 種)');
   const seenJun = new Set();
   for (let i = 0; i < 400; i++) {
@@ -862,14 +863,34 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   let c1 = 0, c3 = 0; const N = 2000;
   for (let i = 0; i < N; i++) {
     const id = L.drawWallItem(L.emptyWall(), { month: 1 }, () => i / N);
-    const r = L.wallItemById(id).rarity;
+    const r = L.collectibleById(id).rarity;
     if (r === 1) c1++; else if (r === 3) c3++;
   }
   ok(c3 > 0 && c3 < c1 / 5, '壁抽選: ★3 は出るが ★1 の 1/5 未満の頻度 (実測 ★3=' + c3 + ' ★1=' + c1 + ')');
   const oneW = L.emptyWall(); oneW.owned = ['w007'];
   ok(L.drawWallItem(oneW, { month: 6 }, () => 0) !== 'w007', '壁抽選: 所持済みは出ない');
-  const allW = L.emptyWall(); allW.owned = ids.slice();
+  const allW = L.emptyWall(); allW.owned = ids.slice(); allW.catsOwned = L.CAT_CATALOG.map(c => c.id);
   ok(L.drawWallItem(allW, { month: 6 }, () => 0.5) === null, '壁抽選: 全所持なら null');
+
+  // 床の猫: カタログ/スターター/抽選/付与/保存
+  ok(L.CAT_CATALOG.length === 10 && eq(L.CAT_CATALOG.map(c => c.id), ['c01', 'c02', 'c03', 'c04', 'c05', 'c06', 'c07', 'c08', 'c09', 'c10']), '猫: 10 匹のカタログ');
+  ok(L.catById('c01').name.indexOf('白猫') === 0 && L.collectibleById('c10') === L.catById('c10') && L.collectibleById('w001') === L.wallItemById('w001'), '猫: catById / collectibleById の解決');
+  ok(eq(L.emptyWall().catsOwned, ['c01']) && eq(L.emptyWall().catsPlaced, [{ id: 'c01', x: 0.5 }]), '猫: 新規は白猫が床の中央にいる');
+  const catMig = L.normalizeWall({ owned: [], placed: [], frames: [] });
+  ok(eq(catMig.catsOwned, ['c01']) && eq(catMig.catsPlaced, [{ id: 'c01', x: 0.5 }]), '猫移行: 旧セーブにも白猫が補われ床に出る');
+  const catKeep = L.normalizeWall({ owned: [], placed: [], frames: [], catsOwned: ['c01', 'c04'], catsPlaced: [] });
+  ok(eq(catKeep.catsOwned, ['c01', 'c04']) && eq(catKeep.catsPlaced, []), '猫保存: 空の配置 (全てしまった) は尊重される');
+  const catNorm = L.normalizeWall({ owned: [], placed: [], frames: [], catsOwned: ['c04', 'c99'], catsPlaced: [{ id: 'c04', x: 1.4 }, { id: 'c05', x: 0.3 }, { id: 'c04', x: 0.2 }] });
+  ok(eq(catNorm.catsOwned, ['c04', 'c01']) && eq(catNorm.catsPlaced, [{ id: 'c04', x: 0.97 }]), '猫保存: 未知/未所持/重複は落ち、x はクランプされる');
+  const catPending = L.normalizeWall({ owned: [], placed: [], frames: [], pending: ['c07'] });
+  ok(eq(catPending.pending, ['c07']), '猫保存: 未受取の猫は pending に残る');
+  const gwCat = L.emptyWall();
+  L.grantWallItems(gwCat, ['c04'], '2026-11-09');
+  ok(eq(gwCat.catsOwned, ['c01', 'c04']) && gwCat.owned.indexOf('c04') < 0 && gwCat.seen.c04 === '2026-11-09', '猫付与: 猫は catsOwned に入り seen に日付が残る');
+  const onlyCats = L.emptyWall(); onlyCats.owned = ids.slice();
+  const drawnCats = new Set();
+  for (let i = 0; i < 200; i++) drawnCats.add(L.drawWallItem(onlyCats, { month: 6 }, () => i / 200));
+  ok([...drawnCats].every(id => id.charAt(0) === 'c') && drawnCats.size >= 5, '猫抽選: 壁アイテム全所持なら猫だけが出る (' + drawnCats.size + ' 種)');
 
   // 付与の適用 (所持 + seen 日付のみ。壁への自動配置はしない)
   const gw = L.emptyWall();

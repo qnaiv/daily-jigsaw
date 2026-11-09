@@ -808,6 +808,14 @@ button { font: inherit; cursor: pointer; }
   display: block; width: 100%; height: auto; pointer-events: none;
   filter: drop-shadow(0 3px 3px rgba(90, 70, 40, .25));
 }
+/* 床の猫: 中心は x のみ、足元は bottom で床に固定。影は足下の楕円 */
+.wall-cat { transform: translate(-50%, 0); }
+.wall-cat img { display: block; width: 100%; height: auto; pointer-events: none; position: relative; z-index: 1; }
+.wall-cat-shadow {
+  position: absolute; left: 10%; right: 10%; bottom: -3%; height: 9%;
+  background: radial-gradient(ellipse at center, rgba(60, 38, 18, .35), rgba(60, 38, 18, 0) 70%);
+  border-radius: 50%;
+}
 .wall-frame { aspect-ratio: 1; }
 /* 額ユニットは 1 枚の Canvas に描く。落影と装飾のはみ出し分 (幅の 16%)
  * だけ要素より大きくし、中心を額の外形に合わせる */

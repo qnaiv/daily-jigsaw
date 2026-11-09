@@ -847,6 +847,156 @@ var WALL_CATALOG = [
   { id: 'w048', name: '小さな提灯ライト', cat: 'light', size: 'S', rarity: 1 },
   { id: 'w049', name: 'フェアリーライト', cat: 'light', size: 'L', rarity: 1 },
   { id: 'w050', name: 'ティーカップライト', cat: 'light', size: 'S', rarity: 2 },
+  { id: 'w051', name: '雲型ウォールライト', cat: 'light', size: 'M', rarity: 2 },
+  { id: 'w052', name: '壁掛けランタン', cat: 'light', size: 'M', rarity: 1 },
+  { id: 'w053', name: 'ハンギングプラント（マクラメ）', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w054', name: 'ハンギングプラント（ガラス玉）', cat: 'plant', size: 'S', rarity: 1 },
+  { id: 'w055', name: 'ハンギングプラント（編みかご）', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w056', name: 'ハンギングプラント（真鍮ポット）', cat: 'plant', size: 'S', rarity: 1 },
+  { id: 'w057', name: 'ハンギングプラント（白陶器）', cat: 'plant', size: 'M', rarity: 1 },
+  { id: 'w058', name: 'アイビーの壁鉢', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w059', name: '多肉の壁掛けプランター', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w060', name: 'エアプランツ（ガラスボール）', cat: 'plant', size: 'S', rarity: 1 },
+  { id: 'w061', name: 'エアプランツ（流木付き）', cat: 'plant', size: 'S', rarity: 2 },
+  { id: 'w062', name: '壁掛け一輪挿し（ガラス）', cat: 'plant', size: 'S', rarity: 1 },
+  { id: 'w063', name: '壁掛け一輪挿し（陶器）', cat: 'plant', size: 'S', rarity: 1 },
+  { id: 'w064', name: '試験管フラワースタンド', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w065', name: '苔玉の壁掛け', cat: 'plant', size: 'S', rarity: 1 },
+  { id: 'w066', name: '壁掛けテラリウム', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w067', name: '押し花フレーム', cat: 'plant', size: 'M', rarity: 1 },
+  { id: 'w068', name: '吊り下げハーバリウム', cat: 'plant', size: 'S', rarity: 1 },
+  { id: 'w069', name: '蔦の枝飾り', cat: 'plant', size: 'L', rarity: 2 },
+  { id: 'w070', name: '花の壁バスケット', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w071', name: 'ラベンダーの壁束', cat: 'plant', size: 'S', rarity: 1, months: [6,7] },
+  { id: 'w072', name: 'ドライフラワードーム', cat: 'plant', size: 'S', rarity: 1 },
+  { id: 'w073', name: '止まり木プランター', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w074', name: 'プランターボックス', cat: 'plant', size: 'M', rarity: 2 },
+  { id: 'w075', name: '木の丸時計（ウォルナット）', cat: 'clock', size: 'M', rarity: 1 },
+  { id: 'w076', name: '白い丸時計', cat: 'clock', size: 'M', rarity: 1 },
+  { id: 'w077', name: '真鍮の丸時計', cat: 'clock', size: 'M', rarity: 2 },
+  { id: 'w078', name: '振り子時計', cat: 'clock', size: 'M', rarity: 2 },
+  { id: 'w079', name: '小屋型の時計', cat: 'clock', size: 'M', rarity: 2 },
+  { id: 'w080', name: '猫シルエット時計', cat: 'clock', size: 'M', rarity: 2 },
+  { id: 'w081', name: 'レトロ四角時計', cat: 'clock', size: 'M', rarity: 1 },
+  { id: 'w082', name: '月モチーフ時計', cat: 'clock', size: 'S', rarity: 1 },
+  { id: 'w083', name: '花の文字盤時計', cat: 'clock', size: 'M', rarity: 2 },
+  { id: 'w084', name: '革ひも吊り時計', cat: 'clock', size: 'S', rarity: 1 },
+  { id: 'w085', name: 'セラミック時計（水色）', cat: 'clock', size: 'S', rarity: 1 },
+  { id: 'w086', name: '両面時計', cat: 'clock', size: 'M', rarity: 3 },
+  { id: 'w087', name: '丸ミラー（木枠）', cat: 'mirror', size: 'M', rarity: 2 },
+  { id: 'w088', name: '丸ミラー（真鍮枠）', cat: 'mirror', size: 'M', rarity: 2 },
+  { id: 'w089', name: '雲型ミラー', cat: 'mirror', size: 'M', rarity: 1 },
+  { id: 'w090', name: 'アーチ型ミラー', cat: 'mirror', size: 'M', rarity: 2 },
+  { id: 'w091', name: '楕円ミラー', cat: 'mirror', size: 'M', rarity: 1 },
+  { id: 'w092', name: 'サンバーストミラー', cat: 'mirror', size: 'M', rarity: 3 },
+  { id: 'w093', name: '四角ミラー（白枠）', cat: 'mirror', size: 'S', rarity: 1 },
+  { id: 'w094', name: '波型ミラー', cat: 'mirror', size: 'M', rarity: 2 },
+  { id: 'w095', name: '六角ミラー', cat: 'mirror', size: 'S', rarity: 1 },
+  { id: 'w096', name: 'ハート型ミラー', cat: 'mirror', size: 'S', rarity: 1 },
+  { id: 'w097', name: '木の棚板（本）', cat: 'shelf', size: 'M', rarity: 1 },
+  { id: 'w098', name: '木の棚板（花瓶）', cat: 'shelf', size: 'M', rarity: 1 },
+  { id: 'w099', name: '二段の壁棚', cat: 'shelf', size: 'M', rarity: 2 },
+  { id: 'w100', name: '三角ブラケット棚', cat: 'shelf', size: 'M', rarity: 1 },
+  { id: 'w101', name: 'ハウス型の壁棚', cat: 'shelf', size: 'M', rarity: 2 },
+  { id: 'w102', name: 'マグカップフック板', cat: 'shelf', size: 'M', rarity: 1 },
+  { id: 'w103', name: '鍵掛けフックボード', cat: 'shelf', size: 'S', rarity: 1 },
+  { id: 'w104', name: '枝風フック', cat: 'shelf', size: 'S', rarity: 1 },
+  { id: 'w105', name: '布の壁ポケット', cat: 'shelf', size: 'M', rarity: 2 },
+  { id: 'w106', name: '革風壁ポケット', cat: 'shelf', size: 'S', rarity: 1 },
+  { id: 'w107', name: 'レターホルダー', cat: 'shelf', size: 'S', rarity: 1 },
+  { id: 'w108', name: 'ハンギングバスケット', cat: 'shelf', size: 'M', rarity: 1 },
+  { id: 'w109', name: '壁掛けブックシェルフ', cat: 'shelf', size: 'M', rarity: 2 },
+  { id: 'w110', name: '小さなスパイスラック', cat: 'shelf', size: 'S', rarity: 1 },
+  { id: 'w111', name: '猫の足跡フック', cat: 'shelf', size: 'S', rarity: 1 },
+  { id: 'w112', name: '壁付け小引き出し棚', cat: 'shelf', size: 'M', rarity: 2 },
+  { id: 'w113', name: 'タペストリー（山と太陽）', cat: 'tapestry', size: 'L', rarity: 3 },
+  { id: 'w114', name: 'タペストリー（海と波）', cat: 'tapestry', size: 'L', rarity: 2 },
+  { id: 'w115', name: 'タペストリー（森と鹿）', cat: 'tapestry', size: 'L', rarity: 2 },
+  { id: 'w116', name: 'ファブリックポスター（花）', cat: 'tapestry', size: 'M', rarity: 1 },
+  { id: 'w117', name: 'ファブリックポスター（猫）', cat: 'tapestry', size: 'M', rarity: 1 },
+  { id: 'w118', name: 'マクラメ壁飾り', cat: 'tapestry', size: 'M', rarity: 2 },
+  { id: 'w119', name: 'マクラメ（葉っぱ型）', cat: 'tapestry', size: 'S', rarity: 1 },
+  { id: 'w120', name: 'ドリームキャッチャー', cat: 'tapestry', size: 'M', rarity: 2 },
+  { id: 'w121', name: 'ドリームキャッチャー（月型）', cat: 'tapestry', size: 'M', rarity: 2 },
+  { id: 'w122', name: 'ウィービング', cat: 'tapestry', size: 'M', rarity: 2 },
+  { id: 'w123', name: '刺繍フープ（花）', cat: 'tapestry', size: 'S', rarity: 1 },
+  { id: 'w124', name: '刺繍フープ（小鳥）', cat: 'tapestry', size: 'S', rarity: 1 },
+  { id: 'w125', name: 'つるし飾り', cat: 'tapestry', size: 'M', rarity: 2 },
+  { id: 'w126', name: '手ぬぐいタペストリー', cat: 'tapestry', size: 'M', rarity: 1 },
+  { id: 'w127', name: 'パッチワーク布飾り', cat: 'tapestry', size: 'S', rarity: 1 },
+  { id: 'w128', name: '編みの雪結晶飾り', cat: 'tapestry', size: 'S', rarity: 1, months: [12,1,2] },
+  { id: 'w129', name: '空の額縁（アンティーク金）', cat: 'frame', size: 'L', rarity: 3 },
+  { id: 'w130', name: '空の額縁（白・細）', cat: 'frame', size: 'M', rarity: 1 },
+  { id: 'w131', name: '丸い空の額縁', cat: 'frame', size: 'M', rarity: 1 },
+  { id: 'w132', name: '写真ストリング（木製クリップ）', cat: 'frame', size: 'L', rarity: 2 },
+  { id: 'w133', name: '写真ストリング（横長）', cat: 'frame', size: 'L', rarity: 2 },
+  { id: 'w134', name: 'コルクボード', cat: 'frame', size: 'M', rarity: 1 },
+  { id: 'w135', name: 'パンチングボード', cat: 'frame', size: 'M', rarity: 2 },
+  { id: 'w136', name: 'クリップボード（2枚組）', cat: 'frame', size: 'M', rarity: 1 },
+  { id: 'w137', name: '黒板風ボード', cat: 'frame', size: 'M', rarity: 1 },
+  { id: 'w138', name: 'ウッドサイン（模様）', cat: 'frame', size: 'M', rarity: 1 },
+  { id: 'w139', name: '絵柄カレンダー', cat: 'frame', size: 'M', rarity: 2 },
+  { id: 'w140', name: '木製プラーク（葉の彫刻）', cat: 'frame', size: 'S', rarity: 1 },
+  { id: 'w141', name: '枝のモビール', cat: 'frame', size: 'L', rarity: 3 },
+  { id: 'w142', name: '風鈴', cat: 'frame', size: 'S', rarity: 1 },
+  { id: 'w143', name: 'しめ縄飾り', cat: 'seasonal', size: 'M', rarity: 3, months: [12,1] },
+  { id: 'w144', name: 'ミニ門松風の壁飾り', cat: 'seasonal', size: 'M', rarity: 1, months: [12,1] },
+  { id: 'w145', name: '破魔矢', cat: 'seasonal', size: 'M', rarity: 2, months: [12,1] },
+  { id: 'w146', name: 'だるまの壁飾り', cat: 'seasonal', size: 'S', rarity: 1, months: [12,1] },
+  { id: 'w147', name: '鬼のお面（節分）', cat: 'seasonal', size: 'S', rarity: 1, months: [2] },
+  { id: 'w148', name: '豆まき枡の壁飾り', cat: 'seasonal', size: 'S', rarity: 1, months: [2] },
+  { id: 'w149', name: 'つるし雛', cat: 'seasonal', size: 'M', rarity: 3, months: [3] },
+  { id: 'w150', name: '桃の花の枝飾り', cat: 'seasonal', size: 'M', rarity: 2, months: [3] },
+  { id: 'w151', name: 'こいのぼり（壁掛け）', cat: 'seasonal', size: 'M', rarity: 2, months: [5] },
+  { id: 'w152', name: '兜の壁飾り', cat: 'seasonal', size: 'M', rarity: 3, months: [5] },
+  { id: 'w153', name: '桜の枝飾り', cat: 'seasonal', size: 'M', rarity: 1, months: [3,4,5] },
+  { id: 'w154', name: '藤の垂れ飾り', cat: 'seasonal', size: 'M', rarity: 2, months: [4,5] },
+  { id: 'w155', name: 'あじさいの壁飾り', cat: 'seasonal', size: 'M', rarity: 1, months: [6] },
+  { id: 'w156', name: '七夕の笹飾り', cat: 'seasonal', size: 'M', rarity: 1, months: [7] },
+  { id: 'w157', name: '祭り提灯（2連）', cat: 'seasonal', size: 'M', rarity: 2, months: [7,8] },
+  { id: 'w158', name: '金魚の壁飾り', cat: 'seasonal', size: 'S', rarity: 1, months: [7,8] },
+  { id: 'w159', name: 'ひまわりの壁飾り', cat: 'seasonal', size: 'M', rarity: 1, months: [7,8] },
+  { id: 'w160', name: 'お月見飾り', cat: 'seasonal', size: 'M', rarity: 2, months: [9,10] },
+  { id: 'w161', name: '秋の実りの飾り', cat: 'seasonal', size: 'M', rarity: 1, months: [10,11] },
+  { id: 'w162', name: 'ハロウィンかぼちゃ', cat: 'seasonal', size: 'M', rarity: 1, months: [10] },
+  { id: 'w163', name: 'おばけガーランド', cat: 'seasonal', size: 'M', rarity: 1, months: [10] },
+  { id: 'w164', name: 'コウモリ飾り', cat: 'seasonal', size: 'S', rarity: 1, months: [10] },
+  { id: 'w165', name: 'クリスマスリース', cat: 'seasonal', size: 'M', rarity: 3, months: [12] },
+  { id: 'w166', name: 'オーナメントボールの枝', cat: 'seasonal', size: 'M', rarity: 2, months: [12] },
+  { id: 'w167', name: 'クリスマスの靴下', cat: 'seasonal', size: 'S', rarity: 1, months: [12] },
+  { id: 'w168', name: '雪の結晶飾り（3連）', cat: 'seasonal', size: 'M', rarity: 1, months: [12,1,2] },
+  { id: 'w169', name: '壁掛けミニツリー', cat: 'seasonal', size: 'M', rarity: 1, months: [12] },
+  { id: 'w170', name: 'サンタの壁飾り', cat: 'seasonal', size: 'S', rarity: 1, months: [12] },
+  { id: 'w171', name: 'トナカイのオーナメント', cat: 'seasonal', size: 'S', rarity: 1, months: [12] },
+  { id: 'w172', name: 'ハートのリース（バレンタイン）', cat: 'seasonal', size: 'M', rarity: 1, months: [2] },
+  { id: 'w173', name: '木製の星飾り（大）', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w174', name: '木製の三日月飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w175', name: '月と星のモビール', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w176', name: '虹の壁飾り', cat: 'motif', size: 'M', rarity: 2 },
+  { id: 'w177', name: '雲の壁飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w178', name: '雲と雨粒のセット', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w179', name: '太陽の壁飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w180', name: '小鳥の壁飾り（3羽）', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w181', name: '蝶の壁飾り（3連）', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w182', name: '猫のシルエット飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w183', name: '犬のシルエット飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w184', name: 'うさぎの壁飾り', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w185', name: 'フクロウの壁飾り', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w186', name: '小さな家の飾り（3軒）', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w187', name: '気球の飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w188', name: '飛行機の飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w189', name: '帆船の飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w190', name: '灯台の飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w191', name: 'きのこの飾り（2個）', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w192', name: 'どんぐりと葉の飾り', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w193', name: 'アンティークキーの飾り', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w194', name: '羽根の壁飾り', cat: 'motif', size: 'M', rarity: 1 },
+  { id: 'w195', name: '壁掛け小皿（花柄）', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w196', name: '壁掛け小皿（鳥柄）', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w197', name: 'てんとう虫と葉の飾り', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w198', name: '蜂と花の飾り', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w199', name: 'ティーカップの壁飾り', cat: 'motif', size: 'S', rarity: 1 },
+  { id: 'w200', name: 'ミニチュア窓枠', cat: 'motif', size: 'M', rarity: 1 },
 ];
 /* 額装パズルのフレームスタイル (frame-design.md の 20 種)。
  * 描画はデータ駆動: color (枠色) / width (枠幅の比率) / mat (マットの色、
@@ -1032,6 +1182,33 @@ function applyWallExpand(wall, totalClears) {
 }
 /* アイテムの表示幅 (壁の幅に対する比率) の目安: カタログのサイズ感から決める */
 var WALL_SIZE_RATIO = { S: 0.20, M: 0.28, L: 0.40 };
+/* ---- 床の猫 (2026-11-09 ユーザー指定) ----
+ * 壁画面の床に置く猫。壁アイテムとは別カタログ・別所持リスト
+ * (wall.catsOwned / wall.catsPlaced) で管理し、配置は x (中心比) のみで
+ * 足元は床に固定される。c01 白猫はスターターとして最初から床にいる。
+ * 残りは壁アイテムと同じごほうび抽選で届く (drawWallItem の対象に混ぜる)。
+ * 画像は cats/<id>.webp (512×512 透過)。w = 床での幅 (ステージ幅比)。
+ * 画風はシンプル・ミニマル (ユーザーがサンプルで承認した方向)。 */
+var CAT_CATALOG = [
+  { id: 'c01', name: '白猫 (お座り)', rarity: 1, w: 0.15 },
+  { id: 'c02', name: '茶トラ (香箱座り)', rarity: 2, w: 0.17 },
+  { id: 'c03', name: '三毛猫 (のび)', rarity: 2, w: 0.27 },
+  { id: 'c04', name: '黒猫 (お座り)', rarity: 2, w: 0.15 },
+  { id: 'c05', name: 'キジトラ (丸まって寝る)', rarity: 2, w: 0.18 },
+  { id: 'c06', name: '三毛猫 (寝そべり)', rarity: 2, w: 0.28 },
+  { id: 'c07', name: 'ハチワレ (クッション)', rarity: 2, w: 0.18 },
+  { id: 'c08', name: '子猫と毛糸玉', rarity: 2, w: 0.19 },
+  { id: 'c09', name: '長毛猫 (ふわふわ)', rarity: 2, w: 0.17 },
+  { id: 'c10', name: '白猫 (ごろごろ)', rarity: 3, w: 0.23 }
+];
+var CAT_STARTER_ID = 'c01';
+var CAT_FEET_Y = 0.972; // 猫の足元の高さ (ワールド高さ比・床帯の中)
+function catById(id) {
+  for (var i = 0; i < CAT_CATALOG.length; i++) if (CAT_CATALOG[i].id === id) return CAT_CATALOG[i];
+  return null;
+}
+/* 壁アイテムと猫のどちらか (ごほうび表示・保存検証の共通解決) */
+function collectibleById(id) { return wallItemById(id) || catById(id); }
 function wallItemById(id) {
   for (var i = 0; i < WALL_CATALOG.length; i++) if (WALL_CATALOG[i].id === id) return WALL_CATALOG[i];
   return null;
@@ -1043,7 +1220,7 @@ function wallItemWidthRatio(item) {
  * 所持済みを対象から外すので、ここに入っていれば二重に届くことはない */
 var WALL_STARTER_ITEMS = ['w007', 'w030', 'w037']; // ユーカリリース / 葉っぱガーランド / ハートガーランド
 function emptyWall() {
-  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], sizeStage: 0, pendingExpand: false, lastDate: null, grantDates: {}, history: {} };
+  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], sizeStage: 0, pendingExpand: false, lastDate: null, grantDates: {}, history: {}, catsOwned: [CAT_STARTER_ID], catsPlaced: [{ id: CAT_STARTER_ID, x: 0.5 }] };
 }
 /* 保存データの形が崩れていても使える形に寄せる (旧データには wall 自体がない)。
  * placed は配列順 = 重なり順を保ち、同じアイテム/記録の重複は先勝ちで落とす。 */
@@ -1059,11 +1236,11 @@ function normalizeWall(w) {
   });
   if (w.seen && typeof w.seen === 'object') {
     Object.keys(w.seen).forEach(function (id) {
-      if (wallItemById(id) && typeof w.seen[id] === 'string') out.seen[id] = w.seen[id];
+      if (collectibleById(id) && typeof w.seen[id] === 'string') out.seen[id] = w.seen[id];
     });
   }
   if (Array.isArray(w.pending)) {
-    out.pending = w.pending.filter(function (id) { return !!wallItemById(id); });
+    out.pending = w.pending.filter(function (id) { return !!collectibleById(id); });
   }
   if (Array.isArray(w.placed)) {
     var placedIds = {};
@@ -1136,7 +1313,24 @@ function normalizeWall(w) {
   }
   if (w.history && typeof w.history === 'object') {
     Object.keys(w.history).forEach(function (d) {
-      if (Array.isArray(w.history[d])) out.history[d] = w.history[d].filter(function (id) { return !!wallItemById(id); });
+      if (Array.isArray(w.history[d])) out.history[d] = w.history[d].filter(function (id) { return !!collectibleById(id); });
+    });
+  }
+  // 床の猫: 所持と配置 (配置は x のみ、足元は床固定)。スターターの白猫は
+  // 常時所持。catsPlaced が配列で保存されていればその内容を尊重し (空配列 =
+  // 全てしまった状態)、無い旧セーブではスターターを床の中央に置く
+  if (Array.isArray(w.catsOwned)) {
+    out.catsOwned = w.catsOwned.filter(function (id, idx) { return !!catById(id) && w.catsOwned.indexOf(id) === idx; });
+  }
+  if (out.catsOwned.indexOf(CAT_STARTER_ID) < 0) out.catsOwned.push(CAT_STARTER_ID);
+  if (Array.isArray(w.catsPlaced)) {
+    out.catsPlaced = [];
+    var catPlacedIds = {};
+    w.catsPlaced.forEach(function (p) {
+      if (p && catById(p.id) && out.catsOwned.indexOf(p.id) >= 0 && typeof p.x === 'number' && !catPlacedIds[p.id]) {
+        catPlacedIds[p.id] = true;
+        out.catsPlaced.push({ id: p.id, x: Math.min(0.97, Math.max(0.03, p.x)) });
+      }
     });
   }
   // 壁の広さ段階: 有効な段階が保存されていれば引き継ぐ。無ければ段階制より
@@ -1161,6 +1355,9 @@ function wallDrawEligible(item, wall, month) {
  * 対象が無ければ null。ctx: { month } / rng: () => [0,1) */
 function drawWallItem(wall, ctx, rng) {
   var pool = WALL_CATALOG.filter(function (it) { return wallDrawEligible(it, wall, ctx.month); });
+  // 猫も同じ抽選に混ぜる (未所持の猫が対象)
+  var catsOwned = Array.isArray(wall.catsOwned) ? wall.catsOwned : [];
+  CAT_CATALOG.forEach(function (c) { if (catsOwned.indexOf(c.id) < 0) pool.push(c); });
   if (!pool.length) return null;
   var total = 0;
   pool.forEach(function (it) { total += RARITY_TABLE[it.rarity].weight; });
@@ -1174,8 +1371,14 @@ function drawWallItem(wall, ctx, rng) {
 /* アイテムを所持に加える (重複は無視)。seen には初回入手日を残す */
 function grantWallItems(wall, ids, date) {
   ids.forEach(function (id) {
-    if (!wallItemById(id) || wall.owned.indexOf(id) >= 0) return;
-    wall.owned.push(id);
+    if (catById(id)) {
+      if (!Array.isArray(wall.catsOwned)) wall.catsOwned = [];
+      if (wall.catsOwned.indexOf(id) >= 0) return;
+      wall.catsOwned.push(id);
+    } else {
+      if (!wallItemById(id) || wall.owned.indexOf(id) >= 0) return;
+      wall.owned.push(id);
+    }
     if (date && !wall.seen[id]) wall.seen[id] = date;
   });
   return wall;
@@ -1294,6 +1497,7 @@ var PureLogic = {
   RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
   WALL_STARTER_ITEMS: WALL_STARTER_ITEMS,
   wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
+  CAT_CATALOG: CAT_CATALOG, catById: catById, collectibleById: collectibleById, CAT_FEET_Y: CAT_FEET_Y,
   emptyWall: emptyWall, normalizeWall: normalizeWall,
   wallDrawEligible: wallDrawEligible, drawWallItem: drawWallItem,
   grantWallItems: grantWallItems, recordWallHistory: recordWallHistory,
@@ -3288,16 +3492,17 @@ function recordByWallKey(key) {
 }
 /* ---- ごほうびリビール (スタート画面の通知から開く) ---- */
 function rewardCardHtml(it) {
-  return '<img src="wall-items/' + it.id + '.webp" alt="">' +
+  var isCat = !!catById(it.id);
+  return '<img src="' + (isCat ? 'cats/' : 'wall-items/') + it.id + '.webp" alt="">' +
     '<span class="reward-name">' + it.name + '</span>' +
-    '<span class="reward-note">' + rarityLabel(it) + '</span>';
+    '<span class="reward-note">' + (isCat ? 'ねこ ' : '') + rarityLabel(it) + '</span>';
 }
 function showRewardReveal() {
   if (!store.wall.pending.length) return;
   var box = $('rewardChoices');
   box.innerHTML = '';
   store.wall.pending.forEach(function (id) {
-    var it = wallItemById(id);
+    var it = collectibleById(id);
     if (!it) return;
     var card = document.createElement('div');
     card.className = 'reward-card';
@@ -3406,7 +3611,8 @@ function showWall(from) {
   // 累計クリアが条件に達していれば壁を一段広げる (冪等)
   var expanded = applyWallExpand(store.wall, store.records.length);
   wallCam.x = 0.5; wallCam.y = 0.5;
-  wallCam.zoom = expanded ? wallFitZoom() : 1;
+  // 床に猫がいれば、開いたときに床まで見える全体表示で始める
+  wallCam.zoom = (expanded || (store.wall.catsPlaced || []).length > 0) ? wallFitZoom() : 1;
   // 壁を開いたら未確認のごほうび/解放は確認済み扱いにする
   if (expanded || store.wall.pending.length || store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length || store.wall.pendingExpand) {
     store.wall.pending = [];
@@ -3506,6 +3712,7 @@ function renderWall() {
   paintWallBackdrop(); // 背景 Canvas (壁紙 + 床 + 巾木) をワールドの一番奥に敷く
   store.wall.frames.forEach(function (f) { world.appendChild(buildWallFrameEl(f)); });
   store.wall.placed.forEach(function (p) { world.appendChild(buildWallItemEl(p)); });
+  (store.wall.catsPlaced || []).forEach(function (p) { world.appendChild(buildWallCatEl(p)); });
   var fit = document.createElement('button');
   fit.id = 'wallFitBtn';
   fit.className = 'wall-fit-btn';
@@ -3596,6 +3803,34 @@ function buildWallShareImage() {
     });
     return Promise.all(itemJobs);
   }).then(flushFrame).then(function () {
+    // 床の猫: 足元を床に合わせ、足下に楕円の影を落とす
+    var catJobs = (store.wall.catsPlaced || []).map(function (p) {
+      return new Promise(function (res) {
+        var c = catById(p.id);
+        if (!c) { res(); return; }
+        var img = new Image();
+        var draw = function () {
+          var wpx = c.w * unit * k;
+          var hpx = wpx * img.naturalHeight / Math.max(1, img.naturalWidth);
+          var feetY = CAT_FEET_Y * H;
+          ctx.save();
+          ctx.fillStyle = 'rgba(60,38,18,0.30)';
+          ctx.beginPath();
+          ctx.ellipse(p.x * W, feetY, wpx * 0.36, Math.max(2, 5 * k), 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.drawImage(img, p.x * W - wpx / 2, feetY - hpx, wpx, hpx);
+          ctx.restore();
+          res();
+        };
+        img.onload = function () {
+          if (img.decode) img.decode().then(draw, draw); else draw();
+        };
+        img.onerror = function () { res(); };
+        img.src = 'cats/' + c.id + '.webp';
+      });
+    });
+    return Promise.all(catJobs);
+  }).then(flushFrame).then(function () {
     ctx.fillStyle = '#F7F2E7';
     ctx.fillRect(0, H, W, footer);
     ctx.textBaseline = 'middle';
@@ -3638,6 +3873,32 @@ function shareWallImage() {
       }
     }, 'image/png');
   });
+}
+function wallCatPlacedEntry(id) {
+  var placed = store.wall.catsPlaced || [];
+  for (var i = 0; i < placed.length; i++) if (placed[i].id === id) return placed[i];
+  return null;
+}
+/* 床の猫の要素: 足元は床に固定 (bottom 指定)、移動は x だけ */
+function buildWallCatEl(p) {
+  var c = catById(p.id);
+  var el = document.createElement('div');
+  el.className = 'wall-el wall-cat';
+  el.style.left = (p.x * 100) + '%';
+  el.style.bottom = ((1 - CAT_FEET_Y) * 100) + '%';
+  el.style.width = (c.w * 100 / wallSize().w) + '%';
+  el.dataset.kind = 'cat';
+  el.dataset.key = p.id;
+  var sh = document.createElement('div');
+  sh.className = 'wall-cat-shadow';
+  el.appendChild(sh);
+  var img = document.createElement('img');
+  img.src = 'cats/' + c.id + '.webp';
+  img.alt = c.name;
+  img.draggable = false;
+  el.appendChild(img);
+  attachWallDrag(el, 'cat', p.id);
+  return el;
 }
 function buildWallItemEl(p) {
   var it = wallItemById(p.id);
@@ -4275,10 +4536,15 @@ function renderBoardCanvasAt(rec, sizePx) {
 }
 
 /* 壁要素のドラッグ (移動) とタップ (選択)。アイテムは掴んだ順に最前面へ */
+function wallDragEntry(kind, key) {
+  if (kind === 'item') return wallPlacedEntry(key);
+  if (kind === 'cat') return wallCatPlacedEntry(key);
+  return wallFrameEntry(key);
+}
 function attachWallDrag(el, kind, key) {
   el.addEventListener('pointerdown', function (ev) {
     ev.preventDefault();
-    var entry = kind === 'item' ? wallPlacedEntry(key) : wallFrameEntry(key);
+    var entry = wallDragEntry(kind, key);
     if (!entry) return;
     try { el.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
     if (kind === 'item') {
@@ -4300,9 +4566,15 @@ function attachWallDrag(el, kind, key) {
     if (!wallDrag || wallDrag.kind !== kind || wallDrag.key !== key) return;
     if (Math.abs(ev.clientX - wallDrag.startX) + Math.abs(ev.clientY - wallDrag.startY) > 6) wallDrag.moved = true;
     if (!wallDrag.moved) return;
-    var entry = kind === 'item' ? wallPlacedEntry(key) : wallFrameEntry(key);
+    var entry = wallDragEntry(kind, key);
     if (!entry) return;
     var pt = wallPointFromClient(ev.clientX, ev.clientY);
+    if (kind === 'cat') {
+      // 猫は床に固定: 横移動だけ (足元は動かさない)
+      entry.x = Math.min(0.95, Math.max(0.05, pt.x - wallDrag.offX));
+      el.style.left = (entry.x * 100) + '%';
+      return;
+    }
     var c = clampItemPos(pt.x - wallDrag.offX, pt.y - wallDrag.offY);
     entry.x = c.x;
     entry.y = c.y;
@@ -4333,7 +4605,7 @@ function updateWallSelBar() {
   var isFrame = wallSelected.kind === 'frame';
   $('wallSelName').textContent = isFrame
     ? '額装パズル'
-    : ((wallItemById(wallSelected.key) || {}).name || '');
+    : ((collectibleById(wallSelected.key) || {}).name || '');
   $('wallFrameColors').hidden = !isFrame;
   if (isFrame) renderFrameColorSwatches();
 }
@@ -4365,6 +4637,8 @@ function unplaceWallSelected() {
   if (!wallSelected) return;
   if (wallSelected.kind === 'item') {
     store.wall.placed = store.wall.placed.filter(function (p) { return p.id !== wallSelected.key; });
+  } else if (wallSelected.kind === 'cat') {
+    store.wall.catsPlaced = (store.wall.catsPlaced || []).filter(function (p) { return p.id !== wallSelected.key; });
   } else {
     store.wall.frames = store.wall.frames.filter(function (f) { return f.recordKey !== wallSelected.key; });
   }
@@ -4402,6 +4676,30 @@ function renderWallTray() {
         renderWall();
       }
       selectWall('item', it.id);
+    });
+    tray.appendChild(b);
+  });
+  // 床の猫も同じトレイに並べる (タップで床に出す/選択)
+  CAT_CATALOG.forEach(function (c) {
+    if ((wall.catsOwned || []).indexOf(c.id) < 0) return;
+    var placed = !!wallCatPlacedEntry(c.id);
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'decor-chip' + (placed ? ' placed' : '') +
+      (wallSelected && wallSelected.kind === 'cat' && wallSelected.key === c.id ? ' sel' : '');
+    b.innerHTML = '<img src="cats/' + c.id + '.webp" alt="">' +
+      '<span class="decor-chip-name">' + c.name + '</span>' +
+      '<span class="decor-chip-rarity">ねこ</span>' +
+      '<span class="decor-chip-state">' + (placed ? '配置中' : '未配置') + '</span>';
+    b.addEventListener('click', function () {
+      if (!wallCatPlacedEntry(c.id)) {
+        if (!Array.isArray(store.wall.catsPlaced)) store.wall.catsPlaced = [];
+        store.wall.catsPlaced.push({ id: c.id, x: Math.min(0.95, Math.max(0.05, wallCam.x)) });
+        saveStore();
+        sePlace();
+        renderWall();
+      }
+      selectWall('cat', c.id);
     });
     tray.appendChild(b);
   });
