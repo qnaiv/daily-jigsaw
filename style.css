@@ -673,20 +673,65 @@ button { font: inherit; cursor: pointer; }
 #detailText { font-size: 14px; line-height: 1.7; text-align: left; width: 100%; }
 #detailCanvas { width: 100%; max-width: 528px; height: auto; aspect-ratio: 1; display: block; border-radius: 10px; }
 
-.settings-body { min-width: min(88vw, 320px); align-items: stretch; }
+.settings-body { min-width: min(88vw, 320px); align-items: stretch; gap: 12px; }
 .settings-body h2 { margin: 4px 0 2px; font-size: 17px; font-weight: 800; letter-spacing: .08em; text-align: center; }
-.settings-list { display: flex; flex-direction: column; gap: 8px; }
+/* 設定レイアウト (PBI #28 確定形): 強弱とグルーピングでメリハリを付ける。
+ * 上部 = よく使う操作2つ / 行リスト = 戻る・やりなおす / 設定系は見出し付き
+ * グループ (みため=色タイル / あそびかた / おと) / そのほか = 文字リンク。
+ * 閉じるは右上の ✕ (スクロールしても常に見える)。一時停止ボタンは無い:
+ * シートを開くこと自体が一時停止 (見出しに状態を表示) */
+.settings-list { display: flex; flex-direction: column; gap: 0; }
 .settings-item { width: 100%; text-align: center; }
+.settings-close-x {
+  position: absolute; top: 10px; right: 10px; width: 44px; height: 44px;
+  border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
+  color: var(--ink); font-size: 20px; font-weight: 700; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 2px var(--shadow-soft), 0 4px 10px var(--shadow-soft);
+  cursor: pointer; z-index: 2;
+}
+.settings-close-x:active { transform: translateY(1px); }
+.settings-actions { display: flex; gap: 8px; }
+.settings-actions .settings-item { flex: 1; min-height: 56px; font-size: 14px; line-height: 1.35; padding: 6px 2px; }
+.settings-actions #settingsSortBtn { font-size: 12px; }
+.settings-nav { border-top: 1px solid var(--line); margin-top: 12px; }
+.settings-nav .settings-item {
+  background: transparent; border: none; box-shadow: none; border-radius: 0;
+  border-bottom: 1px solid var(--line); min-height: 48px;
+  display: flex; align-items: center; justify-content: space-between;
+  text-align: left; padding: 6px; font-size: 14.5px;
+}
+.settings-nav .settings-item::after { content: '→'; color: var(--muted); font-weight: 700; }
+.settings-nav .settings-item:active { transform: none; box-shadow: none; opacity: .65; }
+/* テーマは文字でなく色タイルで選ぶ。選択中はタイルに金のリング
+ * (スタート画面のテーマ表示と同じ流儀) */
+.settings-theme-btns .btn.swatch-btn { padding: 6px; min-height: 46px; display: flex; align-items: center; justify-content: center; }
+.settings-theme-btns .btn.swatch-btn.active { background: var(--panel); border-color: var(--line); }
+.swatch-btn .theme-swatch { width: 100%; height: 30px; border-radius: 7px; }
+.swatch-btn.active .theme-swatch { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--brass); }
+.settings-other { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.settings-links { display: flex; gap: 22px; justify-content: center; flex-wrap: wrap; }
+.settings-links .settings-item {
+  width: auto; min-height: 40px; background: transparent; border: none; box-shadow: none;
+  font-size: 13.5px; font-weight: 700; padding: 4px 2px;
+  text-decoration: underline; text-decoration-color: var(--brass);
+  text-decoration-thickness: 2px; text-underline-offset: 5px;
+}
+.settings-links .settings-item:active { transform: none; box-shadow: none; opacity: .65; }
 .settings-item.danger { color: var(--danger); border-color: var(--danger-line); }
+.settings-links .settings-item.danger { text-decoration-color: var(--danger-line); }
 .danger-btn { background: var(--danger); border-color: var(--danger); color: #fff; }
-.settings-theme { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.settings-theme { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 .settings-section-label { font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--muted); text-align: center; }
+.settings-body .settings-section-label { text-align: left; }
 .settings-theme-btns { display: flex; gap: 8px; }
-.settings-theme-btns .btn { flex: 1; padding: 6px 4px; }
+.settings-theme-btns .btn { flex: 1; padding: 6px 4px; min-height: 42px; font-size: 13px; }
 .theme-btn.active { background: var(--accent); border-color: var(--accent-dark); color: var(--accent-ink); font-weight: 700; }
 
-/* サウンド設定 (BGM/SE): テーマ節と同じ区切り調で、行はラベル + 操作子 */
-.settings-audio, .settings-credits { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+/* サウンド設定 (BGM/SE): 行はラベル + 操作子。設定シート内では見出し
+ * グループの一つとして間隔だけで区切る (クレジット側は従来の区切り線) */
+.settings-audio { display: flex; flex-direction: column; gap: 2px; margin-top: 14px; }
+.settings-credits { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 2px; }
 .settings-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   min-height: 44px; font-size: 14px; font-weight: 600; cursor: pointer;

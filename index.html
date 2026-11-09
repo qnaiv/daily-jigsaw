@@ -93,6 +93,7 @@
       <label class="start-audio-row"><span>BGM</span><input type="checkbox" id="bgmToggleStart"></label>
       <label class="start-audio-row"><span>BGM音量</span><input type="range" id="bgmVolumeStart" min="0" max="100" step="1"></label>
       <label class="start-audio-row"><span>効果音（SE）</span><input type="checkbox" id="seToggleStart"></label>
+      <label class="start-audio-row"><span>SE音量</span><input type="range" id="seVolumeStart" min="0" max="100" step="1"></label>
     </div>
     <button id="startTutorialBtn" class="fresh-link start-tutorial-link" type="button">あそびかた（チュートリアル）</button>
 
@@ -157,42 +158,51 @@
 <div id="settingsModal" class="modal" hidden>
   <div class="modal-backdrop" data-settings-close></div>
   <div class="modal-body settings-body">
-    <h2>設定</h2>
+    <!-- 設定シート自体が一時停止の役割 (開くとタイマーが止まる) なので、
+         見出しに状態を出し、専用の一時停止ボタンは持たない (PBI #28 確定形) -->
+    <h2>設定（一時停止中）</h2>
+    <button class="settings-close-x" type="button" data-settings-close aria-label="閉じる">✕</button>
     <div class="settings-list">
-      <button id="settingsPauseBtn" class="btn settings-item" type="button">一時停止</button>
-      <button id="settingsPreviewBtn" class="btn settings-item" type="button">完成図を見る</button>
-      <button id="settingsSortBtn" class="btn settings-item" type="button">お助け（色ごとの山にまとめる）</button>
-      <button id="settingsCollectionBtn" class="btn settings-item" type="button">コレクション</button>
-      <button id="settingsHomeBtn" class="btn settings-item" type="button">スタート画面に戻る</button>
-      <button id="settingsWallBtn" class="btn settings-item" type="button">壁をかざる</button>
+      <div class="settings-actions">
+        <button id="settingsPreviewBtn" class="btn settings-item" type="button">完成図を見る</button>
+        <button id="settingsSortBtn" class="btn settings-item" type="button">お助け（色ごとの山にまとめる）</button>
+      </div>
+      <div class="settings-nav">
+        <button id="settingsHomeBtn" class="btn settings-item" type="button">スタート画面に戻る</button>
+        <button id="settingsRestartBtn" class="btn settings-item danger" type="button">やりなおす</button>
+      </div>
       <div class="settings-theme">
-        <span class="settings-section-label">テーマ</span>
+        <span class="settings-section-label">みため</span>
         <div class="settings-theme-btns">
-          <button class="btn theme-btn" type="button" data-theme-opt="walnut">ウォルナット</button>
-          <button class="btn theme-btn" type="button" data-theme-opt="oak">ライトオーク</button>
-          <button class="btn theme-btn" type="button" data-theme-opt="greenmat">グリーンマット</button>
-          <button class="btn theme-btn" type="button" data-theme-opt="linen">リネン</button>
+          <button class="btn theme-btn swatch-btn" type="button" data-theme-opt="walnut" aria-label="ウォルナット"><span class="theme-swatch sw-walnut" aria-hidden="true"></span></button>
+          <button class="btn theme-btn swatch-btn" type="button" data-theme-opt="oak" aria-label="ライトオーク"><span class="theme-swatch sw-oak" aria-hidden="true"></span></button>
+          <button class="btn theme-btn swatch-btn" type="button" data-theme-opt="greenmat" aria-label="グリーンマット"><span class="theme-swatch sw-greenmat" aria-hidden="true"></span></button>
+          <button class="btn theme-btn swatch-btn" type="button" data-theme-opt="linen" aria-label="リネン"><span class="theme-swatch sw-linen" aria-hidden="true"></span></button>
         </div>
       </div>
       <div class="settings-theme">
-        <span class="settings-section-label">操作</span>
+        <span class="settings-section-label">あそびかた</span>
         <div class="settings-theme-btns">
           <button class="btn theme-btn" type="button" data-opmode="drag">ドラッグ</button>
           <button class="btn theme-btn" type="button" data-opmode="carry">持ち運び</button>
         </div>
       </div>
       <div class="settings-audio">
-        <span class="settings-section-label">サウンド</span>
+        <span class="settings-section-label">おと</span>
         <label class="settings-row"><span>BGM</span><input type="checkbox" id="bgmToggle"></label>
         <label class="settings-row"><span>BGM音量</span><input type="range" id="bgmVolume" min="0" max="100" step="1"></label>
         <label class="settings-row"><span>効果音（SE）</span><input type="checkbox" id="seToggle"></label>
+        <label class="settings-row"><span>SE音量</span><input type="range" id="seVolume" min="0" max="100" step="1"></label>
       </div>
-      <button id="settingsTutorialBtn" class="btn settings-item" type="button">チュートリアル</button>
-      <button id="settingsCreditsBtn" class="btn settings-item" type="button">クレジット</button>
-      <button id="settingsRestartBtn" class="btn settings-item danger" type="button">やりなおす</button>
-      <button id="settingsResetBtn" class="btn settings-item danger" type="button">データをリセット</button>
+      <div class="settings-other">
+        <span class="settings-section-label">そのほか</span>
+        <div class="settings-links">
+          <button id="settingsTutorialBtn" class="btn settings-item" type="button">チュートリアル</button>
+          <button id="settingsCreditsBtn" class="btn settings-item" type="button">クレジット</button>
+          <button id="settingsResetBtn" class="btn settings-item danger" type="button">データをリセット</button>
+        </div>
+      </div>
     </div>
-    <button class="btn modal-close" type="button" data-settings-close>閉じる</button>
   </div>
 </div>
 

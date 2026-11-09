@@ -1134,6 +1134,15 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(html.indexOf('id="creditsModal"') !== -1 && html.indexOf('id="settingsCreditsBtn"') !== -1 && html.indexOf('id="bgmCredits"') !== -1 && html.indexOf('id="photoCredits"') !== -1, 'クレジット: 設定のボタンと専用モーダル (一覧はモーダル側) がある');
   const settingsBlock = html.slice(html.indexOf('id="settingsModal"'), html.indexOf('id="creditsModal"'));
   ok(settingsBlock.indexOf('bgmCredits') === -1 && settingsBlock.indexOf('photoCredits') === -1 && settingsBlock.indexOf('settingsCreditsBtn') !== -1, 'クレジット: 設定シート内に長い一覧は残っていない');
+  ok(settingsBlock.indexOf('class="settings-actions"') !== -1 && settingsBlock.indexOf('class="settings-nav"') !== -1 && settingsBlock.indexOf('class="settings-other"') !== -1, '設定レイアウト確定形: 操作ボタン/行リスト/その他リンクのグループがある');
+  ok(settingsBlock.indexOf('>みため<') !== -1 && settingsBlock.indexOf('>あそびかた<') !== -1 && settingsBlock.indexOf('>おと<') !== -1 && settingsBlock.indexOf('>そのほか<') !== -1, '設定レイアウト確定形: グループ見出しは みため/あそびかた/おと/そのほか');
+  ok(settingsBlock.indexOf('settingsPauseBtn') === -1 && settingsBlock.indexOf('settingsCollectionBtn') === -1 && settingsBlock.indexOf('settingsWallBtn') === -1, '設定レイアウト確定形: 一時停止/コレクション/壁ボタンは設定に無い (シート自体が一時停止、他はトップから)');
+  ok(settingsBlock.indexOf('設定（一時停止中）') !== -1 && settingsBlock.indexOf('settings-close-x') !== -1, '設定レイアウト確定形: 見出しに一時停止中を表示し、閉じるは右上の✕');
+  ok(settingsBlock.indexOf('swatch-btn') !== -1 && settingsBlock.indexOf('theme-swatch sw-walnut') !== -1, '設定レイアウト確定形: テーマは色タイル (スウォッチ) で選ぶ');
+  ok(settingsBlock.indexOf('settingsHomeBtn') < settingsBlock.indexOf('settingsRestartBtn') && settingsBlock.indexOf('settingsRestartBtn') < settingsBlock.indexOf('>みため<'), '設定レイアウト確定形: やりなおすは スタート画面に戻る の直下');
+  ok(settingsBlock.indexOf('settingsResetBtn') > settingsBlock.indexOf('settings-other'), '設定レイアウト確定形: データをリセットは そのほか の文字リンク内');
+  ok(settingsBlock.indexOf('id="seVolume"') !== -1 && html.indexOf('id="seVolumeStart"') !== -1, 'SE音量: 設定シートとスタート画面の両方にスライダーがある');
+  ok(appSrc.indexOf('var SE_MASTER_BASE = 0.26') !== -1 && appSrc.indexOf('store.seVolume') !== -1 && appSrc.indexOf('function applySeVolume()') !== -1, 'SE音量: 基準ゲイン 0.26 (微増) × store.seVolume でマスターに反映');
   ok(html.indexOf('wallPaperInfo') === -1 && appSrc.indexOf('wallPaperInfo') === -1, '壁紙名ラベル: 壁画面の現在壁紙名テキストは撤去');
 
   // 画像共有のフォールバック: 保存に落ちたら必ず注記を出す (成功時・キャンセル時は出さない)
