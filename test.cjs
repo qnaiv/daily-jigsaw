@@ -1202,12 +1202,12 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(rp[0] !== rp[1], 'グループ選択: 実プール (758件) でも2グループが別エントリ');
 
   // お題キーの保存/移行の配線 (newGameState / persistProgress)
-  ok(appSrc2.indexOf('pickPoolEntry(playDate, pool, difficultyGroup(difficulty))') !== -1, 'お題: 新規開始はグループ選択で引く');
+  ok(appSrc2.indexOf('stageEntry(playStage, pool)') !== -1, 'お題: 新規開始はステージのお題を引く');
   ok(appSrc2.indexOf('poolEntryByKey(pool, prog.imgKey)') !== -1, 'お題: 保存済み imgKey を最優先で引く');
   ok(appSrc2.indexOf('prog.imgKey = state.imageKey') !== -1, 'お題: 開始確定 (persistProgress) で imgKey を保存する');
 
   // 箱の柄は難易度グループで引く (renderStartScreen)
-  ok(appSrc2.indexOf('boxPatternForDate(playDate, g)') !== -1 && html2.indexOf('id="giftBox0"') !== -1 && html2.indexOf('id="giftBox1"') !== -1, '箱の柄: スタート画面は2つの箱をグループごとの柄で描く');
+  ok(appSrc2.indexOf('stageBoxPatternIndex(playStage)') !== -1 && html2.indexOf('id="giftBox"') !== -1 && html2.indexOf('id="giftBox0"') === -1, '箱の柄: スタート画面は箱1つをステージ番号の柄で描く');
 
   // 装飾ティアの対象
   ok(L.frameTier(36) === 'silver' && L.frameTier(225) === 'silver', 'ティア: 36/225 が銀');
@@ -1243,7 +1243,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(css2.indexOf('.diff-star') !== -1 && css2.indexOf('.diff-star.silver') !== -1 && css2.indexOf('.diff-star.royal') !== -1, '難易度カード: ★ の CSS (銀/特別含む) がある');
   // スタート画面再設計 (2026-11-08): 箱カルーセル + ピース数チップ。
   // 「パズルA/B」の文言は出さず、箱の柄そのものでグループを区別する
-  ok(html2.indexOf('id="boxCarousel"') !== -1 && html2.indexOf('id="boxDots"') !== -1 && appSrc2.indexOf('function syncBoxCarousel(') !== -1 && appSrc2.indexOf('function onBoxGroupChanged(') !== -1, '箱カルーセル: 2箱のスワイプ切替とドットがある');
+  ok(html2.indexOf('id="boxCarousel"') === -1 && html2.indexOf('id="boxDots"') === -1 && appSrc2.indexOf('function syncBoxCarousel(') === -1 && css2.indexOf('.box-single') !== -1, '箱: カルーセルは廃止し箱1つを中央に置く');
   ok(appSrc2.indexOf("'パズルA'") === -1 && appSrc2.indexOf("'パズルB'") === -1 && html2.indexOf('パズルA') === -1, '箱カルーセル: 「パズルA/B」の文言は出さない');
   ok(appSrc2.indexOf("'diff-chip'") !== -1 && appSrc2.indexOf("d + 'ピース'") !== -1 && appSrc2.indexOf('DIFF_TIME_LABELS') === -1 && css2.indexOf('.diff-chip') !== -1 && css2.indexOf('.box-carousel') !== -1, '難易度チップ: 「Nピース」表記で箱の下にコンパクトに出し、目安時間は出さない');
   ok(css2.indexOf('.gift-box.rippling') !== -1 && css2.indexOf('scale(1.45)') !== -1, '箱の波紋: 手前の箱だけに大きく濃い波紋を出す');
@@ -1253,14 +1253,50 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('upper-chip') !== -1 && appSrc2.indexOf('frameTier(r.pieces)') !== -1 && appSrc2.indexOf('上級クリア') !== -1, 'コレクション詳細: ティア対象の記録にチップを出す');
   ok(css2.indexOf('.upper-chip') !== -1, 'コレクション詳細: チップの CSS がある');
 
-  // 2026-11-08 追加分: 箱の柄分離 / 矢印 / ラウンド制 / 面の統合 / 共有の描画欠け対策
-  ok(appSrc2.indexOf("var pid = 'giftPat' + (uid || '')") !== -1 && appSrc2.indexOf('giftBoxSvg(boxPatternForDate(playDate, g).id, g)') !== -1, '箱の柄: SVG パターン ID を箱ごとに分けて AB で被らない');
-  ok(html2.indexOf('id="boxPrev"') !== -1 && html2.indexOf('id="boxNext"') !== -1 && css2.indexOf('@keyframes arrowSwayL') !== -1 && css2.indexOf('flex: 0 0 100%') !== -1, '箱カルーセル: スライド幅100%で中央寄せし、左右端にふよふよ浮く矢印を出す');
+  // 2026-11-08 追加分: 箱の柄分離 / 矢印 / 面の統合 / 共有の描画欠け対策 (ラウンド制・カルーセルは 2026-11-09 のステージ制で廃止)
+  ok(appSrc2.indexOf("var pid = 'giftPat' + (uid || '')") !== -1 && appSrc2.indexOf("giftBoxSvg(BOX_PATTERNS[stageBoxPatternIndex(playStage)].id, '')") !== -1, '箱の柄: ステージ番号で柄を決める (箱は1つ)');
+  ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('class="box-single"') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを出す');
   ok(html2.indexOf('themeCredit') === -1 && html2.indexOf('start-footer') === -1, 'トップ画面: コピーライト/クレジット表記を出さない');
-  ok(appSrc2.indexOf('function maybeAdvanceRound(') !== -1 && appSrc2.indexOf('ROUND_INTERVAL_MS') !== -1 && appSrc2.indexOf("'第' + store.round.n + '回のお題'") !== -1 && appSrc2.indexOf('function roundDate(') !== -1, 'ラウンド制: 第N回のお題が24時間ごとに順番に出る');
-  ok(appSrc2.indexOf('wall.grantDates[String(g)]') !== -1 && appSrc2.indexOf('grantDates: {}') !== -1, 'ごほうび: パズルA/B それぞれで貰える (グループ別 grantDates)');
+  ok(appSrc2.indexOf('function syncPlayStage(') !== -1 && appSrc2.indexOf('nextStage(store.records, pool)') !== -1 && appSrc2.indexOf("'ステージ ' + playStage") !== -1 && appSrc2.indexOf('function maybeAdvanceRound(') === -1, 'ステージ制: 未挑戦ステージを順に進め、24時間ロックは無い');
+  ok(appSrc2.indexOf('function processRewardsOnClear(firstClear)') !== -1 && appSrc2.indexOf('processRewardsOnClear(isFirstStageClear)') !== -1, 'ごほうび: ステージ初クリアのときだけ抽選する');
   ok(appSrc2.indexOf('function switchSurface(') === -1 && html2.indexOf('surfaceBtn') === -1 && html2.indexOf('dropZone') === -1, '面の統合: マット切替 UI (ボタン/ドロップゾーン) はない');
   ok(appSrc2.indexOf('img.decode()') !== -1 && appSrc2.indexOf('1600 / worldW') !== -1, '壁共有: decode 完了後に描き、合成サイズを抑えて帯状ノイズを防ぐ');
+}
+
+/* 26. ステージ制 (2026-11-09 転換): お題の決定・進行・移行の純ロジック */
+{
+  const fs3 = require('fs'), path3 = require('path');
+  const read3 = (p) => fs3.readFileSync(path3.join(__dirname, p), 'utf8');
+  const appSrc2 = read3('app.js'), html2 = read3('index.html');
+  const spool = { baseDate: '2026-11-07', entries: [0, 1, 2, 3, 4].map(i => ({ type: 'picsum', id: 100 + i })) };
+  // 1周目はプール順
+  ok([1, 2, 3, 4, 5].every(s => L.stageEntryIndex(s, 5) === s - 1), 'ステージ: 1周目はプール順にお題が出る');
+  ok(L.stageEntry(3, spool).id === 102, 'ステージ: stageEntry がプールの3件目を返す');
+  // 2周目は決定的シャッフルの順列 (全件ちょうど1回ずつ)
+  const cyc2 = [6, 7, 8, 9, 10].map(s => L.stageEntryIndex(s, 5));
+  ok(new Set(cyc2).size === 5 && cyc2.every(i => i >= 0 && i < 5), 'ステージ: 2周目は全件をちょうど1回ずつ出す順列');
+  ok([6, 7, 8, 9, 10].every(s => L.stageEntryIndex(s, 5) === L.stageEntryIndex(s, 5)), 'ステージ: 2周目の順序は決定的');
+  ok(L.stageCycle(5, 5) === 0 && L.stageCycle(6, 5) === 1 && L.stageCycle(11, 5) === 2, 'ステージ: 周回数の数え方');
+  ok(L.stageDate(1) === '2026-11-07' && L.stageDate(2) === '2026-11-08', 'ステージ: 日付キーは基準日 + ステージ-1日 (記録互換)');
+  // 記録 → ステージ復元 (新規は stage フィールド、旧記録は画像キーの位置)
+  ok(L.recordStage({ stage: 42, imageKey: 'p100', date: '2026-11-07' }, spool) === 42, 'ステージ: 新記録は stage フィールドを優先');
+  ok(L.recordStage({ imageKey: 'p102', date: '2026-11-20', pieces: 36 }, spool) === 3, 'ステージ: 旧記録は画像キーの1周目位置から復元');
+  ok(L.recordStage({ imageId: 104, date: '2026-11-20', pieces: 36 }, spool) === 5, 'ステージ: 旧 picsum 記録 (imageId のみ) も復元できる');
+  // 次のステージ = クリア済みでない最小番号
+  ok(L.nextStage([], spool) === 1, 'ステージ: 記録なしならステージ1');
+  const recsA = [{ imageKey: 'p100', pieces: 36 }, { imageKey: 'p101', pieces: 100 }];
+  ok(L.nextStage(recsA, spool) === 3, 'ステージ: 1,2 クリア済みなら次は3');
+  ok(L.nextStage([{ imageKey: 'p101', pieces: 36 }], spool) === 1, 'ステージ: 途中のステージだけクリアでも未挑戦の最小が次');
+  ok(L.nextStage(recsA.concat([{ stage: 3, imageKey: 'p102', pieces: 36 }]), spool) === 4, 'ステージ: stage フィールド持ちの記録も数える');
+  // コレクション解放 = クリアした絵のキー集合
+  ok(L.unlockedImageKeys(recsA).size === 2 && L.unlockedImageKeys(recsA).has('p100'), 'ステージ: 解放した絵のキーが集まる');
+  // 箱の柄はステージで回る
+  ok([1, 2, 3, 4, 5, 6].every(s => L.stageBoxPatternIndex(s) === s - 1) && L.stageBoxPatternIndex(7) === 0, 'ステージ: 箱の柄はステージ番号で6種ローテーション');
+  // 進捗移行と報酬配線 + コレクション再プレイ配線
+  ok(appSrc2.indexOf('function migrateProgressToStages(') !== -1 && appSrc2.indexOf('store.stageMigrated') !== -1, 'ステージ移行: 旧進行中データを imgKey のステージへ移す');
+  ok(appSrc2.indexOf('function startReplayFromDetail(') !== -1 && html2.indexOf('id="detailPlayBtn"') !== -1, 'コレクション: 解放済みの絵は詳細から再プレイできる');
+  ok(html2.indexOf('id="streakBadge"') === -1 && appSrc2.indexOf('computeStreak') === -1, 'ステージ制: 連続クリア (streak) 表示は廃止');
+  ok(L.buildShareText({ stage: 12, pieces: 36, timeSec: 65, moves: 40 }).indexOf('ステージ12') !== -1, '共有文: ステージ番号で組む');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

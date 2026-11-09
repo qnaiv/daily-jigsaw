@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>まいにちジグソー | Daily Jigsaw</title>
-<meta name="description" content="毎日お題が変わるジグソーパズル。開いたその日（JST）の写真が、みんな同じ今日のお題になります。">
+<meta name="description" content="ステージを進めて絵を集めるジグソーパズル。クリアするたびにコレクションの絵柄が解放されます。">
 <meta property="og:title" content="まいにちジグソー | Daily Jigsaw">
-<meta property="og:description" content="毎日お題が変わるジグソーパズルWebアプリ">
+<meta property="og:description" content="ステージ制ジグソーパズルWebアプリ">
 <meta property="og:type" content="website">
 <link rel="stylesheet" href="style.css">
 <link rel="manifest" href="manifest.webmanifest">
@@ -31,30 +31,21 @@
       <h1 class="start-title-text">まいにちジグソー</h1>
       <p class="start-meta">
         <span id="themeDateLabel">読み込み中…</span>
-        <span class="start-meta-sep">・</span>
-        <span id="streakBadge" class="streak" title="連続クリア回数">連続 <span id="streakNum">0</span>回</span>
       </p>
       <p id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</p>
     </header>
 
-    <!-- 箱は2つ (難易度グループごと) を横スワイプで切り替えるカルーセル。
-         表示中の箱の下に、そのグループのピース数チップをコンパクトに置く。
-         スワイプ可能は左右端にふよふよ浮く矢印でも示す -->
-    <div class="box-carousel-wrap">
-      <div id="boxCarousel" class="box-carousel">
-        <div class="box-slide" data-group="0"><div class="gift-box" id="giftBox0" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div></div>
-        <div class="box-slide" data-group="1"><div class="gift-box" id="giftBox1" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div></div>
-      </div>
-      <button id="boxPrev" class="box-arrow box-arrow-prev" type="button" aria-label="前の箱" hidden>‹</button>
-      <button id="boxNext" class="box-arrow box-arrow-next" type="button" aria-label="次の箱" hidden>›</button>
+    <!-- 箱は1つ (ステージ制)。タップで最新の未挑戦ステージ (または
+         進行中の続き) が始まる。箱の下にピース数チップを置く -->
+    <div class="box-single">
+      <div class="gift-box" id="giftBox" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div>
     </div>
-    <div id="boxDots" class="box-dots" aria-hidden="true"><span class="box-dot"></span><span class="box-dot"></span></div>
     <p id="startHint" class="start-hint">箱をタップ</p>
 
     <div class="start-difficulty">
       <div id="difficultySeg" class="diff-chips" role="group" aria-label="難易度"></div>
     </div>
-    <p id="roundNote" class="round-note"></p>
+    <p id="stageNote" class="round-note"></p>
 
     <div id="resumePanel" hidden>
       <p id="resumeInfo" class="resume-info"></p>
@@ -149,7 +140,7 @@
     <h2>コレクション</h2>
   </div>
   <div id="collectionStats" class="stats"></div>
-  <div id="collectionEmpty" class="empty" hidden>まだコレクションがありません。今日のパズルをクリアしよう。</div>
+  <div id="collectionEmpty" class="empty" hidden>ステージをクリアすると絵が解放されます。</div>
   <div id="collectionGrid" class="grid"></div>
 </section>
 
@@ -276,13 +267,17 @@
   <div class="modal-body">
     <canvas id="detailCanvas" width="960" height="960" role="img" aria-label="クリアしたパズルをマットに完成させた状態の画像"></canvas>
     <div id="detailText"></div>
+    <div class="detail-replay">
+      <div id="detailDiffSeg" class="diff-chips" role="group" aria-label="再プレイの難易度"></div>
+      <button id="detailPlayBtn" class="btn cert-primary" type="button">この難易度であそぶ</button>
+    </div>
     <div class="result-actions">
       <button class="btn" type="button" data-close>閉じる</button>
     </div>
   </div>
 </div>
 
-<!-- クリア報酬のリビール (毎日の初回クリアでランダム付与。未確認分はスタート画面の通知から開き直せる) -->
+<!-- クリア報酬のリビール (ステージ初クリアでランダム付与。未確認分はスタート画面の通知から開き直せる) -->
 <div id="rewardModal" class="modal" hidden>
   <div class="modal-backdrop"></div>
   <div class="modal-body reward-body">

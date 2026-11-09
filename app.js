@@ -119,6 +119,70 @@ function recordImageKey(rec) {
   if (typeof rec.imageId === 'number') return 'p' + rec.imageId;
   return null;
 }
+/* ---------- ステージ制 (2026-11-09 転換) ----------
+ * お題は日替わり/ラウンド制をやめ、ステージ順に何個でも進める。
+ * ステージ S (1始まり) のお題はプールの並びで決まる: 1周目はプール順、
+ * 2周目以降は周回ごとの決定的シャッフル順 (全ステージ制覇で次の周へ)。
+ * ステージの「日付キー」は従来の仮想日付 (基準日 + S-1日) を流用し、
+ * 記録・進捗のキー互換を保つ (表示には使わない)。 */
+function stageDate(stage) { return addDays(BASE_DATE_FALLBACK, Math.max(1, Math.floor(stage) || 1) - 1); }
+function stageCycle(stage, poolLen) { return poolLen > 0 ? Math.floor((Math.max(1, stage) - 1) / poolLen) : 0; }
+function stageOrderForCycle(cycle, poolLen) {
+  var order = [];
+  for (var i = 0; i < poolLen; i++) order.push(i);
+  if (cycle <= 0 || poolLen <= 1) return order;
+  var rng = rngFromString('stage-cycle:' + cycle + ':' + poolLen);
+  for (var j = poolLen - 1; j > 0; j--) {
+    var k = Math.floor(rng() * (j + 1));
+    var t = order[j]; order[j] = order[k]; order[k] = t;
+  }
+  return order;
+}
+function stageEntryIndex(stage, poolLen) {
+  if (poolLen <= 0) return -1;
+  var pos = (Math.max(1, stage) - 1) % poolLen;
+  return stageOrderForCycle(stageCycle(stage, poolLen), poolLen)[pos];
+}
+function stageEntry(stage, pool) {
+  var entries = poolEntries(pool);
+  var idx = stageEntryIndex(stage, entries.length);
+  return idx >= 0 ? entries[idx] : null;
+}
+/* 記録 → ステージ番号。新記録は rec.stage を持ち、旧記録は画像キーの
+ * 1周目の位置から復元する (どちらも無ければ日付キーから) */
+function recordStage(rec, pool) {
+  if (!rec) return null;
+  if (typeof rec.stage === 'number' && rec.stage >= 1) return Math.floor(rec.stage);
+  var key = recordImageKey(rec);
+  if (key) {
+    var entries = poolEntries(pool);
+    for (var i = 0; i < entries.length; i++) if (poolEntryKey(entries[i]) === key) return i + 1;
+  }
+  if (rec.date) return Math.max(1, daysBetween(rec.date, BASE_DATE_FALLBACK) + 1);
+  return null;
+}
+function clearedStages(records, pool) {
+  var set = new Set();
+  (records || []).forEach(function (r) { var s = recordStage(r, pool); if (s) set.add(s); });
+  return set;
+}
+/* 最新の未挑戦ステージ = クリア済みでない最小のステージ番号 */
+function nextStage(records, pool) {
+  var done = clearedStages(records, pool);
+  var s = 1;
+  while (done.has(s)) s++;
+  return s;
+}
+function unlockedImageKeys(records) {
+  var set = new Set();
+  (records || []).forEach(function (r) { var k = recordImageKey(r); if (k) set.add(k); });
+  return set;
+}
+/* 箱の包装柄はステージ番号で回す (従来の日付×グループは廃止) */
+function stageBoxPatternIndex(stage) {
+  var raw = Math.max(1, Math.floor(stage) || 1) - 1;
+  return ((raw % BOX_PATTERNS.length) + BOX_PATTERNS.length) % BOX_PATTERNS.length;
+}
 /* プレイ用 (正方形・難易度サイズ) の画像 URL。URL エントリは fullUrl 固定 */
 function entryPhotoUrl(entry, size) {
   if (!entry) return null;
@@ -1454,7 +1518,7 @@ var GAME_URL = 'https://daily-jigsaw.pages.dev';
 /* 結果の共有文 (文字共有・クリップボード共通)。ゲーム URL と
  * ハッシュタグ #まいにちジグソー を必ず含む。 */
 function buildShareText(res) {
-  return 'まいにちジグソー ' + res.date + ' ・ ' + res.pieces + 'ピース ・ タイム ' +
+  return 'まいにちジグソー ' + (res.stage ? 'ステージ' + res.stage : res.date) + ' ・ ' + res.pieces + 'ピース ・ タイム ' +
     formatTime(res.timeSec) + ' ・ ' + res.moves + '手でクリア！\n' +
     GAME_URL + '\n#まいにちジグソー';
 }
@@ -1469,6 +1533,10 @@ var PureLogic = {
   poolEntries: poolEntries, pickPoolEntry: pickPoolEntry, poolEntryKey: poolEntryKey,
   difficultyGroup: difficultyGroup, isUpperTier: isUpperTier, frameTier: frameTier,
   poolEntryByKey: poolEntryByKey, recordImageKey: recordImageKey,
+  stageDate: stageDate, stageCycle: stageCycle, stageOrderForCycle: stageOrderForCycle,
+  stageEntryIndex: stageEntryIndex, stageEntry: stageEntry, recordStage: recordStage,
+  clearedStages: clearedStages, nextStage: nextStage, unlockedImageKeys: unlockedImageKeys,
+  stageBoxPatternIndex: stageBoxPatternIndex,
   entryPhotoUrl: entryPhotoUrl, entryThumbUrl: entryThumbUrl,
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
@@ -1541,17 +1609,7 @@ function loadStore() {
 var store = loadStore();
 store.uiTheme = normalizeUiTheme(store.uiTheme); // 旧テーマ値は無効値として既定 'walnut' に落とす
 store.wall = normalizeWall(store.wall); // 壁インテリア (旧データには無いので空で作る。旧 store.rewards は読み捨て)
-/* お題のラウンド (第N回) 情報。無いセーブではここで作る: 既に遊んだ形跡が
- * ある人は「実日付 = 仮想日付」になる位置から、新規の人は第1回から */
-function normalizeRound(r, s) {
-  if (r && typeof r.n === 'number' && r.n >= 1 && typeof r.unlockedAt === 'number') {
-    return { n: Math.floor(r.n), unlockedAt: r.unlockedAt };
-  }
-  var hasActivity = (s.records && s.records.length > 0) || (s.progress && Object.keys(s.progress).length > 0);
-  var n = hasActivity ? Math.max(1, daysBetween(jstTodayString(), BASE_DATE_FALLBACK) + 1) : 1;
-  return { n: n, unlockedAt: Date.now() };
-}
-if (!store.round) { store.round = normalizeRound(null, store); saveStore(); }
+/* ラウンド制 (第N回) は廃止 (2026-11-09 ステージ制へ転換)。store.round は旧セーブに残っていても読まない */
 function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 容量超過などは無視 */ }
@@ -2117,75 +2175,86 @@ function progressFor(date, pieces) {
 function findRecord(date, pieces) {
   return store.records.find(function (r) { return r.date === date && r.pieces === pieces; });
 }
-function computeStreak() {
-  var days = new Set(store.records.map(function (r) { return r.date; }));
-  // ラウンド制: 仮想日付 (playDate) を末尾に、連続した回を数える
-  var cur = days.has(playDate) ? playDate : addDays(playDate, -1);
-  var streak = 0;
-  while (days.has(cur)) { streak++; cur = addDays(cur, -1); }
-  return streak;
-}
 
 /* ---------- 画面状態 ---------- */
 var todayStr = jstTodayString(); // 実日付 (ラウンド移行時の位置合わせにだけ使う)
-/* お題は日替わりではなく、その人の「第N回」(ラウンド制、2026-11-08 変更)。
- * ラウンド N の仮想日付 = 基準日 + (N-1) 日で、記録・進捗・お題・箱柄の
- * 日付キーは全て仮想日付で動く。新しいラウンドは前回の解放から24時間
- * 以上たってから、1回の確認で1つだけ進む (何日空けても次は1つだけ。
- * 1ラウンド = パズルA/B の2種が上限)。遊び途中のパズルがある回は
- * 取り上げない (終わるまで次へ進まない) */
-var ROUND_INTERVAL_MS = 24 * 60 * 60 * 1000;
-function roundDate(n) { return addDays(BASE_DATE_FALLBACK, n - 1); }
-var playDate = roundDate(store.round.n);
-function currentRoundInProgress() {
-  var byDiff = store.progress[playDate];
-  if (!byDiff) return false;
-  return Object.keys(byDiff).some(function (k) {
-    var p = byDiff[k];
-    return !!(p && p.started && !p.cleared);
+/* ステージ制 (2026-11-09 転換): お題はステージ順に何個でも進める。
+ * 現在のステージはクリア記録から導出する (保存しないのでズレない)。
+ * playDate はステージの日付キー (基準日 + ステージ-1日) で、記録・進捗・
+ * 乱数シードのキーは従来どおり日付キーで動く (表示には使わない)。
+ * replayStage はコレクションからの再プレイ先 (null = 最新の未挑戦)。 */
+var playStage = 1;
+var playDate = stageDate(playStage);
+var replayStage = null;
+function currentStage(pool) { return replayStage || nextStage(store.records, pool); }
+function syncPlayStage(pool) {
+  playStage = currentStage(pool);
+  playDate = stageDate(playStage);
+  return playStage;
+}
+function findRecordForStage(stage, pieces) {
+  for (var i = 0; i < store.records.length; i++) {
+    var r = store.records[i];
+    if (r.pieces === pieces && recordStage(r, state && state.pool) === stage) return r;
+  }
+  return null;
+}
+/* 旧セーブの進行中データをステージキーへ移す (1回だけ)。
+ * 進行中エントリのステージは、固定済み imgKey のプール位置から決める。
+ * imgKey が無い旧エントリは従来の (日付×グループ) 選択で復元する */
+function migrateProgressToStages(pool) {
+  if (store.stageMigrated) return;
+  var entries = poolEntries(pool);
+  var np = {};
+  Object.keys(store.progress || {}).forEach(function (date) {
+    var byDiff = store.progress[date] || {};
+    Object.keys(byDiff).forEach(function (pieces) {
+      var prog = byDiff[pieces];
+      if (!prog) return;
+      var stage = null;
+      if (prog.imgKey) {
+        var e = poolEntryByKey(pool, prog.imgKey);
+        if (e) stage = entries.indexOf(e) + 1;
+      }
+      if (!stage) {
+        var ent = pickPoolEntry(date, pool, difficultyGroup(Number(pieces)));
+        if (ent) stage = entries.indexOf(ent) + 1;
+      }
+      if (!stage) return;
+      var dk = stageDate(stage);
+      if (!np[dk]) np[dk] = {};
+      var ex = np[dk][pieces];
+      if (!ex || (prog.clusters ? prog.clusters.length : 0) > (ex.clusters ? ex.clusters.length : 0)) np[dk][pieces] = prog;
+    });
   });
-}
-function maybeAdvanceRound() {
-  if (!store.round) return false;
-  if (Date.now() - store.round.unlockedAt < ROUND_INTERVAL_MS) return false;
-  if (currentRoundInProgress()) return false;
-  store.round = { n: store.round.n + 1, unlockedAt: Date.now() };
-  playDate = roundDate(store.round.n);
+  store.progress = np;
+  store.stageMigrated = true;
   saveStore();
-  return true;
 }
-maybeAdvanceRound(); // 起動時に期限が来ていれば次の回へ
 var difficulty = DIFFICULTIES.indexOf(store.lastDifficulty) >= 0 ? store.lastDifficulty : 36;
-/* 箱カルーセル: グループごとに最後に選んだ難易度を覚える (スワイプで
- * 行き来しても各箱の選択が保たれる)。初期値はグループの代表値 */
-var groupDifficulty = { 0: 36, 1: 100 };
-groupDifficulty[difficultyGroup(difficulty)] = difficulty;
-var uiBoxGroup = difficultyGroup(difficulty); // いま手前に出ている箱のグループ
-var boxScrollGuard = false; // プログラム側のスクロール中はスワイプ判定しない
 var state = null; // ゲーム開始時に構築
 
 function newGameState(pool) {
   var prog = progressFor(playDate, difficulty);
   var gameStarted = progressIsStarted(prog);
-  /* お題の決定 (2026-11-08 グループ制):
+  /* お題の決定 (ステージ制): ステージのお題は stageEntry で決定的。
    * - progress.imgKey が保存されていれば、そのエントリを最優先で維持する
-   *   (プールから引けなければグループ選択にフォールバック)
    * - 開始済みなのに imgKey が無い = 旧バージョンで始めた進行中ゲーム。
-   *   お題が変わらないよう従来の日付のみ選択で引き、imgKey を補完保存する
-   * - それ以外 (新規) は難易度グループで選び、開始確定時 (persistProgress で
-   *   started が立つとき) に imgKey を保存する */
+   *   ステージのお題で引き直し、imgKey を補完保存する
+   * - それ以外 (新規) もステージのお題 (開始確定時に imgKey を保存) */
   var entry;
   if (prog.imgKey) {
-    entry = poolEntryByKey(pool, prog.imgKey) || pickPoolEntry(playDate, pool, difficultyGroup(difficulty));
+    entry = poolEntryByKey(pool, prog.imgKey) || stageEntry(playStage, pool);
   } else if (gameStarted) {
-    entry = pickPoolEntry(playDate, pool);
+    entry = stageEntry(playStage, pool);
     prog.imgKey = poolEntryKey(entry);
     saveStore();
   } else {
-    entry = pickPoolEntry(playDate, pool, difficultyGroup(difficulty));
+    entry = stageEntry(playStage, pool);
   }
   return {
     pool: pool,
+    stage: playStage,
     entry: entry,
     imageKey: poolEntryKey(entry),
     imageId: entry && entry.type === 'picsum' ? entry.id : null,
@@ -3220,14 +3289,15 @@ function onClear() {
   elapsed = sanitizeClearTime(elapsed, state.moves, progressFor(playDate, difficulty).elapsedSec);
   state.cleared = true;
   state.elapsedBase = elapsed;
+  var isFirstStageClear = !store.records.some(function (r) { return recordStage(r, state.pool) === playStage; });
   lastClearResult = {
-    date: playDate, pieces: difficulty, timeSec: elapsed, moves: state.moves,
+    date: playDate, stage: playStage, pieces: difficulty, timeSec: elapsed, moves: state.moves,
     imageId: state.imageId, imageKey: state.imageKey,
     previewViewed: state.previewViewed
   };
-  var prev = findRecord(playDate, difficulty);
+  var prev = findRecordForStage(playStage, difficulty);
   var rec = {
-    date: playDate, imageId: state.imageId, imageKey: state.imageKey, pieces: difficulty,
+    date: playDate, stage: playStage, imageId: state.imageId, imageKey: state.imageKey, pieces: difficulty,
     clearTimeSec: elapsed,
     bestTimeSec: prev ? Math.min(prev.bestTimeSec, elapsed) : elapsed,
     moves: state.moves,
@@ -3237,11 +3307,9 @@ function onClear() {
   };
   if (prev) store.records[store.records.indexOf(prev)] = rec; else store.records.push(rec);
   persistProgress();
-  $('streakNum').textContent = computeStreak();
   runConfetti();
   // 記録証 (C案): 額装した完成盤面 + 記録2行 + 「完成図を見ずにクリア」バッジ
-  var dp = playDate.split('-');
-  $('resultDateLine').textContent = Number(dp[0]) + '年' + Number(dp[1]) + '月' + Number(dp[2]) + '日 ・ ' + difficulty + 'ピース';
+  $('resultDateLine').textContent = 'ステージ ' + playStage + ' ・ ' + difficulty + 'ピース';
   $('resultStatLine').textContent = 'タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
   var clearTier = frameTier(difficulty); // 装飾ティア (銀/金/特別) のときだけティア色のバッジを出す
@@ -3254,13 +3322,14 @@ function onClear() {
     boardHost.innerHTML = '';
     boardHost.appendChild(cv);
   });
-  // クリア報酬: その日の初回クリアでランダム抽選 1 点 (+ フレーム解放判定)
-  var grants = processRewardsOnClear();
+  // クリア報酬: ステージ初クリアでランダム抽選 1 点 (+ フレーム解放判定)
+  var grants = processRewardsOnClear(isFirstStageClear);
   if (grants.length) {
     $('resultRewardItems').innerHTML = grants.map(function (id) {
-      var it = wallItemById(id);
+      var it = collectibleById(id);
       if (!it) return '';
-      return '<div class="cert-reward"><img src="wall-items/' + it.id + '.webp" alt="' + it.name + '">' +
+      var isCat = !!catById(id);
+      return '<div class="cert-reward"><img src="' + (isCat ? 'cats/' : 'wall-items/') + it.id + '.webp" alt="' + it.name + '">' +
         '<div class="cert-reward-text"><span class="cert-reward-label">ごほうび</span>' +
         '<span class="cert-reward-name">' + it.name + '</span></div></div>';
     }).join('');
@@ -3443,23 +3512,20 @@ function runConfetti() {
  * 壁紙の解放 (第 2 系統) も同じ作法で wall.pendingPaperUnlocks に積む。
  * 小物の画像は wall-items/<id>.webp (壁用フラットイラスト・透過済み)。
  * プレイ中の机にはインテリアを一切描かない (旧・装飾レイヤーは廃止)。 */
-/* クリア時に報酬を確定させる。その日の初回クリアだけ抽選対象で冪等。
+/* クリア時に報酬を確定させる。ごほうび抽選はステージの初クリア時のみ
+ * (再プレイでは出ない)。季節アイテムの月判定は実カレンダーの月を使う。
  * フレーム解放は累計クリア回数 (records 数) の到達で判定する。
  * 戻り値: 今回届いたアイテム id の配列 (結果画面の表示用) */
-function processRewardsOnClear() {
+function processRewardsOnClear(firstClear) {
   var wall = store.wall;
   var grants = [];
-  // ごほうびはパズルA/B それぞれで1日 (1ラウンド) に1回ずつ貰える
-  var g = difficultyGroup(difficulty);
-  if (!wall.grantDates || typeof wall.grantDates !== 'object') wall.grantDates = {};
-  if (wall.grantDates[String(g)] !== playDate) {
-    var month = parseInt(playDate.split('-')[1], 10);
+  if (firstClear) {
+    var month = parseInt(jstTodayString().split('-')[1], 10);
     var picked = drawWallItem(wall, { month: month }, Math.random);
     if (picked) {
       grantWallItems(wall, [picked], playDate);
       grants.push(picked);
     }
-    wall.grantDates[String(g)] = playDate;
     wall.lastDate = playDate;
   }
   var unlocked = applyFrameUnlocks(wall, store.records.length);
@@ -5083,14 +5149,17 @@ function goToStartScreen() {
   bgmEnterTitle(); // タイトル画面では音を出さない (id 19)
   uiHome = true;
   uiCollection = false;
-  if (maybeAdvanceRound() && state && state.pool) { startGame(state.pool); }
-  else renderStartScreen();
+  replayStage = null; // スタートに戻ったら最新の未挑戦ステージへ
+  if (state && state.pool) {
+    if (syncPlayStage(state.pool) !== state.stage) startGame(state.pool);
+    else renderStartScreen();
+  }
   applyVisibility();
 }
-/* アプリに戻ってきたときもラウンドの解放を確認する */
+/* アプリに戻ってきたときもステージのずれを確認する (通常は変わらない) */
 document.addEventListener('visibilitychange', function () {
   if (document.hidden || !uiHome) return;
-  if (maybeAdvanceRound() && state && state.pool) startGame(state.pool);
+  if (state && state.pool && syncPlayStage(state.pool) !== state.stage) startGame(state.pool);
 });
 
 /* ---------- 戻るジェスチャー (History API) ----------
@@ -5182,35 +5251,49 @@ window.addEventListener('popstate', function () {
   } finally { navPopping = false; }
 });
 try { history.replaceState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ }
+/* コレクション (ステージ制): 全ステージの絵を並べ、未クリアは「？」の
+ * まま伏せる。クリアすると絵柄が解放されてサムネイルが出る。
+ * 解放済みタイルのタップで記録詳細 (再プレイ導線つき) を開く */
 function renderCollection() {
-  var recs = store.records.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : b.pieces - a.pieces; });
-  var days = new Set(recs.map(function (r) { return r.date; }));
+  var pool = state && state.pool;
+  var entries = poolEntries(pool);
+  var unlocked = unlockedImageKeys(store.records);
   var perDiff = DIFFICULTIES.map(function (d) {
-    var c = recs.filter(function (r) { return r.pieces === d; }).length;
+    var c = store.records.filter(function (r) { return r.pieces === d; }).length;
     return d + 'ピース: ' + c;
   }).join(' ／ ');
   $('collectionStats').innerHTML =
-    '<span class="stat">クリアしたお題 <b>' + days.size + '</b></span>' +
-    '<span class="stat">総クリア数 <b>' + recs.length + '</b></span>' +
-    '<span class="stat">連続クリア <b>' + computeStreak() + '</b>回</span>' +
+    '<span class="stat">解放した絵 <b>' + unlocked.size + '</b> / ' + entries.length + '</span>' +
+    '<span class="stat">総クリア数 <b>' + store.records.length + '</b></span>' +
     '<span class="stat">' + perDiff + '</span>';
-  $('collectionEmpty').hidden = recs.length > 0;
+  $('collectionEmpty').hidden = true;
   var grid = $('collectionGrid');
   grid.innerHTML = '';
-  recs.forEach(function (r) {
+  entries.forEach(function (entry, idx) {
+    var stage = idx + 1;
+    var key = poolEntryKey(entry);
+    var recsForKey = store.records.filter(function (r) { return recordImageKey(r) === key; });
+    if (!recsForKey.length) {
+      var locked = document.createElement('div');
+      locked.className = 'card locked';
+      locked.innerHTML = '<span class="card-locked-mark">？</span>' +
+        '<span class="card-body"><span class="card-date">ステージ ' + stage + '</span></span>';
+      grid.appendChild(locked);
+      return;
+    }
+    var best = recsForKey.slice().sort(function (a, b) { return a.bestTimeSec - b.bestTimeSec; })[0];
     var card = document.createElement('button');
     card.className = 'card';
     card.type = 'button';
-    var badges = '<span class="badge">' + r.pieces + 'ピース</span>' +
-      (r.previewViewed ? '<span class="badge">完成図: 見た</span>' : '<span class="badge praise">完成図を見ずにクリア</span>');
-    var entry = entryForRecord(r);
+    var badges = '<span class="badge">' + best.pieces + 'ピース</span>' +
+      (best.previewViewed ? '<span class="badge">完成図: 見た</span>' : '<span class="badge praise">完成図を見ずにクリア</span>');
     var thumb = entryThumbUrl(entry);
     var titleLine = entry && entry.type === 'url' && entry.title
       ? '<span class="card-title">' + escapeHtml(entry.title) + '</span>' : '';
     card.innerHTML = (thumb ? '<img loading="lazy" src="' + thumb + '" alt="">' : '') +
-      '<span class="card-body"><span class="card-date">' + r.date + '</span>' + titleLine +
-      '<span>クリアタイム ' + formatTime(r.bestTimeSec) + '</span>' + badges + '</span>';
-    card.addEventListener('click', function () { openDetail(r); });
+      '<span class="card-body"><span class="card-date">ステージ ' + stage + '</span>' + titleLine +
+      '<span>クリアタイム ' + formatTime(best.bestTimeSec) + '</span>' + badges + '</span>';
+    card.addEventListener('click', function () { openDetail(best); });
     grid.appendChild(card);
   });
 }
@@ -5223,6 +5306,7 @@ function renderCollection() {
  * 縁に線を付ける (pieceBitmap と同じ流儀)。背景はマット色にして、
  * マットに置いて完成させたときの見た目にする。 */
 var detailRecord = null;
+var detailDifficulty = 36; // コレクション詳細の再プレイ用に選んだ難易度
 var detailSeq = 0; // 非同期読み込みの競合ガード (開き直したら古い描画を捨てる)
 
 function openDetail(r) {
@@ -5232,7 +5316,7 @@ function openDetail(r) {
     return it ? it.name : id;
   });
   $('detailText').innerHTML =
-    '日付: ' + r.date + '<br>難易度: ' + r.pieces + 'ピース' +
+    'ステージ: ' + (recordStage(r, state && state.pool) || '-') + '<br>難易度: ' + r.pieces + 'ピース' +
     (frameTier(r.pieces) ? ' <span class="upper-chip' + (frameTier(r.pieces) !== 'gold' ? ' ' + frameTier(r.pieces) : '') + '">上級クリア</span>' : '') +
     '<br>クリアタイム: ' + formatTime(r.bestTimeSec) +
     '<br>手数: ' + (r.moves != null ? r.moves : '-') +
@@ -5247,10 +5331,63 @@ function openDetail(r) {
       (dEntry.title ? '<br>作品: ' + escapeHtml(dEntry.title) : '') +
       (credit ? '<br>出典: ' + credit : '');
   }
-  // 過去日をプレイしに行く導線は作らない (コレクションは閲覧のみ)
+  // 解放済みの絵はここから再プレイできる (抽選は初クリアのみなので出ない)
+  detailDifficulty = r.pieces;
+  buildDetailDiffSeg();
   $('detailModal').hidden = false;
   navPush('detail');
   renderDetailPuzzle(r);
+}
+
+/* 詳細モーダルの再プレイ用難易度チップ (全7種・選択は詳細内だけに効く) */
+function buildDetailDiffSeg() {
+  var seg = $('detailDiffSeg');
+  if (!seg) return;
+  seg.innerHTML = '';
+  DIFFICULTIES.forEach(function (d) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'diff-chip' + (d === detailDifficulty ? ' active' : '');
+    var num = document.createElement('span');
+    num.className = 'diff-num';
+    num.textContent = d + 'ピース';
+    b.appendChild(num);
+    var tier = frameTier(d);
+    var star = document.createElement('span');
+    star.className = 'diff-star ' + (tier || 'none');
+    star.textContent = tier ? (tier === 'royal' ? '★★' : '★') : '';
+    b.appendChild(star);
+    if (detailRecord && findRecordForStage(recordStage(detailRecord, state && state.pool), d)) {
+      b.classList.add('cleared');
+      var badge = document.createElement('span');
+      badge.className = 'diff-check-badge';
+      badge.textContent = '✓';
+      b.appendChild(badge);
+    }
+    b.setAttribute('aria-pressed', d === detailDifficulty ? 'true' : 'false');
+    b.addEventListener('click', function () { detailDifficulty = d; buildDetailDiffSeg(); });
+    seg.appendChild(b);
+  });
+}
+/* コレクション詳細から再プレイ開始: そのステージを対象に、保存済みの
+ * 進捗は消して新規に散らばす (記録は残り、ベストタイム更新だけが掛かる) */
+function startReplayFromDetail() {
+  if (!detailRecord || !state || !state.pool) return;
+  var stage = recordStage(detailRecord, state.pool);
+  if (!stage) return;
+  $('detailModal').hidden = true;
+  replayStage = stage;
+  difficulty = detailDifficulty;
+  store.lastDifficulty = difficulty;
+  var dk = stageDate(stage);
+  if (store.progress[dk]) delete store.progress[dk][difficulty];
+  saveStore();
+  uiCollection = false;
+  uiHome = true;
+  navGoHome();
+  startGame(state.pool);
+  applyVisibility();
+  openBox();
 }
 
 /* 詳細用の写真を正方形キャンバスで用意する。読み込み失敗時はゲーム本体と
@@ -5338,16 +5475,13 @@ function renderDetailPuzzle(r) {
 }
 
 /* ---------- コントロール配線 ---------- */
-/* 難易度セレクタ (2026-11-08 再設計): 箱カルーセルでグループを切り替え、
- * 表示中の箱のグループの難易度だけをコンパクトなチップで出す。
+/* 難易度セレクタ (ステージ制): 箱は1つ、難易度は全7種を1セットで出す。
  * チップは「Nピース」表記 (数字だけではピース数と伝わらないため)。
  * 目安時間は出さない (ユーザー指定) */
 function buildDifficultySeg() {
   var seg = $('difficultySeg');
   seg.innerHTML = '';
-  var g = difficultyGroup(difficulty);
   DIFFICULTIES.forEach(function (d) {
-    if (difficultyGroup(d) !== g) return;
     var b = document.createElement('button');
     b.type = 'button';
     var sel = d === difficulty;
@@ -5361,8 +5495,8 @@ function buildDifficultySeg() {
     star.className = 'diff-star ' + (tier || 'none');
     star.textContent = tier ? (tier === 'royal' ? '★★' : '★') : '';
     b.appendChild(star);
-    /* 今のラウンドでクリア済みの難易度には右上に ✓ バッジ (ユーザー指定 A案) */
-    var cleared = !!(store && playDate && store.records && store.records.some(function (r) { return r.date === playDate && r.pieces === d; }));
+    /* 今のステージでクリア済みの難易度には右上に ✓ バッジ (ユーザー指定 A案) */
+    var cleared = !!findRecordForStage(playStage, d);
     if (cleared) {
       b.classList.add('cleared');
       var badge = document.createElement('span');
@@ -5375,7 +5509,6 @@ function buildDifficultySeg() {
       if (d === difficulty) return;
       if (state) persistProgress();
       difficulty = d;
-      groupDifficulty[difficultyGroup(d)] = d;
       store.lastDifficulty = d;
       saveStore();
       startGame(state.pool);
@@ -5383,49 +5516,9 @@ function buildDifficultySeg() {
     seg.appendChild(b);
   });
 }
-/* 手前に出ている箱 (グループ g) の要素 */
-function giftBoxEl(g) { return $('giftBox' + g); }
-function activeGiftBox() { return giftBoxEl(uiBoxGroup); }
-/* カルーセルの表示位置を uiBoxGroup に合わせる (スワイプ判定と競合しない
- * よう、プログラム側のスクロール中はガードを立てる)。スライド幅 = 表示幅
- * なので位置はグループ番号 × 表示幅で決まる */
-function syncBoxCarousel(smooth, targetGroup) {
-  var car = $('boxCarousel');
-  if (!car || !car.clientWidth) return;
-  var g = typeof targetGroup === 'number' ? targetGroup : uiBoxGroup;
-  var target = g * car.clientWidth;
-  if (Math.abs(car.scrollLeft - target) < 2) return;
-  boxScrollGuard = true;
-  if (smooth && car.scrollTo) car.scrollTo({ left: target, behavior: 'smooth' });
-  else car.scrollLeft = target;
-  setTimeout(function () { boxScrollGuard = false; }, smooth ? 480 : 160);
-}
-/* 矢印ボタンから箱を切り替える */
-function gotoBoxGroup(g) {
-  if (g === uiBoxGroup) return;
-  syncBoxCarousel(true, g);
-  onBoxGroupChanged(g);
-}
-/* スワイプで箱が切り替わった: そのグループで最後に選んだ難易度に移る */
-function onBoxGroupChanged(g) {
-  if (g === uiBoxGroup) return;
-  uiBoxGroup = g;
-  var d = groupDifficulty[g];
-  if (d !== difficulty) {
-    if (state) persistProgress();
-    difficulty = d;
-    store.lastDifficulty = d;
-    saveStore();
-    startGame(state.pool);
-  } else {
-    renderStartScreen();
-  }
-}
-/* 箱タップ: 手前の箱なら開封、隣の箱ならそちらへ寄せる */
-function onGiftBoxTap(g) {
-  if (g !== uiBoxGroup) { gotoBoxGroup(g); return; }
-  openBox();
-}
+/* 箱は1つだけ (ステージ制)。タップで最新の未挑戦 (または再プレイ先) が開く */
+function activeGiftBox() { return $('giftBox'); }
+function onGiftBoxTap() { openBox(); }
 
 /* ---------- タイマーの一時停止/再開 ---------- */
 function timerRunning() {
@@ -5569,31 +5662,16 @@ function wireControls() {
     $('freshConfirmModal').hidden = true;
     restartPuzzle();
   });
-  [0, 1].forEach(function (g) {
-    var box = giftBoxEl(g);
-    box.addEventListener('click', function () { onGiftBoxTap(g); });
-    box.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onGiftBoxTap(g); }
-    });
+  var giftBoxElNow = $('giftBox');
+  giftBoxElNow.addEventListener('click', function () { onGiftBoxTap(); });
+  giftBoxElNow.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onGiftBoxTap(); }
   });
-  $('boxPrev').addEventListener('click', function () { gotoBoxGroup(0); });
-  $('boxNext').addEventListener('click', function () { gotoBoxGroup(1); });
-  // カルーセルのスワイプ: スクロールが落ち着いたら手前の箱のグループへ寄せる
-  var boxScrollTimer = null;
-  $('boxCarousel').addEventListener('scroll', function () {
-    if (boxScrollGuard) return;
-    if (boxScrollTimer) clearTimeout(boxScrollTimer);
-    boxScrollTimer = setTimeout(function () {
-      var car = $('boxCarousel');
-      if (!car.clientWidth) return;
-      var g = Math.round(car.scrollLeft / car.clientWidth);
-      onBoxGroupChanged(Math.max(0, Math.min(1, g)));
-    }, 130);
-  }, { passive: true });
   $('collectionBtn').addEventListener('click', function () {
     collectionBackToHome = false;
     showCollection();
   });
+  $('detailPlayBtn').addEventListener('click', startReplayFromDetail);
   $('collectionBack').addEventListener('click', function () { navBack(); });
   $('resumeClose').addEventListener('click', function () { $('resumeBanner').hidden = true; });
   document.querySelectorAll('[data-close]').forEach(function (el) {
@@ -5850,40 +5928,23 @@ function renderStartScreen() {
   if (!state) return;
   var mode = startPanelMode({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters });
   var startedAlready = mode !== 'box';
-  // 箱は2つとも描く (グループごとの柄)。波紋は手前の箱だけに出す
-  uiBoxGroup = difficultyGroup(difficulty);
-  [0, 1].forEach(function (g) {
-    var box = giftBoxEl(g);
-    box.classList.remove('opening');
-    box.innerHTML = giftBoxSvg(boxPatternForDate(playDate, g).id, g);
-    box.hidden = false;
-    box.classList.toggle('rippling', g === uiBoxGroup);
-  });
-  var dots = $('boxDots').children;
-  for (var di = 0; di < dots.length; di++) dots[di].classList.toggle('active', di === uiBoxGroup);
-  $('boxPrev').hidden = uiBoxGroup === 0;
-  $('boxNext').hidden = uiBoxGroup === 1;
-  syncBoxCarousel();
+  // 箱は1つ。柄はステージ番号で決まる
+  var box = $('giftBox');
+  box.classList.remove('opening');
+  box.innerHTML = giftBoxSvg(BOX_PATTERNS[stageBoxPatternIndex(playStage)].id, '');
+  box.hidden = false;
+  box.classList.add('rippling');
   $('startHint').hidden = false;
   $('startHint').textContent = mode === 'resume' ? '箱をタップしてつづきから' : '箱をタップ';
-  $('collectionCount').textContent = 'クリアした絵 ' + store.records.length + '点';
-  // 次のラウンドまでの目安 (プレイ途中の回では出さない)
-  var roundNote = '';
-  if (!currentRoundInProgress() && store.round) {
-    var remain = store.round.unlockedAt + ROUND_INTERVAL_MS - Date.now();
-    if (remain > 0) {
-      var hh = Math.floor(remain / 3600000);
-      var mm = Math.ceil((remain % 3600000) / 60000);
-      if (mm === 60) { hh += 1; mm = 0; }
-      roundNote = '次のお題まで あと' + (hh > 0 ? hh + '時間' + (mm > 0 ? mm + '分' : '') : Math.max(1, mm) + '分');
-    }
-  }
-  $('roundNote').textContent = roundNote;
+  var totalPics = state.pool ? poolEntries(state.pool).length : 0;
+  $('collectionCount').textContent = '解放した絵 ' + unlockedImageKeys(store.records).size + (totalPics ? ' / ' + totalPics : '') + '点';
+  var cycNow = totalPics ? stageCycle(playStage, totalPics) : 0;
+  $('stageNote').textContent = replayStage ? 'コレクションから再プレイ中' : (cycNow > 0 ? (cycNow + 1) + '周目のお題' : '');
   $('resumePanel').hidden = !startedAlready;
   if (startedAlready) {
     if (mode === 'cleared') {
-      // クリア済みの日付×難易度は進捗サマリーの代わりにクリア表示にする
-      var rec = findRecord(playDate, difficulty);
+      // クリア済みのステージ×難易度は進捗サマリーの代わりにクリア表示にする
+      var rec = findRecordForStage(playStage, difficulty);
       var best = rec ? rec.bestTimeSec : currentElapsed();
       $('resumeInfo').textContent = difficulty + 'ピース ・ クリア済み ・ ベストタイム ' + formatTime(best);
     } else {
@@ -5897,6 +5958,7 @@ function renderStartScreen() {
 
 /* ---------- ゲーム開始 ---------- */
 function startGame(pool) {
+  syncPlayStage(pool);
   state = newGameState(pool);
   selection.clear(); // 塊が作り直されるので選択は引き継がない
   cancelPressAndRect();
@@ -5905,12 +5967,12 @@ function startGame(pool) {
   // スタート画面: 未開封なら包装された箱 (柄は日付×難易度グループで決定的)、開始済みなら続きからパネル
   renderStartScreen();
   $('fadeVeil').classList.remove('on');
-  $('themeDateLabel').textContent = '第' + store.round.n + '回のお題';
+  var cycLabel = poolEntries(pool).length ? stageCycle(playStage, poolEntries(pool).length) : 0;
+  $('themeDateLabel').textContent = 'ステージ ' + playStage + (cycLabel > 0 ? '（' + (cycLabel + 1) + '周目）' : '');
   $('photoCredits').innerHTML = poolEntries(pool)
     .filter(function (e) { return e.type === 'url' && e.attribution; })
     .map(function (e) { return '<li>' + escapeHtml(e.title || '') + ' — ' + escapeHtml(e.attribution) + '</li>'; })
     .join('');
-  $('streakNum').textContent = computeStreak();
   $('loadingOverlay').style.display = 'flex';
   $('resumeBanner').hidden = !state.resumed;
   applyVisibility();
@@ -5944,6 +6006,7 @@ fetch('data/images.json')
   .then(function (pool) {
     wireControls();
     applyTheme();
+    migrateProgressToStages(pool);
     startGame(pool);
     resizeStage();
   })
