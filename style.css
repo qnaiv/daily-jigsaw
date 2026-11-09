@@ -925,5 +925,9 @@ button { font: inherit; cursor: pointer; }
 .card-locked-mark { width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 42px; font-weight: 800; color: var(--paper-dim); background: var(--line); }
 .detail-replay { margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .detail-replay .diff-chips { flex-wrap: wrap; }
-/* ステージ制で難易度チップが7種1列になったため、スタート画面では折り返す */
-.start-difficulty .diff-chips { flex-wrap: wrap; }
+/* スタート画面の難易度チップは均等グリッド (2026-11-09 ユーザー選択 A案):
+ * 8 列グリッドに各チップ 2 列分で並べ、4 + 3 の 2 段・2 段目は中央寄せ。
+ * 全チップ同幅で柱がそろい、幅のガタつきをなくす */
+.start-difficulty .diff-chips { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; padding: 2px 0; }
+.start-difficulty .diff-chip { grid-column: span 2; width: 100%; padding: 6px 2px 5px; }
+.start-difficulty .diff-chip:nth-child(5) { grid-column: 2 / span 2; }
