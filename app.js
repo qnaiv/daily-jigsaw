@@ -4232,7 +4232,7 @@ function renderWall() {
  * 額は実ピース形状の盤面で描き直し (画面表示と同じレシピ)、小物は
  * 画像をそのまま置く。重なり順は画面と同じ (額 → 小物)。
  * 下部にブランドのフッターを付ける。 */
-function buildShareFrameCanvas(f, unitW) {
+function buildShareFrameCanvas(f, unitW, boardPx) {
   var rec = recordByWallKey(f.recordKey);
   var st = frameStyleById(f.color) || frameStyleById('walnut');
   var U = Math.max(24, unitW * f.w);
@@ -4248,7 +4248,7 @@ function buildShareFrameCanvas(f, unitW) {
     paintFrameUnit(ctx, st, U, null, 'missing', f.recordKey, upper);
     return Promise.resolve({ cv: cv, size: geo.size });
   }
-  return renderWallBoardCanvas(rec).then(function (board) {
+  return (boardPx ? renderBoardCanvasAt(rec, boardPx) : renderWallBoardCanvas(rec)).then(function (board) {
     paintFrameUnit(ctx, st, U, board, 'ready', f.recordKey, upper);
     return { cv: cv, size: geo.size };
   });
@@ -4355,6 +4355,123 @@ function downloadWallShareImage(cv) {
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+/* スタート画面の壁帯プレビュー (PBI #24 案A): 共有画像と同じ部品・同じ
+ * 重なり順で壁全体を1枚に描く。違いはフッターなし、額の盤面は小さめ
+ * (288px) で軽くする、描画単位は壁画面に依存しない仮想幅 412 で固定。
+ * 壁画面を開いていなくても描ける */
+function renderWallPreviewCanvas() {
+  var s = wallSize();
+  var unit = 412;
+  var worldW = unit * s.w, worldH = unit * 1.25 * s.h;
+  var k = Math.min(2, 824 / worldW);
+  if (k < 0.25) k = 0.25;
+  var W = Math.round(worldW * k), H = Math.round(worldH * k);
+  var cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  var ctx = cv.getContext('2d');
+  if (!ctx) return Promise.resolve(null);
+  paintWallBase(ctx, W, H, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
+  var flush = function () {
+    return new Promise(function (res) { requestAnimationFrame(function () { requestAnimationFrame(res); }); });
+  };
+  var frameJobs = store.wall.frames.map(function (f) {
+    return buildShareFrameCanvas(f, unit * k, 288).then(function (r) {
+      ctx.drawImage(r.cv, Math.round(f.x * W - r.size / 2), Math.round(f.y * H - r.size / 2), r.size, r.size);
+    });
+  });
+  return Promise.all(frameJobs).then(flush).then(function () {
+    var itemJobs = store.wall.placed.map(function (p) {
+      return new Promise(function (res) {
+        var it = wallItemById(p.id);
+        if (!it) { res(); return; }
+        var img = new Image();
+        var draw = function () {
+          var wpx = wallItemWidthRatio(it) * unit * k;
+          var hpx = wpx * img.naturalHeight / Math.max(1, img.naturalWidth);
+          ctx.save();
+          ctx.shadowColor = 'rgba(90,70,40,0.25)';
+          ctx.shadowBlur = 5 * k;
+          ctx.shadowOffsetY = 3 * k;
+          ctx.drawImage(img, p.x * W - wpx / 2, p.y * H - hpx / 2, wpx, hpx);
+          ctx.restore();
+          res();
+        };
+        img.onload = function () {
+          if (img.decode) img.decode().then(draw, draw); else draw();
+        };
+        img.onerror = function () { res(); };
+        img.src = 'wall-items/' + it.id + '.webp';
+      });
+    });
+    return Promise.all(itemJobs);
+  }).then(flush).then(function () {
+    var catJobs = (store.wall.catsPlaced || []).map(function (p) {
+      return new Promise(function (res) {
+        var c = catById(p.id);
+        if (!c) { res(); return; }
+        var img = new Image();
+        var draw = function () {
+          var wpx = c.w * unit * k;
+          var hpx = wpx * img.naturalHeight / Math.max(1, img.naturalWidth);
+          var feetY = CAT_FEET_Y * H;
+          ctx.save();
+          ctx.fillStyle = 'rgba(60,38,18,0.30)';
+          ctx.beginPath();
+          ctx.ellipse(p.x * W, feetY, wpx * 0.36, Math.max(2, 5 * k), 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.drawImage(img, p.x * W - wpx / 2, feetY - hpx, wpx, hpx);
+          ctx.restore();
+          res();
+        };
+        img.onload = function () {
+          if (img.decode) img.decode().then(draw, draw); else draw();
+        };
+        img.onerror = function () { res(); };
+        img.src = 'cats/' + c.id + '.webp';
+      });
+    });
+    return Promise.all(catJobs);
+  }).then(flush).then(function () { return cv; });
+}
+/* 壁帯プレビューのキャッシュ: 壁の要約が同じなら再描画しない。
+ * renderStartScreen は戻るたび・難易度切替のたびに呼ばれるため必須 */
+var wallPreviewCache = { key: '', cv: null };
+var wallPreviewBusyKey = '';
+function wallPreviewKey() {
+  var w = store.wall;
+  return JSON.stringify([w.paper, w.sizeStage, w.frames, w.placed, w.catsPlaced, store.records.length]);
+}
+function updateWallPreview() {
+  var band = $('startWallBand'), cv = $('wallPreviewCanvas');
+  if (!band || !cv || !store.wall) return;
+  var s = wallSize();
+  var dispW = band.clientWidth || 412;
+  var natH = dispW * (1.25 * s.h) / s.w;
+  var cap = window.innerWidth <= 700 ? window.innerHeight * 0.28 : Infinity;
+  band.style.height = Math.round(Math.min(natH, cap)) + 'px';
+  var key = wallPreviewKey();
+  var ctx = cv.getContext('2d');
+  if (!ctx) return;
+  if (wallPreviewCache.key === key && wallPreviewCache.cv) {
+    cv.width = wallPreviewCache.cv.width; cv.height = wallPreviewCache.cv.height;
+    ctx.drawImage(wallPreviewCache.cv, 0, 0);
+    return;
+  }
+  // まず壁紙だけの即席で埋める (額・小物・猫の重い描画は後追い)
+  var qw = Math.max(2, Math.round(dispW)), qh = Math.max(2, Math.round(natH));
+  cv.width = qw; cv.height = qh;
+  paintWallBase(ctx, qw, qh, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
+  if (wallPreviewBusyKey === key) return;
+  wallPreviewBusyKey = key;
+  setTimeout(function () {
+    renderWallPreviewCanvas().then(function (full) {
+      wallPreviewBusyKey = '';
+      if (!full) return;
+      wallPreviewCache = { key: key, cv: full };
+      if (wallPreviewKey() === key && !$('startView').hidden) updateWallPreview();
+    });
+  }, 30);
 }
 /* 壁画像で共有: クリア画像と同じ作法 (files 共有 → 無ければ保存 + 注記) */
 function shareWallImage() {
@@ -6321,6 +6438,12 @@ function wireControls() {
   $('unlockBtn').addEventListener('click', function () { showUnlockNotice(); });
   $('unlockCloseBtn').addEventListener('click', function () { navBack(); });
   $('wallBtn').addEventListener('click', function () { showWall('home'); });
+  // 壁帯プレビューのタップは「壁をかざる」と同じ導線 (PBI #24 案A)
+  $('wallPreviewCanvas').addEventListener('click', function () { showWall('home'); });
+  $('wallPreviewCanvas').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); showWall('home'); }
+  });
+  window.addEventListener('resize', function () { if (!$('startView').hidden) updateWallPreview(); });
   $('settingsWallBtn').addEventListener('click', function () {
     closeSettings();
     navSilentPop('settings');
@@ -6660,6 +6783,7 @@ function renderStartScreen() {
     }
   }
   updateStartWallRow();
+  updateWallPreview();
 }
 
 /* ---------- ゲーム開始 ---------- */

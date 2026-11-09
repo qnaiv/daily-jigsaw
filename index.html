@@ -26,6 +26,19 @@
      デザインは「紙 + タイポグラフィ、枠少なめ」。難易度だけ重なったカード (案D)。 -->
 <section id="startView">
   <div class="start-inner">
+    <!-- PBI #24 案A (ユーザー選択): 一番上に飾った壁を帯で出し、箱は壁の
+         床に重ねて置く。壁の部分のタップは壁画面へ、箱は従来どおり開始。
+         壁の絵は app.js の updateWallPreview が Canvas に描く -->
+    <div class="start-wallwrap">
+      <div class="start-wallband" id="startWallBand">
+        <canvas id="wallPreviewCanvas" role="button" tabindex="0" aria-label="壁をかざるを開く"></canvas>
+      </div>
+      <div class="box-single wallband-box">
+        <div class="gift-box" id="giftBox" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div>
+      </div>
+    </div>
+    <p id="startHint" class="start-hint">箱をタップ</p>
+
     <header class="start-head">
       <p class="start-kicker">DAILY JIGSAW</p>
       <h1 class="start-title-text">まいにちジグソー</h1>
@@ -35,13 +48,7 @@
       <p id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</p>
     </header>
 
-    <!-- 箱は1つ (ステージ制)。タップで最新の未挑戦ステージ (または
-         進行中の続き) が始まる。箱の下にピース数チップを置く -->
-    <div class="box-single">
-      <div class="gift-box" id="giftBox" role="button" tabindex="0" aria-label="包装されたパズルの箱"></div>
-    </div>
-    <p id="startHint" class="start-hint">箱をタップ</p>
-
+    <!-- 箱は壁帯の中に置いた (上の start-wallband)。ここはピース数チップ -->
     <div class="start-difficulty">
       <div id="difficultySeg" class="diff-chips" role="group" aria-label="難易度"></div>
     </div>

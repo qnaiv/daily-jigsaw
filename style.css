@@ -272,6 +272,32 @@ button { font: inherit; cursor: pointer; }
   .gift-box.opening .gift-lid { animation-duration: .01s; }
   .gift-box.rippling::after { animation: none; }
 }
+/* 壁帯 (PBI #24 案A): スタート画面の一番上に飾った壁を全幅で出し、
+ * 箱は壁の床ラインに重ねて置く。帯の高さは JS が壁の縦横比と
+ * ビューポート高の 28% 上限から決める (縦長の壁は床側を残して
+ * 上を切る)。壁の部分のタップは壁画面への導線 (Canvas 自体がボタン)。
+ * 箱のはみ出し分は margin-bottom で確保する */
+/* 箱は帯の下半分が紙面側にはみ出すため、切り抜き (overflow) は帯側
+ * だけに閉じ、箱は外側のラッパー基準で重ねる */
+.start-wallwrap {
+  position: relative; flex: none;
+  width: calc(100% + 40px); margin: -26px -20px 84px;
+}
+.start-wallband {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+#wallPreviewCanvas {
+  position: absolute; left: 0; bottom: 0;
+  width: 100%; height: auto; display: block;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+#wallPreviewCanvas:focus-visible { outline: 2px solid var(--brass); outline-offset: -2px; }
+.wallband-box {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  transform: translateY(45%);
+}
 .start-hint {
   margin: 0; color: var(--paper-dim); font-size: 12.5px; font-weight: 600;
   letter-spacing: .26em;
