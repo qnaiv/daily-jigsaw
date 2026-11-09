@@ -1132,6 +1132,52 @@ function shadeRgb(rgb, f) {
   });
 }
 function shadeColor(hex, f) { return shadeRgb(hexToRgb(hex), f); }
+/* [r,g,b] (0..255) → CIELAB [L,a,b] (D65)。お助けの色分けは知覚的に近い色を
+ * 同じ山にするため、RGB ではなく Lab で開きを測る */
+function rgbToLab(rgb) {
+  function lin(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+  var r = lin(rgb[0]), g = lin(rgb[1]), b = lin(rgb[2]);
+  var x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
+  var y = r * 0.2126 + g * 0.7152 + b * 0.0722;
+  var z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+  function f(t) { return t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116; }
+  var fx = f(x), fy = f(y), fz = f(z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+/* お助けの色分け: 固定の色区分ではなく、残っているピース同士の「相対的な」
+ * 近さで分ける。基本は Lab 空間での凝集クラスタリング (近い色から順に
+ * くっつける) で、狙う山の数はピース数の約 1/5 (3〜8山に制限)。
+ * なだらかなグラデーション (霧の空など) でも近い濃さ同士が固まり、
+ * 明暗のバンド状の山になる。戻り値はグループの配列 (入力 index の配列)。
+ * 決定的 (乱数なし) */
+var CLUSTER_MAX_GROUPS = 8;
+function clusterByColor(labs) {
+  if (labs.length < CLUSTER_MIN_GROUPS * 2) return [labs.map(function (_, i) { return i; })];
+  var target = Math.min(CLUSTER_MAX_GROUPS, Math.max(CLUSTER_MIN_GROUPS, Math.round(labs.length / 5)));
+  return clusterAgglomerative(labs, target);
+}
+var CLUSTER_MIN_GROUPS = 3;
+/* 近い色からくっつける凝集クラスタリング (平均連結・決定的)。
+ * 遠く離れた色同士は最後まで混ざらず、似た色の固まりができる */
+function clusterAgglomerative(labs, target) {
+  var clusters = labs.map(function (_, i) { return [i]; });
+  function centroid(c) {
+    var s = [0, 0, 0];
+    c.forEach(function (ix) { s[0] += labs[ix][0]; s[1] += labs[ix][1]; s[2] += labs[ix][2]; });
+    return [s[0] / c.length, s[1] / c.length, s[2] / c.length];
+  }
+  while (clusters.length > target) {
+    var cents = clusters.map(centroid);
+    var bi = -1, bj = -1, bd = Infinity;
+    for (var i = 0; i < clusters.length; i++) for (var j = i + 1; j < clusters.length; j++) {
+      var dd = (cents[i][0] - cents[j][0]) * (cents[i][0] - cents[j][0]) + (cents[i][1] - cents[j][1]) * (cents[i][1] - cents[j][1]) + (cents[i][2] - cents[j][2]) * (cents[i][2] - cents[j][2]);
+      if (dd < bd) { bd = dd; bi = i; bj = j; }
+    }
+    clusters[bi] = clusters[bi].concat(clusters[bj]);
+    clusters.splice(bj, 1);
+  }
+  return clusters.filter(function (c) { return c.length > 0; });
+}
 /* 帯の周囲位置 t (0..1: 上辺左端から時計回り) における虹色 [r,g,b] */
 function rainbowColorAt(t) {
   t = ((t % 1) + 1) % 1;
@@ -1592,6 +1638,7 @@ var PureLogic = {
   FRAME_STYLES: FRAME_STYLES, WALL_SIZE_RATIO: WALL_SIZE_RATIO,
   FRAME_PAD_RATIO: FRAME_PAD_RATIO, RAINBOW_COLORS: RAINBOW_COLORS,
   hexToRgb: hexToRgb, shadeRgb: shadeRgb, shadeColor: shadeColor,
+  rgbToLab: rgbToLab, clusterByColor: clusterByColor,
   rainbowColorAt: rainbowColorAt, frameGeometry: frameGeometry,
   frameStyleById: frameStyleById, newFrameUnlocks: newFrameUnlocks, applyFrameUnlocks: applyFrameUnlocks,
   WALLPAPERS: WALLPAPERS, wallpaperById: wallpaperById,
@@ -3229,23 +3276,6 @@ function pieceAvgColor(id, sctx2) {
   for (var i = 0; i < data.length; i += 16) { r += data[i]; g += data[i + 1]; b += data[i + 2]; cnt++; }
   return [r / cnt, g / cnt, b / cnt];
 }
-function colorBucketOf(rgb) {
-  var r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255;
-  var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
-  var sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1) || 1);
-  if (sat < 0.16) return l > 0.74 ? 'pale' : (l < 0.28 ? 'dark' : 'gray');
-  var h;
-  if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
-  h *= 60; if (h < 0) h += 360;
-  if (h < 15 || h >= 345) return 'red';
-  if (h < 45) return l < 0.32 ? 'brown' : 'orange';
-  if (h < 70) return 'yellow';
-  if (h < 160) return 'green';
-  if (h < 200) return 'teal';
-  if (h < 255) return 'blue';
-  if (h < 290) return 'purple';
-  return 'pink';
-}
 function sortSinglesByColor() {
   if (!state || state.cleared || sortAnim) return;
   // 進行中のジェスチャは確定させずに解除する (塊はその場に残る)
@@ -3268,22 +3298,21 @@ function sortSinglesByColor() {
 }
 function runSortSingles(singles) {
   var sctx2 = state.srcCanvas.getContext('2d');
-  var buckets = {};
-  singles.forEach(function (c) {
-    var b = colorBucketOf(pieceAvgColor(c.pieces[0], sctx2));
-    (buckets[b] = buckets[b] || []).push(c);
+  // 固定の色区分ではなく、残っているピース同士の相対的な色の開きで分ける
+  var labs = singles.map(function (c) { return rgbToLab(pieceAvgColor(c.pieces[0], sctx2)); });
+  var groups = clusterByColor(labs).map(function (idxs) {
+    return idxs.map(function (i) { return singles[i]; });
   });
-  var names = Object.keys(buckets);
-  if (names.length < 2) { showToast('ほぼ同じ色合いのピースばかりだよ'); return; }
-  names.sort(function (a, b) { return buckets[b].length - buckets[a].length; });
+  if (groups.length < 2) { showToast('ほぼ同じ色合いのピースばかりだよ'); return; }
+  groups.sort(function (a, b) { return b.length - a.length; });
   var rect = scatterRect(state.n * state.n);
-  var cols = Math.ceil(Math.sqrt(names.length)), rows = Math.ceil(names.length / cols);
+  var cols = Math.ceil(Math.sqrt(groups.length)), rows = Math.ceil(groups.length / cols);
   var cellW = rect.w / cols, cellH = rect.h / rows;
   var items = [];
   var ordered = state.clusters.filter(function (c) { return c.pieces.length > 1; });
-  names.forEach(function (name, i) {
+  groups.forEach(function (group, i) {
     var cx = rect.x0 + (i % cols + 0.5) * cellW, cy = rect.y0 + (Math.floor(i / cols) + 0.5) * cellH;
-    var list = buckets[name].slice();
+    var list = group.slice();
     for (var j = list.length - 1; j > 0; j--) { var k = (Math.random() * (j + 1)) | 0; var t = list[j]; list[j] = list[k]; list[k] = t; }
     var rad = Math.max(0.7, Math.min(0.55 * Math.sqrt(list.length), Math.max(cellW, cellH) * 0.55));
     list.forEach(function (c) {
@@ -3301,7 +3330,7 @@ function runSortSingles(singles) {
     viewTo: { scale: fv.scale, tx: fv.tx, ty: fv.ty }
   };
   requestAnimationFrame(sortAnimStep);
-  showToast(names.length + '色の山に分けたよ');
+  showToast(groups.length + '色の山に分けたよ');
 }
 function sortAnimStep(now) {
   if (!sortAnim) return;

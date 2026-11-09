@@ -1273,12 +1273,24 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('function setCarryMode(') !== -1 && appSrc2.indexOf('function dropCarry()') !== -1 && appSrc2.indexOf('carryMode && !drag.movedFar') !== -1, '持ち運びモード: 設定で従来モードと切り替えでき、タップで持ち上げ/タップで置く');
   ok(appSrc2.indexOf('function edgeScrollStep()') !== -1 && appSrc2.indexOf('kickEdgeScroll()') !== -1 && appSrc2.indexOf('function positionDraggedCluster()') !== -1, 'ドラッグ改善: 端までドラッグすると画面が自動スクロールする');
   ok(htmlTour.indexOf('data-opmode="carry"') !== -1 && htmlTour.indexOf('data-opmode="drag"') !== -1, '持ち運びモード: 設定シートに操作モードの切替ボタンがある');
-  ok(appSrc2.indexOf('function sortSinglesByColor(') !== -1 && appSrc2.indexOf('function colorBucketOf(') !== -1 && appSrc2.indexOf('sortAnimStep') !== -1 && appSrc2.indexOf('c.pieces.length === 1') !== -1, 'お助け: バラのピースだけを同系色の山にまとめる (塊は不動)');
+  ok(appSrc2.indexOf('function sortSinglesByColor(') !== -1 && appSrc2.indexOf('function clusterByColor(') !== -1 && appSrc2.indexOf('function colorBucketOf(') === -1 && appSrc2.indexOf('sortAnimStep') !== -1 && appSrc2.indexOf('c.pieces.length === 1') !== -1, 'お助け: バラのピースだけを相対的な色の開きで山にまとめる (塊は不動・固定色区分は廃止)');
   ok(htmlTour.indexOf('id="settingsSortBtn"') !== -1 && htmlTour.indexOf('id="sortConfirmModal"') !== -1 && htmlTour.indexOf('id="sortBtn"') === -1, 'お助け: 入口は設定シート内 + 実行前に確認モーダル (プレイ画面にボタンは無い)');
   ok(appSrc2.indexOf('function runSortSingles(') !== -1 && appSrc2.indexOf('function gridAvgColor(') !== -1 && appSrc2.indexOf('data/colors.json') !== -1, 'お助け: CORS 汚染でピクセルが読めない画像は平均色グリッドで色分けする');
   var colorsJsonT = JSON.parse(read2('data/colors.json'));
   var colorKeysT = Object.keys(colorsJsonT.colors || {});
   ok(colorsJsonT.grid === 16 && colorKeysT.length >= 390 && colorKeysT.every(function (k) { return Buffer.from(colorsJsonT.colors[k], 'base64').length === 768; }), 'お助け: 平均色グリッド (16x16) が全 URL 画像分そろっている');
+  // 相対グルーピング (clusterByColor): 残っているピース同士の色の開きで分ける
+  const grayLab = (v) => L.rgbToLab([v, v, v]);
+  const grayGroups = L.clusterByColor([30, 80, 120, 160, 200, 240].map(grayLab));
+  ok(grayGroups.length >= 3, 'お助け相対分け: 無彩色だけでも明暗の開きで複数山に分かれる (' + grayGroups.length + '山)');
+  ok(eq(grayGroups.reduce((a, g) => a.concat(g), []).sort((a, b) => a - b), [0, 1, 2, 3, 4, 5]), 'お助け相対分け: 全ピースが漏れなくどこかの山に入る');
+  ok(L.clusterByColor([118, 120, 122, 124].map(grayLab)).length === 1, 'お助け相対分け: 本当に似た色だけなら1山のまま (トースト側に倒れる)');
+  const hueGroups = L.clusterByColor([[200, 40, 40], [210, 60, 50], [190, 50, 45], [40, 60, 200], [50, 70, 210], [45, 55, 190]].map((c) => L.rgbToLab(c)));
+  ok(hueGroups.length >= 2 && hueGroups.some((g) => g.includes(0) && !g.includes(3)), 'お助け相対分け: 赤系と青系は別の山になる');
+  const gradLabs = []; for (let gv = 100; gv <= 168; gv += 4) gradLabs.push(grayLab(gv));
+  ok(L.clusterByColor(gradLabs).length >= 3, 'お助け相対分け: なだらかな明暗グラデーションでも濃さの近い同士で山に分かれる');
+  const manyLabs = []; for (let mi = 0; mi < 40; mi++) manyLabs.push(L.rgbToLab([(mi * 6) % 256, (mi * 37) % 256, (mi * 91) % 256]));
+  ok(L.clusterByColor(manyLabs).length <= 8, 'お助け相対分け: 山は最大8つまで');
   ok(css2.indexOf('bottom: calc(66px') === -1, '曲名トースト: 廃止した丸ボタンの分の上げ底 (66px) が残っていない');
   ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('class="box-single"') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを出す');
   ok(html2.indexOf('themeCredit') === -1 && html2.indexOf('start-footer') === -1, 'トップ画面: コピーライト/クレジット表記を出さない');
