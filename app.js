@@ -478,6 +478,62 @@ function shiftClusters(clusters, dx, dy) {
   });
 }
 
+/* 塊のピースが占めるセル範囲 (gx/gy はアンカーピース = 最小 id の位置)。
+ * maxX/maxY は排他 (ピースは [gx, gx+1) の正方形として扱う) */
+function clusterCellBounds(cluster, n) {
+  var anchor = pieceHome(clusterAnchorId(cluster), n);
+  var minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
+  cluster.pieces.forEach(function (id) {
+    var h = pieceHome(id, n);
+    if (h.col < minC) minC = h.col;
+    if (h.col > maxC) maxC = h.col;
+    if (h.row < minR) minR = h.row;
+    if (h.row > maxR) maxR = h.row;
+  });
+  return {
+    minX: cluster.gx + (minC - anchor.col), maxX: cluster.gx + (maxC - anchor.col) + 1,
+    minY: cluster.gy + (minR - anchor.row), maxY: cluster.gy + (maxR - anchor.row) + 1
+  };
+}
+/* 塊全体が rect (セル単位) に収まるよう gx/gy を平行移動クランプした値を返す。
+ * 塊の内部配置は変えない。収まっている場合は入力と同じ値になる (机の有限化) */
+function clampClusterToRect(cluster, n, rect) {
+  var b = clusterCellBounds(cluster, n);
+  var gx = cluster.gx, gy = cluster.gy;
+  if (b.minX < rect.x0) gx += rect.x0 - b.minX;
+  else if (b.maxX > rect.x0 + rect.w) gx -= b.maxX - (rect.x0 + rect.w);
+  if (b.minY < rect.y0) gy += rect.y0 - b.minY;
+  else if (b.maxY > rect.y0 + rect.h) gy -= b.maxY - (rect.y0 + rect.h);
+  return { gx: gx, gy: gy };
+}
+/* 塊の配列を rect 内へ正規化する (平行移動のみ)。変わらない塊は同じ
+ * オブジェクトのまま返るため冪等で、範囲内のセーブは完全一致する */
+function normalizeClustersToRect(clusters, n, rect) {
+  return clusters.map(function (cl) {
+    var c = clampClusterToRect(cl, n, rect);
+    if (c.gx === cl.gx && c.gy === cl.gy) return cl;
+    return { pieces: cl.pieces, surface: cl.surface, gx: c.gx, gy: c.gy };
+  });
+}
+/* 複数の塊の和集合が rect に収まる平行移動量 (グループドラッグ/運搬用) */
+function clampClustersTranslation(clusters, n, rect) {
+  if (!clusters.length) return { dx: 0, dy: 0 };
+  var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  clusters.forEach(function (cl) {
+    var b = clusterCellBounds(cl, n);
+    if (b.minX < minX) minX = b.minX;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxY > maxY) maxY = b.maxY;
+  });
+  var dx = 0, dy = 0;
+  if (minX < rect.x0) dx = rect.x0 - minX;
+  else if (maxX > rect.x0 + rect.w) dx = (rect.x0 + rect.w) - maxX;
+  if (minY < rect.y0) dy = rect.y0 - minY;
+  else if (maxY > rect.y0 + rect.h) dy = (rect.y0 + rect.h) - maxY;
+  return { dx: dx, dy: dy };
+}
+
 /* 散らばり領域 (セル単位の矩形): 机ワールドの広さそのもの。
  * 旧来の机ビュー (横 n+6 × 縦 n+4) の約1.9倍の面積を縦横に確保し、
  * マット盤 (n×n) をほぼ中央に含む。fitView (初期カメラ/ズーム下限) もこれを使う。 */
@@ -1627,6 +1683,8 @@ var PureLogic = {
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
   absorbMerges: absorbMerges, clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, initialScatter: initialScatter,
+  clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
+  normalizeClustersToRect: normalizeClustersToRect, clampClustersTranslation: clampClustersTranslation,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   elapsedSeconds: elapsedSeconds, sanitizeClearTime: sanitizeClearTime,
@@ -2424,7 +2482,9 @@ function newGameState(pool) {
     phase: gameStarted ? 'play' : 'box', // 'box' = スタート画面 (未開封)
     gameStarted: gameStarted,
     opening: false,
-    clusters: gameStarted ? prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy }; }) : [],
+    // 読み込み時に机の外へ出てしまったピースを内側へ救済する (机の有限化)。
+    // 範囲内のセーブは正規化が冪等なので1ピクセルも動かない
+    clusters: gameStarted ? normalizeClustersToRect(prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy }; }), Math.round(Math.sqrt(difficulty)), scatterRect(difficulty)) : [],
     elapsedBase: prog.elapsedSec || 0,
     moves: prog.moves || 0,
     previewViewed: !!prog.previewViewed,
@@ -2440,6 +2500,7 @@ function newGameState(pool) {
   };
 }
 function persistProgress() {
+  normalizeClustersInDesk(); // 保存は必ず机の中の配置だけにする (机の有限化の最終担保)
   var prog = progressFor(playDate, difficulty);
   prog.clusters = state.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: c.surface, gx: c.gx, gy: c.gy }; });
   prog.elapsedSec = currentElapsed();
@@ -2717,6 +2778,7 @@ function resizeStage() {
   // ここで全捨てして「透明なまま固定」を防ぐ (失敗カウントもリセット)。
   if (state) { state.bitmaps.clear(); state.bitmapFailures.clear(); bmpIdList = null; }
   if (state && !state.views.desk) fitViews();
+  if (state && state.views.desk) clampCamera();
   draw();
 }
 function fitView() {
@@ -2735,6 +2797,35 @@ function fitViews() {
   invalidateDeskBackdrop(); // 机カメラが変わるので背景レイヤーを作り直す
 }
 function view() { return state.views.desk; }
+/* 机の有限化 (PBI #27、設計は DESIGN.md): 境界は散らばり領域そのもの。
+ * ピースもカメラもここを出ない。クランプは平行移動のみで、塊の内部
+ * 配置・合体の成否は変えない。保存形式も変えない (値の範囲だけ制限) */
+function deskRect() { return scatterRect(state.n * state.n); }
+function clampClusterInDesk(cluster) {
+  var c = clampClusterToRect(cluster, state.n, deskRect());
+  cluster.gx = c.gx; cluster.gy = c.gy;
+}
+function clampGroupInDesk(clusters) {
+  var t = clampClustersTranslation(clusters, state.n, deskRect());
+  if (!t.dx && !t.dy) return;
+  clusters.forEach(function (cl) { cl.gx += t.dx; cl.gy += t.dy; });
+}
+/* 全塊を机の中へ正規化する (保存前の最終担保と、読み込み時の救済で使う) */
+function normalizeClustersInDesk() {
+  state.clusters.forEach(function (cl) { clampClusterInDesk(cl); });
+}
+/* カメラの行き過ぎ防止: 机の端から画面の半分より外は見せない */
+function clampCamera() {
+  var v = view();
+  if (!v || !state || !stageW || !stageH) return;
+  var r = deskRect();
+  var left = r.x0 * CELL, top = r.y0 * CELL;
+  var right = (r.x0 + r.w) * CELL, bot = (r.y0 + r.h) * CELL;
+  var minTx = stageW / 2 - right * v.scale, maxTx = stageW / 2 - left * v.scale;
+  var minTy = stageH / 2 - bot * v.scale, maxTy = stageH / 2 - top * v.scale;
+  v.tx = Math.min(maxTx, Math.max(minTx, v.tx));
+  v.ty = Math.min(maxTy, Math.max(minTy, v.ty));
+}
 function worldToScreen(wx, wy) { var v = view(); return { x: wx * v.scale + v.tx, y: wy * v.scale + v.ty }; }
 function screenToWorld(sx, sy) { var v = view(); return { x: (sx - v.tx) / v.scale, y: (sy - v.ty) / v.scale }; }
 
@@ -3141,6 +3232,9 @@ function carryClusterPos() {
       g.cluster.gx = carry.cluster.gx + g.offX;
       g.cluster.gy = carry.cluster.gy + g.offY;
     });
+    clampGroupInDesk(carry.group.map(function (g) { return g.cluster; })); // 机の端で止める (和集合)
+  } else {
+    clampClusterInDesk(carry.cluster); // 机の端で止める
   }
 }
 function startCarry(cluster, group, sx, sy, grabDX, grabDY) {
@@ -3185,6 +3279,9 @@ function positionDraggedCluster() {
       g.cluster.gx = drag.cluster.gx + g.offX;
       g.cluster.gy = drag.cluster.gy + g.offY;
     });
+    clampGroupInDesk(drag.group.map(function (g) { return g.cluster; })); // 机の端で止める (和集合)
+  } else {
+    clampClusterInDesk(drag.cluster); // 机の端で止める
   }
 }
 /* ドラッグ中の端スクロール: ピースを画面端に押し当て続けるとカメラが
@@ -3204,6 +3301,7 @@ function edgeScrollStep() {
   else if (drag.lastY > r.height - M) vy = -MAXV * (1 - (r.height - drag.lastY) / M);
   if (!vx && !vy) return;
   view().tx += vx; view().ty += vy;
+  clampCamera(); // 端スクロールでも机の外へ行き過ぎない
   positionDraggedCluster();
   requestDraw();
   kickEdgeScroll();
@@ -3499,6 +3597,7 @@ stage.addEventListener('pointermove', function (ev) {
     var wx = (pinch.cx - pinch.tx0) / pinch.scale0, wy = (pinch.cy - pinch.ty0) / pinch.scale0;
     v.scale = ns;
     v.tx = cx - wx * ns; v.ty = cy - wy * ns;
+    clampCamera();
     updateZoomLabel();
     requestDraw(); // ピンチは連続発火するので rAF 集約 (requestDraw のコメント参照)
     return;
@@ -3531,6 +3630,7 @@ stage.addEventListener('pointermove', function (ev) {
   if (panStart) {
     view().tx = panStart.tx + (p.x - panStart.sx);
     view().ty = panStart.ty + (p.y - panStart.sy);
+    clampCamera();
     requestDraw(); // パンも pointermove 連続発火なので rAF 集約
   }
 });
@@ -3666,6 +3766,7 @@ function zoomBy(factor) {
   var w = screenToWorld(cx, cy);
   v.scale = clampZoom(v.scale * factor);
   v.tx = cx - w.x * v.scale; v.ty = cy - w.y * v.scale;
+  clampCamera();
   updateZoomLabel();
   draw();
 }
@@ -3681,6 +3782,7 @@ stage.addEventListener('wheel', function (ev) {
   var w = screenToWorld(p.x, p.y);
   v.scale = clampZoom(v.scale * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
   v.tx = p.x - w.x * v.scale; v.ty = p.y - w.y * v.scale;
+  clampCamera();
   updateZoomLabel();
   requestDraw(); // ホイールは連続発火するので rAF 集約
 }, { passive: false });
@@ -4360,24 +4462,30 @@ function downloadWallShareImage(cv) {
  * 重なり順で壁全体を1枚に描く。違いはフッターなし、額の盤面は小さめ
  * (288px) で軽くする、描画単位は壁画面に依存しない仮想幅 412 で固定。
  * 壁画面を開いていなくても描ける */
-function renderWallPreviewCanvas() {
+/* aspect (帯の幅/高さ) が壁より横長なときは、壁の下地 (壁紙と床) だけを
+ * 左右へ継ぎ目なく延長して帯いっぱいに描く。額・小物・猫の位置と大きさは
+ * 壁本来の座標のまま変形しない (ユーザー指示: 横の切れ目を見せない) */
+function renderWallPreviewCanvas(aspect) {
   var s = wallSize();
   var unit = 412;
   var worldW = unit * s.w, worldH = unit * 1.25 * s.h;
-  var k = Math.min(2, 824 / worldW);
+  var extW = worldW;
+  if (aspect && worldW / worldH < aspect) extW = Math.round(worldH * aspect);
+  var k = Math.min(2, 824 / extW);
   if (k < 0.25) k = 0.25;
   var W = Math.round(worldW * k), H = Math.round(worldH * k);
+  var EW = Math.round(extW * k), padX = Math.round((EW - W) / 2);
   var cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
+  cv.width = EW; cv.height = H;
   var ctx = cv.getContext('2d');
   if (!ctx) return Promise.resolve(null);
-  paintWallBase(ctx, W, H, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
+  paintWallBase(ctx, EW, H, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
   var flush = function () {
     return new Promise(function (res) { requestAnimationFrame(function () { requestAnimationFrame(res); }); });
   };
   var frameJobs = store.wall.frames.map(function (f) {
     return buildShareFrameCanvas(f, unit * k, 288).then(function (r) {
-      ctx.drawImage(r.cv, Math.round(f.x * W - r.size / 2), Math.round(f.y * H - r.size / 2), r.size, r.size);
+      ctx.drawImage(r.cv, Math.round(padX + f.x * W - r.size / 2), Math.round(f.y * H - r.size / 2), r.size, r.size);
     });
   });
   return Promise.all(frameJobs).then(flush).then(function () {
@@ -4393,7 +4501,7 @@ function renderWallPreviewCanvas() {
           ctx.shadowColor = 'rgba(90,70,40,0.25)';
           ctx.shadowBlur = 5 * k;
           ctx.shadowOffsetY = 3 * k;
-          ctx.drawImage(img, p.x * W - wpx / 2, p.y * H - hpx / 2, wpx, hpx);
+          ctx.drawImage(img, padX + p.x * W - wpx / 2, p.y * H - hpx / 2, wpx, hpx);
           ctx.restore();
           res();
         };
@@ -4442,6 +4550,15 @@ function wallPreviewKey() {
   var w = store.wall;
   return JSON.stringify([w.paper, w.sizeStage, w.frames, w.placed, w.catsPlaced, store.records.length]);
 }
+/* 帯のアスペクト (幅/高さ)。壁の下地を左右へ延長する量を決めるため
+ * キャッシュキーにも混ぜる (向き・サイズが変わったら描き直す) */
+function wallPreviewAspect() {
+  var s = wallSize();
+  var dispW = ($('startWallBand') || {}).clientWidth || 412;
+  var natH = dispW * (1.25 * s.h) / s.w;
+  var cap = window.innerWidth <= 700 ? window.innerHeight * 0.28 : Infinity;
+  return dispW / Math.max(1, Math.min(natH, cap));
+}
 function updateWallPreview() {
   var band = $('startWallBand'), cv = $('wallPreviewCanvas');
   if (!band || !cv || !store.wall) return;
@@ -4450,26 +4567,35 @@ function updateWallPreview() {
   var natH = dispW * (1.25 * s.h) / s.w;
   var cap = window.innerWidth <= 700 ? window.innerHeight * 0.28 : Infinity;
   band.style.height = Math.round(Math.min(natH, cap)) + 'px';
-  var key = wallPreviewKey();
+  var aspect = wallPreviewAspect();
+  var key = wallPreviewKey() + '@' + Math.round(aspect * 100);
   var ctx = cv.getContext('2d');
   if (!ctx) return;
+  // 案1 (全体フィット + 下地の左右延長): 壁全体が帯に収まるよう描き、
+  // 帯のほうが横長な分は壁紙と床を左右へ継ぎ目なく伸ばして埋める。
+  // 紙色の余白や横の切れ目は出ない (額・小物・猫は変形しない)
+  var bw = Math.max(2, Math.round(dispW * 2)), bh = Math.max(2, Math.round(Math.min(natH, cap) * 2));
   if (wallPreviewCache.key === key && wallPreviewCache.cv) {
-    cv.width = wallPreviewCache.cv.width; cv.height = wallPreviewCache.cv.height;
-    ctx.drawImage(wallPreviewCache.cv, 0, 0);
+    var srcC = wallPreviewCache.cv;
+    cv.width = bw; cv.height = bh;
+    ctx.fillStyle = '#f7f2e7';
+    ctx.fillRect(0, 0, bw, bh);
+    var sc = Math.min(bw / srcC.width, bh / srcC.height);
+    var dw = Math.round(srcC.width * sc), dh = Math.round(srcC.height * sc);
+    ctx.drawImage(srcC, Math.round((bw - dw) / 2), Math.round((bh - dh) / 2), dw, dh);
     return;
   }
-  // まず壁紙だけの即席で埋める (額・小物・猫の重い描画は後追い)
-  var qw = Math.max(2, Math.round(dispW)), qh = Math.max(2, Math.round(natH));
-  cv.width = qw; cv.height = qh;
-  paintWallBase(ctx, qw, qh, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
+  // まず壁紙だけの即席で帯いっぱいに埋める (額・小物・猫の重い描画は後追い)
+  cv.width = bw; cv.height = bh;
+  paintWallBase(ctx, bw, bh, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
   if (wallPreviewBusyKey === key) return;
   wallPreviewBusyKey = key;
   setTimeout(function () {
-    renderWallPreviewCanvas().then(function (full) {
+    renderWallPreviewCanvas(aspect).then(function (full) {
       wallPreviewBusyKey = '';
       if (!full) return;
       wallPreviewCache = { key: key, cv: full };
-      if (wallPreviewKey() === key && !$('startView').hidden) updateWallPreview();
+      if (wallPreviewKey() + '@' + Math.round(wallPreviewAspect() * 100) === key && !$('startView').hidden) updateWallPreview();
     });
   }, 30);
 }
@@ -6304,6 +6430,13 @@ function restartPuzzle() {
 
 function wireControls() {
   $('zoomInBtn').addEventListener('click', function () { zoomBy(1.3); });
+  // 全体表示: 机全体が見える初期視点へ戻す (迷子時の帰り道、机の有限化)
+  $('fitViewBtn').addEventListener('click', function () {
+    if (!state || !view()) return;
+    state.views.desk = fitView();
+    updateZoomLabel();
+    draw();
+  });
   $('zoomOutBtn').addEventListener('click', function () { zoomBy(1 / 1.3); });
   $('settingsBtn').addEventListener('click', openSettings);
   $('settingsSortBtn').addEventListener('click', function () { $('sortConfirmModal').hidden = false; });

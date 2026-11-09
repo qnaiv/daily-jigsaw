@@ -1295,6 +1295,28 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('id="giftBox"') !== -1 && html2.indexOf('box-single wallband-box') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを壁帯に重ねて出す (PBI #24 案A)');
   ok(html2.indexOf('id="startWallBand"') !== -1 && html2.indexOf('id="wallPreviewCanvas"') !== -1 && html2.indexOf('start-wallwrap') !== -1 && appSrc2.indexOf('function updateWallPreview(') !== -1 && appSrc2.indexOf('function renderWallPreviewCanvas(') !== -1 && appSrc2.indexOf('wallPreviewCache') !== -1, '壁帯プレビュー: スタート画面最上部に飾った壁を描き、壁が変わらない間はキャッシュを使う');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
+  ok(appSrc2.indexOf('renderWallPreviewCanvas(aspect)') !== -1 && appSrc2.indexOf('padX + f.x * W') !== -1 && appSrc2.indexOf('padX + p.x * W') !== -1, '壁帯プレビュー: 帯が横長な分は下地を左右延長し、額と小物と猫は壁座標のまま描く (横の切れ目なし)');
+  ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決めキャッシュキーに混ぜる');
+  // 机の有限化 (PBI #27): クランプは平行移動のみ、範囲内は冪等でセーブが変わらない
+  const deskRect36 = L.scatterRect(36);
+  const clBounds = L.clusterCellBounds({ pieces: [0, 1, 7], gx: 2, gy: 3 }, 6);
+  ok(clBounds.minX === 2 && clBounds.maxX === 4 && clBounds.minY === 3 && clBounds.maxY === 5, '有限化: 塊のセル範囲はアンカー基準で求まる');
+  const insideCl = { pieces: [0, 1, 7], surface: 'desk', gx: 0, gy: 0 };
+  ok(L.normalizeClustersToRect([insideCl], 6, deskRect36)[0] === insideCl, '有限化: 範囲内の塊は同じオブジェクトのまま (冪等・セーブ無変化)');
+  const farCl = { pieces: [5], surface: 'desk', gx: -4000, gy: 9999 };
+  const rescuedPos = L.clampClusterToRect(farCl, 6, deskRect36);
+  const rescuedBounds = L.clusterCellBounds({ pieces: [5], gx: rescuedPos.gx, gy: rescuedPos.gy }, 6);
+  ok(rescuedBounds.minX === deskRect36.x0 && rescuedBounds.maxY === deskRect36.y0 + deskRect36.h, '有限化: 遠くへ飛んだピースは最も近い机の端に着地する');
+  const normFar = L.normalizeClustersToRect([farCl], 6, deskRect36)[0];
+  ok(normFar !== farCl && normFar.pieces === farCl.pieces && normFar.gx === rescuedPos.gx, '有限化: 正規化は pieces を変えず位置だけ直す (合体は壊れない)');
+  const allPieces36 = []; for (let api2 = 0; api2 < 36; api2++) allPieces36.push(api2);
+  const bigCl = { pieces: allPieces36, surface: 'desk', gx: deskRect36.x0, gy: deskRect36.y0 };
+  ok(L.clampClusterToRect(bigCl, 6, deskRect36).gx === bigCl.gx && L.clampClusterToRect(bigCl, 6, deskRect36).gy === bigCl.gy, '有限化: 盤面全体の塊でも机に収まり位置が壊れない');
+  const grpT = L.clampClustersTranslation([{ pieces: [0], gx: -8, gy: 0 }, { pieces: [1], gx: -3, gy: 0 }], 6, deskRect36);
+  ok(grpT.dx === 3 && grpT.dy === 0, '有限化: グループは和集合でクランプされ相対配置が保たれる');
+  ok(appSrc2.indexOf('function clampCamera(') !== -1 && (appSrc2.match(/clampCamera\(\);/g) || []).length >= 5, '有限化: カメラクランプがパン/ピンチ/端スクロール/ズーム/ホイールの全経路に入っている');
+  ok(appSrc2.indexOf('normalizeClustersToRect(prog.clusters') !== -1 && appSrc2.indexOf('normalizeClustersInDesk(); // 保存は必ず') !== -1, '有限化: 読み込み時の救済と保存前の正規化が入っている');
+  ok(html2.indexOf('id="fitViewBtn"') !== -1, '有限化: プレイ画面に全体表示ボタンがある');
   ok(html2.indexOf('themeCredit') === -1 && html2.indexOf('start-footer') === -1, 'トップ画面: コピーライト/クレジット表記を出さない');
   ok(appSrc2.indexOf('function syncPlayStage(') !== -1 && appSrc2.indexOf('nextStage(store.records, pool)') !== -1 && appSrc2.indexOf("'ステージ ' + playStage") !== -1 && appSrc2.indexOf('function maybeAdvanceRound(') === -1, 'ステージ制: 未挑戦ステージを順に進め、24時間ロックは無い');
   ok(appSrc2.indexOf('function processRewardsOnClear(firstClear)') !== -1 && appSrc2.indexOf('processRewardsOnClear(isFirstStageClear)') !== -1, 'ごほうび: ステージ初クリアのときだけ抽選する');

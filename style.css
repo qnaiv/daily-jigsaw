@@ -289,8 +289,8 @@ button { font: inherit; cursor: pointer; }
   overflow: hidden;
 }
 #wallPreviewCanvas {
-  position: absolute; left: 0; bottom: 0;
-  width: 100%; height: auto; display: block;
+  position: absolute; left: 0; top: 0;
+  width: 100%; height: 100%; display: block;
   cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
 #wallPreviewCanvas:focus-visible { outline: 2px solid var(--brass); outline-offset: -2px; }
@@ -512,6 +512,7 @@ button { font: inherit; cursor: pointer; }
   background: transparent; color: #fff; font-size: 17px; line-height: 1;
 }
 .zoom-btn:active { background: rgba(255,255,255,.25); }
+.zoom-fit { font-size: 12.5px; font-weight: 700; padding: 0 9px; }
 #zoomLabel { color: #fff; font-size: 12px; min-width: 40px; text-align: center; }
 
 /* ミニマップ: 机でカメラ移動中だけ HUD の下にフェードインする (操作対象ではない) */
