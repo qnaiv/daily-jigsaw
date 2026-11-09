@@ -5063,6 +5063,15 @@ function buildDifficultySeg() {
     star.className = 'diff-star ' + (tier || 'none');
     star.textContent = tier ? (tier === 'royal' ? '★★' : '★') : '';
     b.appendChild(star);
+    /* 今のラウンドでクリア済みの難易度には右上に ✓ バッジ (ユーザー指定 A案) */
+    var cleared = !!(store && playDate && store.records && store.records.some(function (r) { return r.date === playDate && r.pieces === d; }));
+    if (cleared) {
+      b.classList.add('cleared');
+      var badge = document.createElement('span');
+      badge.className = 'diff-check-badge';
+      badge.textContent = '✓';
+      b.appendChild(badge);
+    }
     b.setAttribute('aria-pressed', sel ? 'true' : 'false');
     b.addEventListener('click', function () {
       if (d === difficulty) return;
