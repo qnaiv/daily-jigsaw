@@ -1793,6 +1793,25 @@ function setUiTheme(name) {
   saveStore();
   applyTheme();
 }
+/* ---------- 操作モード (ドラッグ / 持ち運び) ----------
+ * ドラッグ = 従来どおり掴んで引く。持ち運び = ピースをタップで持ち上げ、
+ * カメラ (パン/ピンチ) を自由に動かしてからタップで置く。大きい難易度で
+ * 遠くへ運ぶとき用。持ち運びモードでも押しながらのドラッグは従来どおり
+ * 使え、タップ (ほぼ動かさず離す) だけが「持ち上げ」になる。
+ * 設定はテーマと同じ流儀で store.carryMode に保存する */
+var carryMode = store.carryMode === true;
+function syncOpModeButtons() {
+  document.querySelectorAll('[data-opmode]').forEach(function (b) {
+    b.classList.toggle('active', (b.getAttribute('data-opmode') === 'carry') === carryMode);
+  });
+}
+function setCarryMode(on) {
+  carryMode = !!on;
+  store.carryMode = carryMode;
+  saveStore();
+  syncOpModeButtons();
+  if (!carryMode) dropCarry(); // 従来モードに戻したら運び中のピースはその場に置く
+}
 /* ---------- サウンド (BGM / SE) ----------
  * 設定はテーマと同じ流儀で store に保存する (bgmOn / bgmVolume / seOn)。
  * 旧バージョンの保存データにはキーが無いので、その場合は既定値を使う。 */
@@ -2835,6 +2854,7 @@ function requestDraw() {
 
 function draw() {
   if (!state || !state.srcCanvas || !state.views.desk) return;
+  carryClusterPos();
   sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   var v = view(), n = state.n;
   drawDeskBackground(v);
@@ -2876,6 +2896,16 @@ function draw() {
         if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
         strokePiece(id, wx, wy, brass, 3, hexToRgba(brass, 0.16));
       });
+    });
+  }
+  // 持ち運び中: 運んでいる塊の輪郭を金色でハイライトする
+  if (carry) {
+    var cAnchor = pieceHome(clusterAnchorId(carry.cluster), n);
+    carry.cluster.pieces.forEach(function (id) {
+      var cHome = pieceHome(id, n);
+      var cwx = (carry.cluster.gx + (cHome.col - cAnchor.col)) * CELL, cwy = (carry.cluster.gy + (cHome.row - cAnchor.row)) * CELL;
+      if (cwx + CELL * 1.4 < wTl.x || cwx - CELL * 0.4 > wBr.x || cwy + CELL * 1.4 < wTl.y || cwy - CELL * 0.4 > wBr.y) return;
+      strokePiece(id, cwx, cwy, '#e8b64c', 3.5, 'rgba(232,182,76,0.20)');
     });
   }
   // 範囲選択の矩形 (画面座標でそのまま描く)
@@ -3050,6 +3080,87 @@ function hitCluster(sx, sy) {
 
 /* ---------- 操作 (ドラッグ / ピンチ / パン / ズーム) ---------- */
 var drag = null;         // { cluster, grabDX, grabDY, moved, group }
+var carry = null;        // 持ち運び中 { cluster, group, anchorX, anchorY, grabDX, grabDY }
+/* 運んでいる塊は「掴んだ画面位置」に留まるよう、カメラが動くたびに
+ * ワールド座標を引き直す (塊は画面に張り付き、世界が下を流れる) */
+function carryClusterPos() {
+  if (!carry) return;
+  var w = screenToWorld(carry.anchorX, carry.anchorY);
+  carry.cluster.gx = w.x / CELL - carry.grabDX;
+  carry.cluster.gy = w.y / CELL - carry.grabDY;
+  if (carry.group) {
+    carry.group.forEach(function (g) {
+      if (g.cluster === carry.cluster) return;
+      g.cluster.gx = carry.cluster.gx + g.offX;
+      g.cluster.gy = carry.cluster.gy + g.offY;
+    });
+  }
+}
+function startCarry(cluster, group, sx, sy, grabDX, grabDY) {
+  carry = { cluster: cluster, group: group, anchorX: sx, anchorY: sy, grabDX: grabDX, grabDY: grabDY };
+  draw();
+}
+/* 運び中の塊をその場に置く (グリッド吸着・合体・保存は settleDrag に任せる) */
+function dropCarry() {
+  if (!carry) return;
+  var cl = carry.cluster, group = carry.group;
+  carry = null;
+  drag = { cluster: cl, group: group, moved: true, grabDX: 0, grabDY: 0, sx: 0, sy: 0, lastX: 0, lastY: 0, movedFar: true };
+  settleDrag();
+}
+/* タップされた塊を持ち上げる (掴み始めの処理はドラッグ開始と共通) */
+function beginCarryForCluster(hit, p) {
+  if (state.cleared) return;
+  if (state.clusters.indexOf(hit.cluster) < 0) return; // 直前の配置で合体済みなら持ち上げない
+  var w = screenToWorld(p.x, p.y);
+  var inSelection = selection.has(hit.cluster);
+  if (!inSelection) clearSelection();
+  state.clusters.splice(state.clusters.indexOf(hit.cluster), 1);
+  state.clusters.push(hit.cluster);
+  var group = null;
+  if (inSelection && selection.size > 1) {
+    group = Array.from(selection).map(function (c) {
+      return { cluster: c, offX: c.gx - hit.cluster.gx, offY: c.gy - hit.cluster.gy };
+    });
+  }
+  seGrab();
+  startTimerOnce();
+  startCarry(hit.cluster, group, p.x, p.y, w.x / CELL - hit.cluster.gx, w.y / CELL - hit.cluster.gy);
+}
+/* ドラッグ中の塊 (グループ含む) を現在のポインタ位置へ置く */
+function positionDraggedCluster() {
+  var w = screenToWorld(drag.lastX, drag.lastY);
+  drag.cluster.gx = w.x / CELL - drag.grabDX;
+  drag.cluster.gy = w.y / CELL - drag.grabDY;
+  if (drag.group) {
+    drag.group.forEach(function (g) {
+      if (g.cluster === drag.cluster) return;
+      g.cluster.gx = drag.cluster.gx + g.offX;
+      g.cluster.gy = drag.cluster.gy + g.offY;
+    });
+  }
+}
+/* ドラッグ中の端スクロール: ピースを画面端に押し当て続けるとカメラが
+ * 自動で流れ、そのまま遠くまで運べる。速度は端への近さで変わる */
+var edgeScrollRaf = 0;
+function kickEdgeScroll() { if (!edgeScrollRaf) edgeScrollRaf = requestAnimationFrame(edgeScrollStep); }
+function stopEdgeScroll() { if (edgeScrollRaf) { cancelAnimationFrame(edgeScrollRaf); edgeScrollRaf = 0; } }
+function edgeScrollStep() {
+  edgeScrollRaf = 0;
+  if (!drag) return;
+  var r = stage.getBoundingClientRect();
+  var M = 52, MAXV = 16;
+  var vx = 0, vy = 0;
+  if (drag.lastX < M) vx = MAXV * (1 - drag.lastX / M);
+  else if (drag.lastX > r.width - M) vx = -MAXV * (1 - (r.width - drag.lastX) / M);
+  if (drag.lastY < M) vy = MAXV * (1 - drag.lastY / M);
+  else if (drag.lastY > r.height - M) vy = -MAXV * (1 - (r.height - drag.lastY) / M);
+  if (!vx && !vy) return;
+  view().tx += vx; view().ty += vy;
+  positionDraggedCluster();
+  requestDraw();
+  kickEdgeScroll();
+}
 var pointers = new Map();
 var pinch = null;        // { d0, scale0, cx, cy, tx0, ty0 }
 var panStart = null;     // { sx, sy, tx, ty }
@@ -3123,6 +3234,24 @@ stage.addEventListener('pointerdown', function (ev) {
     };
     return;
   }
+  if (carry && pointers.size === 1) {
+    var hitC = state.cleared ? null : hitCluster(p.x, p.y);
+    if (hitC && hitC.cluster === carry.cluster) {
+      dropCarry(); // 運んでいる塊自体をタップ → その場に置く
+      return;
+    }
+    if (hitC) {
+      dropCarry(); // 運んでいたものを置いて、タップした塊を持ち上げる
+      beginCarryForCluster(hitC, p);
+      return;
+    }
+    // 空き地: タップなら置く、10px 超動いたらパン、長押しでは何もしない
+    pressPending = {
+      id: ev.pointerId, sx: p.x, sy: p.y, tx: view().tx, ty: view().ty, wx: 0, wy: 0, carryTap: true,
+      timer: setTimeout(function () { /* 運び中は範囲選択に入らない */ }, LONG_PRESS_MS)
+    };
+    return;
+  }
   var hit = state.cleared ? null : hitCluster(p.x, p.y);
   if (hit) {
     var w = screenToWorld(p.x, p.y);
@@ -3135,7 +3264,8 @@ stage.addEventListener('pointerdown', function (ev) {
     drag = {
       cluster: hit.cluster,
       grabDX: w.x / CELL - hit.cluster.gx, grabDY: w.y / CELL - hit.cluster.gy,
-      moved: false, group: null
+      moved: false, group: null,
+      sx: p.x, sy: p.y, lastX: p.x, lastY: p.y, movedFar: false
     };
     if (inSelection && selection.size > 1) {
       // 範囲選択のグループドラッグ: 選択全塊の相対オフセットを掴んだ塊基準で保持する
@@ -3202,17 +3332,10 @@ stage.addEventListener('pointermove', function (ev) {
   }
   if (drag) {
     drag.moved = true;
-    var w = screenToWorld(p.x, p.y);
-    drag.cluster.gx = w.x / CELL - drag.grabDX;
-    drag.cluster.gy = w.y / CELL - drag.grabDY;
-    if (drag.group) {
-      // 範囲選択: 他の選択塊も相対位置を保って追随する
-      drag.group.forEach(function (g) {
-        if (g.cluster === drag.cluster) return;
-        g.cluster.gx = drag.cluster.gx + g.offX;
-        g.cluster.gy = drag.cluster.gy + g.offY;
-      });
-    }
+    drag.lastX = p.x; drag.lastY = p.y;
+    if (Math.hypot(p.x - drag.sx, p.y - drag.sy) > PRESS_MOVE_PX) drag.movedFar = true;
+    positionDraggedCluster();
+    kickEdgeScroll();
     requestDraw(); // ドラッグは pointermove 連続発火なので rAF 集約
     return;
   }
@@ -3231,7 +3354,8 @@ function endPointer(ev) {
     var pp = pressPending;
     pressPending = null;
     if (wasTap && !cancelled) {
-      clearSelection(); // 空き地を短くタップ → 選択解除
+      if (pp.carryTap) dropCarry(); // 運び中の空き地タップ → その場に置く
+      else clearSelection(); // 空き地を短くタップ → 選択解除
     }
   }
   if (selRect && selRect.id === ev.pointerId) {
@@ -3247,7 +3371,14 @@ function endPointer(ev) {
     panStart = { sx: rest.x, sy: rest.y, tx: view().tx, ty: view().ty };
   }
   if (pointers.size === 0) {
-    if (drag) settleDrag();
+    if (drag) {
+      if (carryMode && !drag.movedFar && !cancelled) {
+        // 持ち運びモードでほぼ動かさず離した = タップ → そのまま持ち上げる
+        var d = drag;
+        drag = null;
+        startCarry(d.cluster, d.group, d.lastX, d.lastY, d.grabDX, d.grabDY);
+      } else settleDrag();
+    }
     panStart = null;
   }
 }
@@ -3277,6 +3408,7 @@ function settleDrag() {
   var group = drag.group;
   var wasMoved = drag.moved;
   drag = null;
+  stopEdgeScroll();
   if (!wasMoved) { draw(); return; }
   seDrop(); // 置いた音 (木の「トッ」)
   state.moves++;
@@ -5269,6 +5401,7 @@ function showPlay() {
 }
 /* スタート画面に戻る (設定の「スタート画面に戻る」と、クリア画面を閉じたときの共通動線) */
 function goToStartScreen() {
+  carry = null; // 画面を離れたら運び中は解除する (配置はせず、その場の座標のまま)
   if (state) persistProgress();
   bgmEnterTitle(); // タイトル画面では音を出さない (id 19)
   uiHome = true;
@@ -5870,6 +6003,10 @@ function wireControls() {
   document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
     b.addEventListener('click', function () { setUiTheme(b.getAttribute('data-theme-opt')); });
   });
+  document.querySelectorAll('[data-opmode]').forEach(function (b) {
+    b.addEventListener('click', function () { setCarryMode(b.getAttribute('data-opmode') === 'carry'); });
+  });
+  syncOpModeButtons();
   /* サウンド設定: 設定シートとスタート画面の両方に同じ設定のコントロールが
    * あり、変更は即保存 + 即適用、表示は syncAudioControls で両画面を一致
    * させる。クレジット一覧は BGM_TRACKS から生成する (曲名・作者・ライセンス)。 */
@@ -6330,6 +6467,7 @@ function renderStartScreen() {
 
 /* ---------- ゲーム開始 ---------- */
 function startGame(pool) {
+  carry = null;
   syncPlayStage(pool);
   state = newGameState(pool);
   selection.clear(); // 塊が作り直されるので選択は引き継がない

@@ -1270,6 +1270,9 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('function startFullTour()') !== -1 && appSrc2.indexOf('tourMarkSeen') !== -1 && appSrc2.indexOf('function openTutorial()') === -1, 'ツアー: あそびかたから全ステップ再生でき、旧モーダルは廃止');
   const htmlTour = require('fs').readFileSync(__dirname + '/index.html', 'utf8');
   ok(htmlTour.indexOf('id="tourOverlay"') !== -1 && htmlTour.indexOf('id="tutorialModal"') === -1, 'ツアー: index.html はコーチマーク用オーバーレイを持ち、旧モーダルは無い');
+  ok(appSrc2.indexOf('function setCarryMode(') !== -1 && appSrc2.indexOf('function dropCarry()') !== -1 && appSrc2.indexOf('carryMode && !drag.movedFar') !== -1, '持ち運びモード: 設定で従来モードと切り替えでき、タップで持ち上げ/タップで置く');
+  ok(appSrc2.indexOf('function edgeScrollStep()') !== -1 && appSrc2.indexOf('kickEdgeScroll()') !== -1 && appSrc2.indexOf('function positionDraggedCluster()') !== -1, 'ドラッグ改善: 端までドラッグすると画面が自動スクロールする');
+  ok(htmlTour.indexOf('data-opmode="carry"') !== -1 && htmlTour.indexOf('data-opmode="drag"') !== -1, '持ち運びモード: 設定シートに操作モードの切替ボタンがある');
   ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('class="box-single"') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを出す');
   ok(html2.indexOf('themeCredit') === -1 && html2.indexOf('start-footer') === -1, 'トップ画面: コピーライト/クレジット表記を出さない');
   ok(appSrc2.indexOf('function syncPlayStage(') !== -1 && appSrc2.indexOf('nextStage(store.records, pool)') !== -1 && appSrc2.indexOf("'ステージ ' + playStage") !== -1 && appSrc2.indexOf('function maybeAdvanceRound(') === -1, 'ステージ制: 未挑戦ステージを順に進め、24時間ロックは無い');
