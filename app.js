@@ -1303,7 +1303,9 @@ function emptyWall() {
   return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], sizeStage: 0, pendingExpand: false, lastDate: null, grantDates: {}, history: {}, catsOwned: [CAT_STARTER_ID], catsPlaced: [{ id: CAT_STARTER_ID, x: 0.5 }] };
 }
 /* 保存データの形が崩れていても使える形に寄せる (旧データには wall 自体がない)。
- * placed は配列順 = 重なり順を保ち、同じアイテム/記録の重複は先勝ちで落とす。 */
+ * placed は配列順 = 重なり順を保つ。壁アイテムは同じものを複数置ける
+ * (2026-11-09 PBI 21) ので重複は落とさず、各配置に uid を振って区別する。
+ * 額 (frames) の重複は従来どおり先勝ちで落とす。 */
 function normalizeWall(w) {
   var out = emptyWall();
   if (!w || typeof w !== 'object') return out;
@@ -1323,12 +1325,18 @@ function normalizeWall(w) {
     out.pending = w.pending.filter(function (id) { return !!collectibleById(id); });
   }
   if (Array.isArray(w.placed)) {
-    var placedIds = {};
+    var uidSeq = 0, uidSeen = {};
     w.placed.forEach(function (p) {
-      if (p && wallItemById(p.id) && out.owned.indexOf(p.id) >= 0 && typeof p.x === 'number' && typeof p.y === 'number' && !placedIds[p.id]) {
-        placedIds[p.id] = true;
+      var m = p && typeof p.uid === 'string' ? /^u(\d+)$/.exec(p.uid) : null;
+      if (m) uidSeq = Math.max(uidSeq, parseInt(m[1], 10));
+    });
+    w.placed.forEach(function (p) {
+      if (p && wallItemById(p.id) && out.owned.indexOf(p.id) >= 0 && typeof p.x === 'number' && typeof p.y === 'number') {
+        var uid = (typeof p.uid === 'string' && /^u\d+$/.test(p.uid) && !uidSeen[p.uid]) ? p.uid : null;
+        if (!uid) { uidSeq += 1; uid = 'u' + uidSeq; }
+        uidSeen[uid] = true;
         var c = clampItemPos(p.x, p.y);
-        out.placed.push({ id: p.id, x: c.x, y: c.y });
+        out.placed.push({ id: p.id, uid: uid, x: c.x, y: c.y });
       }
     });
   }
@@ -1539,6 +1547,15 @@ function buildShareText(res) {
     GAME_URL + '\n#まいにちジグソー';
 }
 
+/* 壁アイテムの配置 uid の次番号 ('u' + 数字)。既存の最大値 + 1 を返す */
+function nextWallItemUid(placed) {
+  var max = 0;
+  (placed || []).forEach(function (p) {
+    var m = p && typeof p.uid === 'string' ? /^u(\d+)$/.exec(p.uid) : null;
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return 'u' + (max + 1);
+}
 var PureLogic = {
   BASE_DATE_FALLBACK: BASE_DATE_FALLBACK, DIFFICULTIES: DIFFICULTIES,
   TABSIZE: TABSIZE, JITTER: JITTER, SNAP_DIST: SNAP_DIST,
@@ -1582,7 +1599,7 @@ var PureLogic = {
   WALL_STARTER_ITEMS: WALL_STARTER_ITEMS,
   wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
   CAT_CATALOG: CAT_CATALOG, catById: catById, collectibleById: collectibleById, CAT_FEET_Y: CAT_FEET_Y,
-  emptyWall: emptyWall, normalizeWall: normalizeWall,
+  emptyWall: emptyWall, normalizeWall: normalizeWall, nextWallItemUid: nextWallItemUid,
   wallDrawEligible: wallDrawEligible, drawWallItem: drawWallItem,
   grantWallItems: grantWallItems, recordWallHistory: recordWallHistory,
   clampItemPos: clampItemPos, resetAllData: resetAllData,
@@ -3775,6 +3792,10 @@ function wallPlacedEntry(id) {
   for (var i = 0; i < store.wall.placed.length; i++) if (store.wall.placed[i].id === id) return store.wall.placed[i];
   return null;
 }
+function wallPlacedByUid(uid) {
+  for (var i = 0; i < store.wall.placed.length; i++) if (store.wall.placed[i].uid === uid) return store.wall.placed[i];
+  return null;
+}
 function wallFrameEntry(key) {
   for (var i = 0; i < store.wall.frames.length; i++) if (store.wall.frames[i].recordKey === key) return store.wall.frames[i];
   return null;
@@ -4046,13 +4067,13 @@ function buildWallItemEl(p) {
   el.style.top = (p.y * 100) + '%';
   el.style.width = (wallItemWidthRatio(it) * 100 / wallSize().w) + '%';
   el.dataset.kind = 'item';
-  el.dataset.key = p.id;
+  el.dataset.key = p.uid;
   var img = document.createElement('img');
   img.src = 'wall-items/' + it.id + '.webp';
   img.alt = it.name;
   img.draggable = false;
   el.appendChild(img);
-  attachWallDrag(el, 'item', p.id);
+  attachWallDrag(el, 'item', p.uid);
   return el;
 }
 /* ---------- 額装フレームの Canvas 描画 (承認済みレシピ) ----------
@@ -4676,7 +4697,7 @@ function renderBoardCanvasAt(rec, sizePx) {
 
 /* 壁要素のドラッグ (移動) とタップ (選択)。アイテムは掴んだ順に最前面へ */
 function wallDragEntry(kind, key) {
-  if (kind === 'item') return wallPlacedEntry(key);
+  if (kind === 'item') return wallPlacedByUid(key);
   if (kind === 'cat') return wallCatPlacedEntry(key);
   return wallFrameEntry(key);
 }
@@ -4742,9 +4763,13 @@ function updateWallSelBar() {
   if (!wallSelected) { bar.hidden = true; return; }
   bar.hidden = false;
   var isFrame = wallSelected.kind === 'frame';
-  $('wallSelName').textContent = isFrame
-    ? '額装パズル'
-    : ((collectibleById(wallSelected.key) || {}).name || '');
+  var selName = '';
+  if (isFrame) selName = '額装パズル';
+  else if (wallSelected.kind === 'item') {
+    var selEntry = wallPlacedByUid(wallSelected.key);
+    selName = selEntry ? ((wallItemById(selEntry.id) || {}).name || '') : '';
+  } else selName = (collectibleById(wallSelected.key) || {}).name || '';
+  $('wallSelName').textContent = selName;
   $('wallFrameColors').hidden = !isFrame;
   if (isFrame) renderFrameColorSwatches();
 }
@@ -4775,7 +4800,7 @@ function renderFrameColorSwatches() {
 function unplaceWallSelected() {
   if (!wallSelected) return;
   if (wallSelected.kind === 'item') {
-    store.wall.placed = store.wall.placed.filter(function (p) { return p.id !== wallSelected.key; });
+    store.wall.placed = store.wall.placed.filter(function (p) { return p.uid !== wallSelected.key; });
   } else if (wallSelected.kind === 'cat') {
     store.wall.catsPlaced = (store.wall.catsPlaced || []).filter(function (p) { return p.id !== wallSelected.key; });
   } else {
@@ -4797,24 +4822,26 @@ function renderWallTray() {
   }
   WALL_CATALOG.forEach(function (it) {
     if (wall.owned.indexOf(it.id) < 0) return;
-    var placed = !!wallPlacedEntry(it.id);
+    var count = 0;
+    store.wall.placed.forEach(function (p) { if (p.id === it.id) count += 1; });
+    var selEntry = wallSelected && wallSelected.kind === 'item' ? wallPlacedByUid(wallSelected.key) : null;
     var b = document.createElement('button');
     b.type = 'button';
-    b.className = 'decor-chip' + (placed ? ' placed' : '') +
-      (wallSelected && wallSelected.kind === 'item' && wallSelected.key === it.id ? ' sel' : '');
+    b.className = 'decor-chip' + (count ? ' placed' : '') +
+      (selEntry && selEntry.id === it.id ? ' sel' : '');
     b.innerHTML = '<img src="wall-items/' + it.id + '.webp" alt="">' +
       '<span class="decor-chip-name">' + it.name + '</span>' +
       '<span class="decor-chip-rarity">' + rarityLabel(it) + '</span>' +
-      '<span class="decor-chip-state">' + (placed ? '配置中' : '未配置') + '</span>';
+      '<span class="decor-chip-state">' + (count === 0 ? '未配置' : count === 1 ? '配置中' : '配置中 ×' + count) + '</span>';
     b.addEventListener('click', function () {
-      if (!wallPlacedEntry(it.id)) {
-        var placeAt = clampItemPos(wallCam.x, wallCam.y);
-        store.wall.placed.push({ id: it.id, x: placeAt.x, y: placeAt.y });
-        saveStore();
-        sePlace();
-        renderWall();
-      }
-      selectWall('item', it.id);
+      /* PBI 21: トレイのタップはいつでも新しい1点を置く (同じもの何個でも) */
+      var placeAt = clampItemPos(wallCam.x, wallCam.y);
+      var uid = nextWallItemUid(store.wall.placed);
+      store.wall.placed.push({ id: it.id, uid: uid, x: placeAt.x, y: placeAt.y });
+      saveStore();
+      sePlace();
+      renderWall();
+      selectWall('item', uid);
     });
     tray.appendChild(b);
   });
@@ -5280,6 +5307,7 @@ function navCloseTopConfirm() {
 function navCloseLayer(name) {
   if (name === 'settings') closeSettings();
   else if (name === 'credits') closeCredits();
+  else if (name === 'tutorial') closeTutorial();
   else if (name === 'preview') $('previewModal').hidden = true;
   else if (name === 'detail') $('detailModal').hidden = true;
   else if (name === 'reward') closeRewardReveal();
@@ -5650,6 +5678,30 @@ function closeSettings() {
 }
 /* クレジットは設定シートの上に重ねて開く (閉じれば設定に戻る) */
 function openCredits() { $('creditsModal').hidden = false; navPush('credits'); }
+/* ---------- チュートリアル (PBI 22): 初回起動だけ自動で出し、設定や
+ * スタート画面からもいつでも開ける。4 ステップのページ送り式。閉じた
+ * ら store.tutorialSeen を立て、二度と自動では出さない ---------- */
+var tutorialStep = 0;
+var TUTORIAL_STEPS = 4;
+function openTutorial() {
+  tutorialStep = 0;
+  var box = $('tutorialBoxArt');
+  if (box && !box.innerHTML) box.innerHTML = giftBoxSvg(BOX_PATTERNS[0].id, 'tut');
+  setTutorialStep(0);
+  $('tutorialModal').hidden = false;
+  navPush('tutorial');
+}
+function closeTutorial() {
+  $('tutorialModal').hidden = true;
+  if (!store.tutorialSeen) { store.tutorialSeen = true; saveStore(); }
+}
+function setTutorialStep(n) {
+  tutorialStep = Math.max(0, Math.min(TUTORIAL_STEPS - 1, n));
+  document.querySelectorAll('.tutorial-step').forEach(function (el, i) { el.hidden = i !== tutorialStep; });
+  document.querySelectorAll('.tutorial-dot').forEach(function (el, i) { el.classList.toggle('on', i === tutorialStep); });
+  $('tutorialPrevBtn').hidden = tutorialStep === 0;
+  $('tutorialNextBtn').textContent = tutorialStep === TUTORIAL_STEPS - 1 ? 'あそびはじめる' : 'つぎへ';
+}
 function closeCredits() { $('creditsModal').hidden = true; }
 
 /* ---------- やりなおす (進行を消して未開始の箱に戻る) ---------- */
@@ -5686,6 +5738,15 @@ function wireControls() {
     el.addEventListener('click', function () { navBack(); });
   });
   $('settingsCreditsBtn').addEventListener('click', openCredits);
+  $('settingsTutorialBtn').addEventListener('click', openTutorial);
+  $('startTutorialBtn').addEventListener('click', openTutorial);
+  document.querySelectorAll('[data-tutorial-close]').forEach(function (el) {
+    el.addEventListener('click', function () { navBack(); });
+  });
+  $('tutorialPrevBtn').addEventListener('click', function () { setTutorialStep(tutorialStep - 1); });
+  $('tutorialNextBtn').addEventListener('click', function () {
+    if (tutorialStep >= TUTORIAL_STEPS - 1) navBack(); else setTutorialStep(tutorialStep + 1);
+  });
   document.querySelectorAll('[data-credits-close]').forEach(function (el) {
     el.addEventListener('click', function () { navBack(); });
   });
@@ -6171,6 +6232,7 @@ fetch('data/images.json')
     applyTheme();
     migrateProgressToStages(pool);
     startGame(pool);
+    if (!store.tutorialSeen) openTutorial(); // 初回だけ自動表示 (PBI 22)
     resizeStage();
   })
   .catch(function () {

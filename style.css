@@ -931,3 +931,18 @@ button { font: inherit; cursor: pointer; }
 .start-difficulty .diff-chips { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; padding: 2px 0; }
 .start-difficulty .diff-chip { grid-column: span 2; width: 100%; padding: 6px 2px 5px; }
 .start-difficulty .diff-chip:nth-child(5) { grid-column: 2 / span 2; }
+
+/* ---------- チュートリアル (PBI 22) ---------- */
+.tutorial-body { min-width: min(88vw, 340px); text-align: center; }
+.tutorial-steps { width: 100%; }
+.tutorial-step h3 { margin: 8px 0 4px; font-size: 17px; font-weight: 800; }
+.tutorial-step p { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--paper-dim); }
+.tutorial-art { height: 92px; display: flex; align-items: center; justify-content: center; }
+.tutorial-art svg { height: 76px; width: auto; max-width: 100%; }
+#tutorialBoxArt svg { height: 88px; }
+.tutorial-dots { display: flex; gap: 6px; justify-content: center; margin: 4px 0 0; }
+.tutorial-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.tutorial-dot.on { background: var(--brass); }
+.tutorial-nav { display: flex; gap: 10px; width: 100%; }
+.tutorial-nav .btn { flex: 1; }
+.start-tutorial-link { display: block; margin: 12px auto 0; }

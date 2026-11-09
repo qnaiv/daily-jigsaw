@@ -936,6 +936,11 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   });
   ok(eq(norm.owned, ['w001', 'w007', 'w030', 'w037']) && eq(Object.keys(norm.seen), ['w001']) && eq(norm.pending, ['w002']), '壁保存: 未知の id は所持/初見/未受取から落ちる (初期アイテムは補われる)');
   ok(norm.placed.length === 1 && norm.placed[0].id === 'w001', '壁保存: 配置は所持アイテムのみ残る');
+  const dup = L.normalizeWall({ owned: ['w001'], placed: [{ id: 'w001', x: 0.3, y: 0.3 }, { id: 'w001', x: 0.6, y: 0.6 }], frames: [] });
+  ok(dup.placed.length === 2 && !!dup.placed[0].uid && !!dup.placed[1].uid && dup.placed[0].uid !== dup.placed[1].uid, '壁配置 (PBI21): 同じアイテムを複数置け、各配置に uid が付く');
+  const dupKeep = L.normalizeWall({ owned: ['w001'], placed: [{ id: 'w001', uid: 'u7', x: 0.3, y: 0.3 }, { id: 'w001', x: 0.5, y: 0.5 }], frames: [] });
+  ok(dupKeep.placed[0].uid === 'u7' && dupKeep.placed[1].uid === 'u8' && L.nextWallItemUid(dupKeep.placed) === 'u9', '壁配置 (PBI21): 既存 uid は保持され、新規は最大値+1 で採番される');
+  ok(L.nextWallItemUid([]) === 'u1', '壁配置 (PBI21): 空なら u1 から');
   ok(norm.frames.length === 1 && norm.frames[0].color === 'walnut', '壁保存: 未解放スタイルの額は walnut に戻り、不正な記録キーは落ちる');
   ok(norm.frameUnlocks.includes('oak') && norm.frameUnlocks.includes('walnut') && norm.frameUnlocks.includes('black'), '壁保存: 初期スタイルは常に解放済み扱い');
   ok(eq(norm.pendingUnlocks, ['gold']), '壁保存: 解放通知待ちは unlockAt>0 のものだけ残る');
@@ -1256,6 +1261,10 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
   // 2026-11-08 追加分: 箱の柄分離 / 矢印 / 面の統合 / 共有の描画欠け対策 (ラウンド制・カルーセルは 2026-11-09 のステージ制で廃止)
   ok(appSrc2.indexOf("var pid = 'giftPat' + (uid || '')") !== -1 && appSrc2.indexOf("giftBoxSvg(BOX_PATTERNS[stageBoxPatternIndex(playStage)].id, '')") !== -1, '箱の柄: ステージ番号で柄を決める (箱は1つ)');
+  ok(appSrc2.indexOf('nextWallItemUid(store.wall.placed)') !== -1 && appSrc2.indexOf('wallPlacedByUid(wallSelected.key)') !== -1, '壁配置 (PBI21): トレイは uid 付きで新規配置し、選択/しまう は uid 単位');
+  ok(appSrc2.indexOf('store.wall.placed.filter(function (p) { return p.uid !== wallSelected.key; })') !== -1, '壁配置 (PBI21): しまう は選択した1点だけを戻す');
+  ok(appSrc2.indexOf('function openTutorial()') !== -1 && appSrc2.indexOf('if (!store.tutorialSeen) openTutorial();') !== -1, 'チュートリアル (PBI22): 初回だけ自動表示する');
+  ok(appSrc2.indexOf('store.tutorialSeen = true') !== -1 && appSrc2.indexOf("navPush('tutorial')") !== -1, 'チュートリアル (PBI22): 閉じたら既読化し、nav レイヤーで開く');
   ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('class="box-single"') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを出す');
   ok(html2.indexOf('themeCredit') === -1 && html2.indexOf('start-footer') === -1, 'トップ画面: コピーライト/クレジット表記を出さない');
   ok(appSrc2.indexOf('function syncPlayStage(') !== -1 && appSrc2.indexOf('nextStage(store.records, pool)') !== -1 && appSrc2.indexOf("'ステージ ' + playStage") !== -1 && appSrc2.indexOf('function maybeAdvanceRound(') === -1, 'ステージ制: 未挑戦ステージを順に進め、24時間ロックは無い');
