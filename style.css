@@ -473,6 +473,7 @@ button { font: inherit; cursor: pointer; }
 }
 .fab:active { transform: translateY(1px); }
 #settingsBtn { right: 10px; top: 10px; }
+#sortBtn { right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: 46px; height: 46px; padding: 0; display: flex; align-items: center; justify-content: center; }
 
 
 #zoomCtl {
@@ -737,6 +738,7 @@ button { font: inherit; cursor: pointer; }
  * 編集中はプレイ用の HUD を隠し、ステージ操作は小物のドラッグに付け替わる */
 #stageWrap.decorating #hud,
 #stageWrap.decorating #settingsBtn,
+#stageWrap.decorating #sortBtn,
 #stageWrap.decorating #zoomCtl,
 #stageWrap.decorating #resumeBanner,
 #stageWrap.decorating #selectChip { display: none; }

@@ -3161,6 +3161,105 @@ function edgeScrollStep() {
   requestDraw();
   kickEdgeScroll();
 }
+/* ---------- お助け: 同系色の山にまとめる ----------
+ * バラのピース (1個だけの塊) を平均色で色系統に分け、散らばり領域内に
+ * 山を作って集める。2個以上くっついた塊は動かさない。山の中は整列させず
+ * ランダムにごちゃっと重なる配置。移動はアニメーションで滑らせ、終わりに
+ * 全体が見えるフィット視点までカメラも寄せる */
+var sortAnim = null; // { items: [{cluster, fromX, fromY, toX, toY}], viewFrom, viewTo, start, dur }
+function pieceAvgColor(id, sctx2) {
+  var n = state.n;
+  var home = pieceHome(id, n);
+  var src = state.srcCanvas;
+  var cw = src.width / n, ch = src.height / n;
+  var x0 = Math.floor(home.col * cw + cw * 0.2), y0 = Math.floor(home.row * ch + ch * 0.2);
+  var w = Math.max(2, Math.floor(cw * 0.6)), h = Math.max(2, Math.floor(ch * 0.6));
+  var data = sctx2.getImageData(x0, y0, w, h).data;
+  var r = 0, g = 0, b = 0, cnt = 0;
+  for (var i = 0; i < data.length; i += 16) { r += data[i]; g += data[i + 1]; b += data[i + 2]; cnt++; }
+  return [r / cnt, g / cnt, b / cnt];
+}
+function colorBucketOf(rgb) {
+  var r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255;
+  var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  var sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1) || 1);
+  if (sat < 0.16) return l > 0.74 ? 'pale' : (l < 0.28 ? 'dark' : 'gray');
+  var h;
+  if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+  h *= 60; if (h < 0) h += 360;
+  if (h < 15 || h >= 345) return 'red';
+  if (h < 45) return l < 0.32 ? 'brown' : 'orange';
+  if (h < 70) return 'yellow';
+  if (h < 160) return 'green';
+  if (h < 200) return 'teal';
+  if (h < 255) return 'blue';
+  if (h < 290) return 'purple';
+  return 'pink';
+}
+function sortSinglesByColor() {
+  if (!state || state.cleared || sortAnim) return;
+  // 進行中のジェスチャは確定させずに解除する (塊はその場に残る)
+  if (drag) { drag = null; stopEdgeScroll(); }
+  carry = null;
+  clearSelection();
+  pointers.clear(); pinch = null; panStart = null;
+  if (pressPending) { clearTimeout(pressPending.timer); pressPending = null; }
+  selRect = null;
+  var singles = state.clusters.filter(function (c) { return c.pieces.length === 1; });
+  if (singles.length < 2) { showToast('バラのピースが少ないよ'); draw(); return; }
+  var sctx2 = state.srcCanvas.getContext('2d');
+  var buckets = {};
+  singles.forEach(function (c) {
+    var b = colorBucketOf(pieceAvgColor(c.pieces[0], sctx2));
+    (buckets[b] = buckets[b] || []).push(c);
+  });
+  var names = Object.keys(buckets);
+  if (names.length < 2) { showToast('ほぼ同じ色合いのピースばかりだよ'); return; }
+  names.sort(function (a, b) { return buckets[b].length - buckets[a].length; });
+  var rect = scatterRect(state.n * state.n);
+  var cols = Math.ceil(Math.sqrt(names.length)), rows = Math.ceil(names.length / cols);
+  var cellW = rect.w / cols, cellH = rect.h / rows;
+  var items = [];
+  var ordered = state.clusters.filter(function (c) { return c.pieces.length > 1; });
+  names.forEach(function (name, i) {
+    var cx = rect.x0 + (i % cols + 0.5) * cellW, cy = rect.y0 + (Math.floor(i / cols) + 0.5) * cellH;
+    var list = buckets[name].slice();
+    for (var j = list.length - 1; j > 0; j--) { var k = (Math.random() * (j + 1)) | 0; var t = list[j]; list[j] = list[k]; list[k] = t; }
+    var rad = Math.max(0.7, Math.min(0.55 * Math.sqrt(list.length), Math.max(cellW, cellH) * 0.55));
+    list.forEach(function (c) {
+      var ang = Math.random() * Math.PI * 2, dist = rad * Math.sqrt(Math.random());
+      items.push({ cluster: c, fromX: c.gx, fromY: c.gy, toX: cx + Math.cos(ang) * dist - 0.5, toY: cy + Math.sin(ang) * dist - 0.5 });
+      ordered.push(c);
+    });
+  });
+  state.clusters = ordered;
+  var v = view();
+  var fv = fitView();
+  sortAnim = {
+    items: items, start: performance.now(), dur: 650,
+    viewFrom: { scale: v.scale, tx: v.tx, ty: v.ty },
+    viewTo: { scale: fv.scale, tx: fv.tx, ty: fv.ty }
+  };
+  requestAnimationFrame(sortAnimStep);
+  showToast(names.length + '色の山に分けたよ');
+}
+function sortAnimStep(now) {
+  if (!sortAnim) return;
+  var t = Math.min(1, (now - sortAnim.start) / sortAnim.dur);
+  var e = 1 - Math.pow(1 - t, 3);
+  sortAnim.items.forEach(function (it) {
+    it.cluster.gx = it.fromX + (it.toX - it.fromX) * e;
+    it.cluster.gy = it.fromY + (it.toY - it.fromY) * e;
+  });
+  var v = view();
+  v.scale = sortAnim.viewFrom.scale + (sortAnim.viewTo.scale - sortAnim.viewFrom.scale) * e;
+  v.tx = sortAnim.viewFrom.tx + (sortAnim.viewTo.tx - sortAnim.viewFrom.tx) * e;
+  v.ty = sortAnim.viewFrom.ty + (sortAnim.viewTo.ty - sortAnim.viewFrom.ty) * e;
+  updateZoomLabel();
+  draw();
+  if (t < 1) requestAnimationFrame(sortAnimStep);
+  else { sortAnim = null; persistProgress(); draw(); }
+}
 var pointers = new Map();
 var pinch = null;        // { d0, scale0, cx, cy, tx0, ty0 }
 var panStart = null;     // { sx, sy, tx, ty }
@@ -3215,6 +3314,7 @@ function stagePos(ev) {
 }
 stage.addEventListener('pointerdown', function (ev) {
   if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
+  if (sortAnim) return; // お助けのアニメーション中は操作を受けない
   stage.setPointerCapture(ev.pointerId);
   var p = stagePos(ev);
   if (!pointers.has(ev.pointerId) && pointers.size >= 2) resetGestureState();
@@ -6000,6 +6100,7 @@ function wireControls() {
   $('zoomInBtn').addEventListener('click', function () { zoomBy(1.3); });
   $('zoomOutBtn').addEventListener('click', function () { zoomBy(1 / 1.3); });
   $('settingsBtn').addEventListener('click', openSettings);
+  $('sortBtn').addEventListener('click', sortSinglesByColor);
   document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
     b.addEventListener('click', function () { setUiTheme(b.getAttribute('data-theme-opt')); });
   });

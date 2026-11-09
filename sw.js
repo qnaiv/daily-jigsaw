@@ -8,7 +8,7 @@
  *  - 対象は同一オリジンの GET のみ。写真プール等の外部オリジンは素通しする
  * キャッシュを丸ごと入れ替えたいときは VERSION を上げる。 */
 
-var VERSION = 'v5';
+var VERSION = 'v6';
 var STATIC_CACHE = 'daily-jigsaw-static-' + VERSION;
 var AUDIO_CACHE = 'daily-jigsaw-audio-' + VERSION;
 var KNOWN_CACHES = [STATIC_CACHE, AUDIO_CACHE];
@@ -97,7 +97,26 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  /* 静的アセット (app.js / style.css / data / wall-items 画像など): StaleWhileRevalidate */
+  /* コードとスタイルは NetworkFirst: HTML だけ新しくて app.js が古い、という
+   * 版の混在 (新UIのボタンが無反応になる等) を防ぐ。失敗時はキャッシュへ */
+  if (url.pathname.endsWith('/app.js') || url.pathname.endsWith('/style.css')) {
+    event.respondWith(
+      fetch(request)
+        .then(function (response) {
+          if (response.status === 200) {
+            var copy = response.clone();
+            caches.open(STATIC_CACHE)
+              .then(function (cache) { return cache.put(request, copy); })
+              .catch(function () { /* ignore */ });
+          }
+          return response;
+        })
+        .catch(function () { return caches.match(request, { ignoreSearch: true }); })
+    );
+    return;
+  }
+
+  /* 静的アセット (data / wall-items 画像など): StaleWhileRevalidate */
   event.respondWith(
     caches.open(STATIC_CACHE).then(function (cache) {
       return cache.match(request, { ignoreSearch: true }).then(function (cached) {
