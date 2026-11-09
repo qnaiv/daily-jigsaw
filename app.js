@@ -5554,7 +5554,7 @@ function navJumpTo(name) {
   navStack = ['start', name];
 }
 function navCloseTopConfirm() {
-  var ids = ['resetConfirmModal', 'freshConfirmModal', 'confirmModal', 'shareChoiceModal'];
+  var ids = ['resetConfirmModal', 'freshConfirmModal', 'confirmModal', 'shareChoiceModal', 'sortConfirmModal'];
   var closed = false;
   for (var i = 0; i < ids.length; i++) {
     if (!$(ids[i]).hidden) { $(ids[i]).hidden = true; closed = true; }
@@ -6100,7 +6100,14 @@ function wireControls() {
   $('zoomInBtn').addEventListener('click', function () { zoomBy(1.3); });
   $('zoomOutBtn').addEventListener('click', function () { zoomBy(1 / 1.3); });
   $('settingsBtn').addEventListener('click', openSettings);
-  $('sortBtn').addEventListener('click', sortSinglesByColor);
+  $('settingsSortBtn').addEventListener('click', function () { $('sortConfirmModal').hidden = false; });
+  $('sortConfirmNoBtn').addEventListener('click', function () { $('sortConfirmModal').hidden = true; });
+  $('sortConfirmYesBtn').addEventListener('click', function () {
+    $('sortConfirmModal').hidden = true;
+    closeSettings();
+    navSilentPop('settings');
+    sortSinglesByColor();
+  });
   document.querySelectorAll('[data-theme-opt]').forEach(function (b) {
     b.addEventListener('click', function () { setUiTheme(b.getAttribute('data-theme-opt')); });
   });

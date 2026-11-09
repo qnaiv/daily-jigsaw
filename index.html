@@ -102,7 +102,6 @@
       <span id="timerText" class="mono">00:00</span>
     </div>
     <button id="settingsBtn" class="fab" type="button" aria-label="設定">⚙</button>
-    <button id="sortBtn" class="fab" type="button" aria-label="お助け: 色ごとの山にまとめる"><svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><ellipse cx="12" cy="17.5" rx="8" ry="3.2" fill="#a9805a"/><circle cx="7.6" cy="13.4" r="3" fill="#d2691e"/><circle cx="12.4" cy="10.6" r="3" fill="#5b8c5a"/><circle cx="16.6" cy="13.8" r="3" fill="#4a6fa5"/></svg></button>
     <div id="zoomCtl">
       <button id="zoomOutBtn" class="zoom-btn" type="button" aria-label="縮小">−</button>
       <span id="zoomLabel" class="mono">100%</span>
@@ -154,6 +153,7 @@
     <div class="settings-list">
       <button id="settingsPauseBtn" class="btn settings-item" type="button">一時停止</button>
       <button id="settingsPreviewBtn" class="btn settings-item" type="button">完成図を見る</button>
+      <button id="settingsSortBtn" class="btn settings-item" type="button">お助け（色ごとの山にまとめる）</button>
       <button id="settingsCollectionBtn" class="btn settings-item" type="button">コレクション</button>
       <button id="settingsHomeBtn" class="btn settings-item" type="button">スタート画面に戻る</button>
       <button id="settingsWallBtn" class="btn settings-item" type="button">壁をかざる</button>
@@ -227,6 +227,17 @@
     <div class="result-actions">
       <button id="confirmYesBtn" class="btn danger-btn" type="button">やりなおす</button>
       <button id="confirmNoBtn" class="btn" type="button">やめる</button>
+    </div>
+  </div>
+</div>
+
+<div id="sortConfirmModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body result-body">
+    <p id="sortConfirmText">バラのピースを色ごとの山にまとめますか？（くっついた塊は動きません）</p>
+    <div class="result-actions">
+      <button id="sortConfirmYesBtn" class="btn cert-primary" type="button">まとめる</button>
+      <button id="sortConfirmNoBtn" class="btn" type="button">やめる</button>
     </div>
   </div>
 </div>
