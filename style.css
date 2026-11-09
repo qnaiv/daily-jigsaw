@@ -932,17 +932,15 @@ button { font: inherit; cursor: pointer; }
 .start-difficulty .diff-chip { grid-column: span 2; width: 100%; padding: 6px 2px 5px; }
 .start-difficulty .diff-chip:nth-child(5) { grid-column: 2 / span 2; }
 
-/* ---------- チュートリアル (PBI 22) ---------- */
-.tutorial-body { min-width: min(88vw, 340px); text-align: center; }
-.tutorial-steps { width: 100%; }
-.tutorial-step h3 { margin: 8px 0 4px; font-size: 17px; font-weight: 800; }
-.tutorial-step p { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--paper-dim); }
-.tutorial-art { height: 92px; display: flex; align-items: center; justify-content: center; }
-.tutorial-art svg { height: 76px; width: auto; max-width: 100%; }
-#tutorialBoxArt svg { height: 88px; }
-.tutorial-dots { display: flex; gap: 6px; justify-content: center; margin: 4px 0 0; }
-.tutorial-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
-.tutorial-dot.on { background: var(--brass); }
-.tutorial-nav { display: flex; gap: 10px; width: 100%; }
-.tutorial-nav .btn { flex: 1; }
+/* ---------- チュートリアル (コーチマーク式ツアー) ---------- */
+#tourOverlay { position: fixed; inset: 0; z-index: 90; }
+#tourHole { position: absolute; border: 3px solid #e8b64c; border-radius: 16px; box-shadow: 0 0 0 9999px rgba(32,24,12,.58); pointer-events: none; }
+#tourArrowSvg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#tourBubble { position: absolute; width: min(88vw, 364px); background: #f8f2e4; border-radius: 16px; padding: 16px 18px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.35); color: #3a2c17; }
+#tourBubble h3 { font-size: 17px; font-weight: 800; margin: 0 0 5px; }
+#tourBubble p { font-size: 13.5px; line-height: 1.65; color: #5c4c33; margin: 0; }
+.tour-brow { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.tour-skip { background: none; border: none; font-size: 13px; font-weight: 700; color: #8a6d3b; padding: 8px 4px; cursor: pointer; font-family: inherit; }
+.tour-count { flex: 1; text-align: center; font-size: 11px; color: #a68d5f; letter-spacing: 2px; }
+.tour-nav-btn { padding: 8px 16px; }
 .start-tutorial-link { display: block; margin: 12px auto 0; }

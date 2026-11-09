@@ -197,38 +197,18 @@
   </div>
 </div>
 
-<div id="tutorialModal" class="modal" hidden>
-  <div class="modal-backdrop" data-tutorial-close></div>
-  <div class="modal-body tutorial-body">
-    <h2>あそびかた</h2>
-    <div class="tutorial-steps">
-      <div class="tutorial-step">
-        <div class="tutorial-art" id="tutorialBoxArt"></div>
-        <h3>箱をタップ</h3>
-        <p>箱をタップするとパズルが始まります。ピース数（難易度）は箱の下で自由に選べます。</p>
-      </div>
-      <div class="tutorial-step" hidden>
-        <div class="tutorial-art"><svg viewBox="0 0 120 64" aria-hidden="true"><rect x="12" y="10" width="44" height="44" rx="7" fill="#33523f"/><circle cx="56" cy="32" r="9" fill="#33523f"/><rect x="66" y="10" width="44" height="44" rx="7" fill="#c9a227"/></svg></div>
-        <h3>ピースをつなげる</h3>
-        <p>ピースをドラッグして、となり合うピースに近づけるとくっつきます。全部が1つの塊になったらクリアです。</p>
-      </div>
-      <div class="tutorial-step" hidden>
-        <div class="tutorial-art"><svg viewBox="0 0 120 64" aria-hidden="true"><circle cx="22" cy="32" r="14" fill="#33523f"/><text x="22" y="38" text-anchor="middle" font-size="15" font-weight="800" fill="#f5efe4">1</text><path d="M40 32h8" stroke="#8a6d3b" stroke-width="3" stroke-linecap="round"/><circle cx="62" cy="32" r="14" fill="#7d9bb3"/><text x="62" y="38" text-anchor="middle" font-size="15" font-weight="800" fill="#f5efe4">2</text><path d="M80 32h8" stroke="#8a6d3b" stroke-width="3" stroke-linecap="round"/><circle cx="102" cy="32" r="14" fill="#c9a227"/><text x="102" y="38" text-anchor="middle" font-size="15" font-weight="800" fill="#43300a">3</text></svg></div>
-        <h3>ステージを進める</h3>
-        <p>クリアすると次のステージのお題に進みます。コレクションでは解放した絵を見たり、再プレイしたりできます。</p>
-      </div>
-      <div class="tutorial-step" hidden>
-        <div class="tutorial-art"><svg viewBox="0 0 120 64" aria-hidden="true"><rect x="26" y="7" width="34" height="34" fill="none" stroke="#7e5c38" stroke-width="5"/><rect x="33" y="14" width="20" height="20" fill="#aebfd0"/><circle cx="84" cy="23" r="11" fill="none" stroke="#5c7350" stroke-width="5"/><g fill="#4a4a4f"><ellipse cx="88" cy="52" rx="10" ry="7"/><circle cx="88" cy="42" r="6"/><path d="M83 39 l1.5-5 3.5 4z M93 39 l-1.5-5 -3.5 4z"/></g></svg></div>
-        <h3>壁をかざる</h3>
-        <p>ステージの初クリアで壁の小物が届きます。壁に飾ったり、クリアした絵を額装したり、猫も置けます。</p>
-      </div>
+<div id="tourOverlay" hidden>
+  <div id="tourHole"></div>
+  <svg id="tourArrowSvg" aria-hidden="true"><defs><marker id="tourAh" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#e8b64c"></path></marker></defs><path id="tourArrowPath" fill="none" stroke="#e8b64c" stroke-width="5" stroke-linecap="round" marker-end="url(#tourAh)"></path></svg>
+  <div id="tourBubble">
+    <h3 id="tourTitle"></h3>
+    <p id="tourText"></p>
+    <div class="tour-brow">
+      <button id="tourSkipBtn" class="tour-skip" type="button">スキップ</button>
+      <span id="tourCount" class="tour-count"></span>
+      <button id="tourPrevBtn" class="btn tour-nav-btn" type="button">もどる</button>
+      <button id="tourNextBtn" class="btn cert-primary tour-nav-btn" type="button">つぎへ</button>
     </div>
-    <div class="tutorial-dots"><span class="tutorial-dot on"></span><span class="tutorial-dot"></span><span class="tutorial-dot"></span><span class="tutorial-dot"></span></div>
-    <div class="tutorial-nav">
-      <button id="tutorialPrevBtn" class="btn" type="button">もどる</button>
-      <button id="tutorialNextBtn" class="btn cert-primary" type="button">つぎへ</button>
-    </div>
-    <button class="btn modal-close" type="button" data-tutorial-close>閉じる</button>
   </div>
 </div>
 

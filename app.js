@@ -1556,6 +1556,10 @@ function nextWallItemUid(placed) {
   });
   return 'u' + (max + 1);
 }
+/* コーチマーク式チュートリアルの画面別セグメント (ステップ番号の配分)。
+ * ステップの文面と対象要素はブラウザ側の TOUR_STEP_DEFS が持つ */
+var TOUR_SEGMENTS = { start: [0, 1], play: [2, 3], settings: [4], wall: [5, 6] };
+var TOUR_STEP_COUNT = 7;
 var PureLogic = {
   BASE_DATE_FALLBACK: BASE_DATE_FALLBACK, DIFFICULTIES: DIFFICULTIES,
   TABSIZE: TABSIZE, JITTER: JITTER, SNAP_DIST: SNAP_DIST,
@@ -1600,6 +1604,7 @@ var PureLogic = {
   wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
   CAT_CATALOG: CAT_CATALOG, catById: catById, collectibleById: collectibleById, CAT_FEET_Y: CAT_FEET_Y,
   emptyWall: emptyWall, normalizeWall: normalizeWall, nextWallItemUid: nextWallItemUid,
+  TOUR_SEGMENTS: TOUR_SEGMENTS, TOUR_STEP_COUNT: TOUR_STEP_COUNT,
   wallDrawEligible: wallDrawEligible, drawWallItem: drawWallItem,
   grantWallItems: grantWallItems, recordWallHistory: recordWallHistory,
   clampItemPos: clampItemPos, resetAllData: resetAllData,
@@ -3101,6 +3106,7 @@ stage.addEventListener('pointerdown', function (ev) {
   if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
   stage.setPointerCapture(ev.pointerId);
   var p = stagePos(ev);
+  if (!pointers.has(ev.pointerId) && pointers.size >= 2) resetGestureState();
   pointers.set(ev.pointerId, p);
   if (pointers.size === 2) {
     // ピンチ開始: 掴んでいた塊はその場で確定 (吸着/合体/保存) させてからピンチへ切り替える。
@@ -3217,7 +3223,7 @@ stage.addEventListener('pointermove', function (ev) {
   }
 });
 function endPointer(ev) {
-  var cancelled = ev.type === 'pointercancel';
+  var cancelled = ev.type === 'pointercancel' || ev.type === 'lostpointercapture';
   // 範囲選択まわりの終了処理 (この指が担当していた場合のみ)
   if (pressPending && pressPending.id === ev.pointerId) {
     clearTimeout(pressPending.timer);
@@ -3247,6 +3253,22 @@ function endPointer(ev) {
 }
 stage.addEventListener('pointerup', endPointer);
 stage.addEventListener('pointercancel', endPointer);
+stage.addEventListener('lostpointercapture', endPointer);
+/* 中断で取り残された指 (ゴースト) の掃除: 通知や着信、アプリ切替、画面端の
+ * システムジェスチャー等で pointerup/cancel が届かないと、pointers に実在
+ * しない指が残り続け、次の1本指操作が「2本目の指」と誤認されてスワイプが
+ * 拡大縮小になってしまう (iPhone 実機で発生し、再読み込みで直った件)。
+ * lostpointercapture (上記) に加え、割り込みが起きやすいタイミングでは
+ * ジェスチャ状態を丸ごと初期化して取り残しを防ぐ */
+function resetGestureState() {
+  if (drag) settleDrag();
+  cancelPressAndRect();
+  pointers.clear();
+  pinch = null;
+  panStart = null;
+}
+document.addEventListener('visibilitychange', function () { if (document.hidden) resetGestureState(); });
+window.addEventListener('blur', resetGestureState);
 stage.addEventListener('contextmenu', function (ev) { ev.preventDefault(); }); // 長押しでメニューを出さない
 
 /* ドラッグの確定処理 (離したとき & ピンチへ切り替えるとき共通) */
@@ -3779,6 +3801,7 @@ function showWall(from) {
   applyVisibility();
   renderWall();
   if (expanded) showToast('壁が広くなりました');
+  setTimeout(function () { maybeTourAuto('wall'); }, 450); // 初回だけ壁のツアー
 }
 function hideWall() {
   uiWall = false;
@@ -4749,6 +4772,7 @@ function attachWallDrag(el, kind, key) {
   }
   el.addEventListener('pointerup', endDrag);
   el.addEventListener('pointercancel', endDrag);
+  el.addEventListener('lostpointercapture', endDrag);
 }
 function selectWall(kind, key) {
   wallSelected = kind ? { kind: kind, key: key } : null;
@@ -5307,7 +5331,6 @@ function navCloseTopConfirm() {
 function navCloseLayer(name) {
   if (name === 'settings') closeSettings();
   else if (name === 'credits') closeCredits();
-  else if (name === 'tutorial') closeTutorial();
   else if (name === 'preview') $('previewModal').hidden = true;
   else if (name === 'detail') $('detailModal').hidden = true;
   else if (name === 'reward') closeRewardReveal();
@@ -5667,6 +5690,7 @@ function openSettings() {
   updateSettingsPauseBtn();
   $('settingsModal').hidden = false;
   navPush('settings');
+  setTimeout(function () { maybeTourAuto('settings'); }, 350); // 初回だけ設定のツアー
 }
 function closeSettings() {
   $('settingsModal').hidden = true;
@@ -5678,30 +5702,155 @@ function closeSettings() {
 }
 /* クレジットは設定シートの上に重ねて開く (閉じれば設定に戻る) */
 function openCredits() { $('creditsModal').hidden = false; navPush('credits'); }
-/* ---------- チュートリアル (PBI 22): 初回起動だけ自動で出し、設定や
- * スタート画面からもいつでも開ける。4 ステップのページ送り式。閉じた
- * ら store.tutorialSeen を立て、二度と自動では出さない ---------- */
-var tutorialStep = 0;
-var TUTORIAL_STEPS = 4;
-function openTutorial() {
-  tutorialStep = 0;
-  var box = $('tutorialBoxArt');
-  if (box && !box.innerHTML) box.innerHTML = giftBoxSvg(BOX_PATTERNS[0].id, 'tut');
-  setTutorialStep(0);
-  $('tutorialModal').hidden = false;
-  navPush('tutorial');
+/* ---------- チュートリアル (コーチマーク式ツアー) ----------
+ * その画面を初めて開いたときに、その画面の操作だけを実物の上で
+ * 指し示す (画面別セグメント制)。設定/スタートの「チュートリアル」
+ * 「あそびかた」からは全 7 ステップを通しで再生する (画面遷移も自動)。
+ * 見た画面分は store.tourSeen に記録し、二度と自動では出さない */
+var TOUR_STEP_DEFS = [
+  { screen: 'start', sel: '#giftBox', title: '箱をタップして開始', text: 'タップすると、いまのステージのパズルが始まります。' },
+  { screen: 'start', sel: '.start-difficulty', title: 'ピース数を選ぶ', text: '難易度はここで自由に選べます。クリアすると次のステージに進みます。' },
+  { screen: 'play', sel: '#stageWrap', shrink: 0.55, bubbleBottom: true, title: 'ピースをつなげる', text: 'ピースをドラッグして、となり合うピースに近づけるとくっつきます。全部が1つの塊になったらクリアです。' },
+  { screen: 'play', sel: '#settingsBtn', circle: true, title: '設定はここ', text: '歯車ボタン（または戻るジェスチャー）で設定が開きます。' },
+  { screen: 'settings', sel: '#settingsHomeBtn', title: 'タイトルに戻る', text: '「スタート画面に戻る」でタイトルへ戻れます。中断したパズルは、タイトルの箱をタップすれば続きから遊べます。' },
+  { screen: 'wall', sel: '#wallTray', title: '小物を置く', text: 'クリア報酬でもらった小物は、このトレイから壁に置けます。同じものも何個でも置けます。' },
+  { screen: 'wall', sel: '#wallFrameBtn', title: '額装する', text: 'クリアした絵は額に入れて壁に飾れます。' }
+];
+var tour = null; // { steps: [通し番号...], pos, mode: 'auto'|'full' }
+var tourTimer = null;
+function tourSeenMap() {
+  if (!store.tourSeen || typeof store.tourSeen !== 'object') store.tourSeen = { start: false, play: false, settings: false, wall: false };
+  return store.tourSeen;
 }
-function closeTutorial() {
-  $('tutorialModal').hidden = true;
-  if (!store.tutorialSeen) { store.tutorialSeen = true; saveStore(); }
+function tourMarkSeen(screens) {
+  var seen = tourSeenMap(), changed = false;
+  screens.forEach(function (sc) { if (!seen[sc]) { seen[sc] = true; changed = true; } });
+  if (changed) saveStore();
 }
-function setTutorialStep(n) {
-  tutorialStep = Math.max(0, Math.min(TUTORIAL_STEPS - 1, n));
-  document.querySelectorAll('.tutorial-step').forEach(function (el, i) { el.hidden = i !== tutorialStep; });
-  document.querySelectorAll('.tutorial-dot').forEach(function (el, i) { el.classList.toggle('on', i === tutorialStep); });
-  $('tutorialPrevBtn').hidden = tutorialStep === 0;
-  $('tutorialNextBtn').textContent = tutorialStep === TUTORIAL_STEPS - 1 ? 'あそびはじめる' : 'つぎへ';
+/* ステップの画面が表示状態になるよう遷移する。戻り値は表示までの待ち ms */
+function tourEnsureScreen(screen) {
+  var settingsOpen = !$('settingsModal').hidden;
+  if (screen === 'start') {
+    if (uiWall) { hideWall(); navSilentPop('wall'); }
+    if (settingsOpen) { closeSettings(); navSilentPop('settings'); }
+    if (!uiHome) { navGoHome(); goToStartScreen(); }
+    return 180;
+  }
+  if (screen === 'play') {
+    if (uiWall) { hideWall(); navSilentPop('wall'); }
+    if (settingsOpen) { closeSettings(); navSilentPop('settings'); }
+    if (uiHome) { onGiftBoxTap(); return 900; }
+    return 180;
+  }
+  if (screen === 'settings') {
+    if (settingsOpen) return 120;
+    if (uiWall) { hideWall(); navSilentPop('wall'); }
+    if (uiHome) { onGiftBoxTap(); setTimeout(openSettings, 950); return 1250; }
+    openSettings();
+    return 320;
+  }
+  /* wall */
+  if (uiWall) return 180;
+  if (settingsOpen) { closeSettings(); navSilentPop('settings'); }
+  if (!uiHome) { navGoHome(); goToStartScreen(); }
+  showWall('home');
+  return 500;
 }
+function tourRun(stepIndexes, mode) {
+  if (tour || !stepIndexes.length) return;
+  tour = { steps: stepIndexes.slice(), pos: 0, mode: mode };
+  $('tourOverlay').hidden = false;
+  tourShowStep();
+}
+function tourShowStep() {
+  if (!tour) return;
+  var def = TOUR_STEP_DEFS[tour.steps[tour.pos]];
+  var wait = tourEnsureScreen(def.screen);
+  if (tourTimer) clearTimeout(tourTimer);
+  tourTimer = setTimeout(function () { tourTimer = null; if (tour) tourLayout(def); }, wait);
+}
+function tourLayout(def) {
+  var el = document.querySelector(def.sel);
+  if (!el) { tourAdvance(1); return; }
+  var r = el.getBoundingClientRect();
+  if (!r.width && !r.height) { tourAdvance(1); return; }
+  if (def.shrink) {
+    var nw = r.width * def.shrink, nh = r.height * def.shrink;
+    r = { left: r.left + (r.width - nw) / 2, top: r.top + (r.height - nh) / 2, width: nw, height: nh };
+    r.right = r.left + r.width; r.bottom = r.top + r.height;
+  }
+  var pad = 6;
+  var hx = Math.max(2, r.left - pad), hy = Math.max(2, r.top - pad);
+  var hw = Math.min(window.innerWidth - hx - 2, r.width + pad * 2);
+  var hh = r.height + pad * 2;
+  var hole = $('tourHole');
+  hole.style.left = hx + 'px'; hole.style.top = hy + 'px';
+  hole.style.width = hw + 'px'; hole.style.height = hh + 'px';
+  hole.style.borderRadius = def.circle ? '50%' : '16px';
+  $('tourTitle').textContent = def.title;
+  $('tourText').textContent = def.text;
+  $('tourCount').textContent = (tour.pos + 1) + ' / ' + tour.steps.length;
+  $('tourPrevBtn').hidden = tour.pos === 0;
+  $('tourNextBtn').textContent = tour.pos === tour.steps.length - 1 ? 'おわる' : 'つぎへ';
+  var bubble = $('tourBubble');
+  bubble.style.visibility = 'hidden';
+  bubble.style.left = '24px'; bubble.style.top = '0px';
+  var bh = bubble.offsetHeight, bw = bubble.offsetWidth;
+  var cx = hx + hw / 2;
+  var below = hy + hh + 26 + bh <= window.innerHeight - 10;
+  var by = def.bubbleBottom ? window.innerHeight - bh - 14 : (below ? hy + hh + 26 : hy - 26 - bh);
+  by = Math.max(10, Math.min(window.innerHeight - bh - 10, by));
+  var bx = Math.max(12, Math.min(window.innerWidth - bw - 12, cx - bw / 2));
+  bubble.style.left = bx + 'px'; bubble.style.top = by + 'px';
+  bubble.style.visibility = '';
+  $('tourArrowSvg').setAttribute('viewBox', '0 0 ' + window.innerWidth + ' ' + window.innerHeight);
+  var ax = Math.max(bx + 34, Math.min(bx + bw - 34, cx));
+  var x1, y1, x2, y2;
+  if (by >= hy + hh) { x1 = ax; y1 = by - 4; x2 = cx; y2 = hy + hh + 4; }
+  else { x1 = ax; y1 = by + bh + 4; x2 = cx; y2 = hy - 4; }
+  var my = (y1 + y2) / 2;
+  $('tourArrowPath').setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + x1 + ' ' + my + ', ' + x2 + ' ' + my + ', ' + x2 + ' ' + y2);
+}
+function tourAdvance(dir) {
+  if (!tour) return;
+  var next = tour.pos + dir;
+  if (next < 0) return;
+  if (next >= tour.steps.length) { tourFinish(); return; }
+  tour.pos = next;
+  tourShowStep();
+}
+function tourFinish() {
+  if (!tour) return;
+  if (tourTimer) { clearTimeout(tourTimer); tourTimer = null; }
+  var screens = [];
+  tour.steps.forEach(function (i) { var sc = TOUR_STEP_DEFS[i].screen; if (screens.indexOf(sc) === -1) screens.push(sc); });
+  var mode = tour.mode;
+  tour = null;
+  $('tourOverlay').hidden = true;
+  tourMarkSeen(screens);
+  if (mode === 'full') {
+    /* 通し再生の終わりはスタート画面に落ち着かせる */
+    if (!$('settingsModal').hidden) { closeSettings(); navSilentPop('settings'); }
+    if (uiWall) { hideWall(); navSilentPop('wall'); }
+    if (!uiHome) { navGoHome(); goToStartScreen(); }
+  }
+}
+/* 設定/スタートから: 全ステップを通しで再生する */
+function startFullTour() {
+  if (tour) return;
+  if (!$('settingsModal').hidden) { closeSettings(); navSilentPop('settings'); }
+  tourRun([0, 1, 2, 3, 4, 5, 6], 'full');
+}
+/* 画面を初めて開いたときだけ、その画面のセグメントを自動で出す */
+function maybeTourAuto(screen) {
+  if (tour) return;
+  if (tourSeenMap()[screen]) return;
+  var seg = TOUR_SEGMENTS[screen];
+  if (seg) tourRun(seg, 'auto');
+}
+window.addEventListener('resize', function () {
+  if (tour) tourLayout(TOUR_STEP_DEFS[tour.steps[tour.pos]]);
+});
 function closeCredits() { $('creditsModal').hidden = true; }
 
 /* ---------- やりなおす (進行を消して未開始の箱に戻る) ---------- */
@@ -5738,15 +5887,11 @@ function wireControls() {
     el.addEventListener('click', function () { navBack(); });
   });
   $('settingsCreditsBtn').addEventListener('click', openCredits);
-  $('settingsTutorialBtn').addEventListener('click', openTutorial);
-  $('startTutorialBtn').addEventListener('click', openTutorial);
-  document.querySelectorAll('[data-tutorial-close]').forEach(function (el) {
-    el.addEventListener('click', function () { navBack(); });
-  });
-  $('tutorialPrevBtn').addEventListener('click', function () { setTutorialStep(tutorialStep - 1); });
-  $('tutorialNextBtn').addEventListener('click', function () {
-    if (tutorialStep >= TUTORIAL_STEPS - 1) navBack(); else setTutorialStep(tutorialStep + 1);
-  });
+  $('settingsTutorialBtn').addEventListener('click', startFullTour);
+  $('startTutorialBtn').addEventListener('click', startFullTour);
+  $('tourNextBtn').addEventListener('click', function () { tourAdvance(1); });
+  $('tourPrevBtn').addEventListener('click', function () { tourAdvance(-1); });
+  $('tourSkipBtn').addEventListener('click', function () { tourFinish(); });
   document.querySelectorAll('[data-credits-close]').forEach(function (el) {
     el.addEventListener('click', function () { navBack(); });
   });
@@ -5909,6 +6054,8 @@ function wireControls() {
   }
   wallStageEl.addEventListener('pointerup', wallPtrEnd);
   wallStageEl.addEventListener('pointercancel', wallPtrEnd);
+  wallStageEl.addEventListener('lostpointercapture', wallPtrEnd);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) { wallPtrs.clear(); wallGesture = null; } });
   wallStageEl.addEventListener('wheel', function (ev) {
     ev.preventDefault();
     var rect = wallStageEl.getBoundingClientRect();
@@ -6141,6 +6288,7 @@ function openBox() {
     veil.classList.remove('on');
     box.classList.remove('opening'); // 次に箱を出すとき (やりなおし後) は閉じた状態から
     state.opening = false;
+    setTimeout(function () { maybeTourAuto('play'); }, 500); // 初回だけプレイ画面のツアー
   }, 580);
 }
 
@@ -6232,7 +6380,7 @@ fetch('data/images.json')
     applyTheme();
     migrateProgressToStages(pool);
     startGame(pool);
-    if (!store.tutorialSeen) openTutorial(); // 初回だけ自動表示 (PBI 22)
+    setTimeout(function () { maybeTourAuto('start'); }, 600); // 初回だけスタート画面のツアー
     resizeStage();
   })
   .catch(function () {

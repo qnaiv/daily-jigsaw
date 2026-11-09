@@ -1261,10 +1261,15 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
   // 2026-11-08 追加分: 箱の柄分離 / 矢印 / 面の統合 / 共有の描画欠け対策 (ラウンド制・カルーセルは 2026-11-09 のステージ制で廃止)
   ok(appSrc2.indexOf("var pid = 'giftPat' + (uid || '')") !== -1 && appSrc2.indexOf("giftBoxSvg(BOX_PATTERNS[stageBoxPatternIndex(playStage)].id, '')") !== -1, '箱の柄: ステージ番号で柄を決める (箱は1つ)');
+  ok(appSrc2.indexOf("stage.addEventListener('lostpointercapture', endPointer)") !== -1 && appSrc2.indexOf('function resetGestureState()') !== -1 && appSrc2.indexOf("ev.type === 'lostpointercapture'") !== -1, 'ジェスチャ: 中断で取り残された指 (ゴースト) を掃除し、1本指スワイプが拡大縮小にならない');
+  ok(appSrc2.indexOf("wallStageEl.addEventListener('lostpointercapture', wallPtrEnd)") !== -1, '壁ジェスチャ: lostpointercapture でも指を掃除する');
   ok(appSrc2.indexOf('nextWallItemUid(store.wall.placed)') !== -1 && appSrc2.indexOf('wallPlacedByUid(wallSelected.key)') !== -1, '壁配置 (PBI21): トレイは uid 付きで新規配置し、選択/しまう は uid 単位');
   ok(appSrc2.indexOf('store.wall.placed.filter(function (p) { return p.uid !== wallSelected.key; })') !== -1, '壁配置 (PBI21): しまう は選択した1点だけを戻す');
-  ok(appSrc2.indexOf('function openTutorial()') !== -1 && appSrc2.indexOf('if (!store.tutorialSeen) openTutorial();') !== -1, 'チュートリアル (PBI22): 初回だけ自動表示する');
-  ok(appSrc2.indexOf('store.tutorialSeen = true') !== -1 && appSrc2.indexOf("navPush('tutorial')") !== -1, 'チュートリアル (PBI22): 閉じたら既読化し、nav レイヤーで開く');
+  ok(L.TOUR_STEP_COUNT === 7 && L.TOUR_SEGMENTS.start.join() === '0,1' && L.TOUR_SEGMENTS.play.join() === '2,3' && L.TOUR_SEGMENTS.settings.join() === '4' && L.TOUR_SEGMENTS.wall.join() === '5,6', 'ツアー: 7ステップを画面別セグメントに配分する');
+  ok(appSrc2.indexOf('function tourRun(') !== -1 && appSrc2.indexOf("maybeTourAuto('start')") !== -1 && appSrc2.indexOf("maybeTourAuto('play')") !== -1 && appSrc2.indexOf("maybeTourAuto('settings')") !== -1 && appSrc2.indexOf("maybeTourAuto('wall')") !== -1, 'ツアー (コーチマーク式): 各画面の初回だけ自動で出す');
+  ok(appSrc2.indexOf('function startFullTour()') !== -1 && appSrc2.indexOf('tourMarkSeen') !== -1 && appSrc2.indexOf('function openTutorial()') === -1, 'ツアー: あそびかたから全ステップ再生でき、旧モーダルは廃止');
+  const htmlTour = require('fs').readFileSync(__dirname + '/index.html', 'utf8');
+  ok(htmlTour.indexOf('id="tourOverlay"') !== -1 && htmlTour.indexOf('id="tutorialModal"') === -1, 'ツアー: index.html はコーチマーク用オーバーレイを持ち、旧モーダルは無い');
   ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('class="box-single"') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを出す');
   ok(html2.indexOf('themeCredit') === -1 && html2.indexOf('start-footer') === -1, 'トップ画面: コピーライト/クレジット表記を出さない');
   ok(appSrc2.indexOf('function syncPlayStage(') !== -1 && appSrc2.indexOf('nextStage(store.records, pool)') !== -1 && appSrc2.indexOf("'ステージ ' + playStage") !== -1 && appSrc2.indexOf('function maybeAdvanceRound(') === -1, 'ステージ制: 未挑戦ステージを順に進め、24時間ロックは無い');
