@@ -544,6 +544,16 @@ function scatterRect(pieces) {
   return { x0: -Math.floor((w - n) / 2), y0: -Math.floor((h - n) / 2), w: w, h: h };
 }
 
+/* 机の境界 (机の有限化の可動範囲): 散らばり領域を中心から縦横2倍に
+ * 広げた矩形。ズーム下限は fit の 50% なので、最低倍率では散らばり
+ * 領域のちょうど2倍の幅が見える — その見える範囲全部をピースの
+ * 可動範囲にする (ユーザー指示 2026-11-10: 最低倍率で移動できる
+ * 範囲は全部使えるように)。初期散らばりと fit は散らばり領域のまま */
+function deskBounds(pieces) {
+  var r = scatterRect(pieces);
+  return { x0: r.x0 - r.w / 2, y0: r.y0 - r.h / 2, w: r.w * 2, h: r.h * 2 };
+}
+
 /* 初期散らばり: 全ピースを机にぶちまけた状態にする (自由配置)。
  * セル方式はやめ、日付×難易度シードで決定的に各ピースの左上座標を直接決める。
  * 密度にムラを出すため、大半のピースは数個のクラスタ中心の周りにばら撒き、
@@ -1682,7 +1692,7 @@ var PureLogic = {
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
   absorbMerges: absorbMerges, clustersInRect: clustersInRect, shiftClusters: shiftClusters,
-  scatterRect: scatterRect, initialScatter: initialScatter,
+  scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
   clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
   normalizeClustersToRect: normalizeClustersToRect, clampClustersTranslation: clampClustersTranslation,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
@@ -2484,7 +2494,7 @@ function newGameState(pool) {
     opening: false,
     // 読み込み時に机の外へ出てしまったピースを内側へ救済する (机の有限化)。
     // 範囲内のセーブは正規化が冪等なので1ピクセルも動かない
-    clusters: gameStarted ? normalizeClustersToRect(prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy }; }), Math.round(Math.sqrt(difficulty)), scatterRect(difficulty)) : [],
+    clusters: gameStarted ? normalizeClustersToRect(prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy }; }), Math.round(Math.sqrt(difficulty)), deskBounds(difficulty)) : [],
     elapsedBase: prog.elapsedSec || 0,
     moves: prog.moves || 0,
     previewViewed: !!prog.previewViewed,
@@ -2797,10 +2807,11 @@ function fitViews() {
   invalidateDeskBackdrop(); // 机カメラが変わるので背景レイヤーを作り直す
 }
 function view() { return state.views.desk; }
-/* 机の有限化 (PBI #27、設計は DESIGN.md): 境界は散らばり領域そのもの。
- * ピースもカメラもここを出ない。クランプは平行移動のみで、塊の内部
- * 配置・合体の成否は変えない。保存形式も変えない (値の範囲だけ制限) */
-function deskRect() { return scatterRect(state.n * state.n); }
+/* 机の有限化 (PBI #27、設計は DESIGN.md): 境界は deskBounds (散らばり
+ * 領域の縦横2倍 = 最低倍率で見える全範囲)。ピースもカメラもここを
+ * 出ない。クランプは平行移動のみで、塊の内部配置・合体の成否は
+ * 変えない。保存形式も変えない (値の範囲だけ制限) */
+function deskRect() { return deskBounds(state.n * state.n); }
 function clampClusterInDesk(cluster) {
   var c = clampClusterToRect(cluster, state.n, deskRect());
   cluster.gx = c.gx; cluster.gy = c.gy;
