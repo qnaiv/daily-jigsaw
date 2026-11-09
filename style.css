@@ -673,11 +673,10 @@ button { font: inherit; cursor: pointer; }
 .credits-body h2 { margin: 4px 0 2px; font-size: 17px; font-weight: 800; letter-spacing: .08em; text-align: center; }
 .credits-body .modal-close { margin-top: 4px; }
 
-/* BGM の曲名クレジット: その曲が再生されている間、右下へ小さく出しっぱなし。
- * 止まると消える (表示連動は app.js が playing / pause イベントで行う)。
- * 右下の表面切替ボタンと重ならないよう、その上に置く。 */
+/* BGM の曲名クレジット: その曲が再生されている間、右下隅へ小さく出しっぱなし。
+ * 止まると消える (表示連動は app.js が playing / pause イベントで行う)。 */
 #bgmToast {
-  position: absolute; right: 10px; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 6;
+  position: absolute; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 6;
   max-width: 72vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   background: rgba(24,17,10,.55); color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 999px;
   padding: 4px 13px; font-size: 11.5px; letter-spacing: .03em; pointer-events: none;

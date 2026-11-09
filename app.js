@@ -3167,6 +3167,50 @@ function edgeScrollStep() {
  * ランダムにごちゃっと重なる配置。移動はアニメーションで滑らせ、終わりに
  * 全体が見えるフィット視点までカメラも寄せる */
 var sortAnim = null; // { items: [{cluster, fromX, fromY, toX, toY}], viewFrom, viewTo, start, dur }
+/* 平均色グリッド (data/colors.json): CORS ヘッダを返さないホスト (Cleveland 等) の
+ * 画像は素読み込みになってキャンバスが汚染され、getImageData が例外を投げる。
+ * その画像向けに、全 URL 画像の平均色を 16x16 グリッドで事前計算して同梱し、
+ * pieceAvgColor のフォールバックとして使う。必要になった時だけ遅延 fetch する。 */
+var COLOR_GRID_N = 16;
+var colorGrids = null;
+var colorGridsLoading = null;
+function loadColorGrids() {
+  if (colorGrids) return Promise.resolve(colorGrids);
+  if (!colorGridsLoading) {
+    colorGridsLoading = fetch('data/colors.json')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var out = {};
+        if (j && j.colors) Object.keys(j.colors).forEach(function (k) {
+          try {
+            var bin = atob(j.colors[k]);
+            var u = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+            if (u.length === COLOR_GRID_N * COLOR_GRID_N * 3) out[k] = u;
+          } catch (e) { /* 壊れたエントリは読み飛ばす */ }
+        });
+        colorGrids = out;
+        return colorGrids;
+      })
+      .catch(function () { colorGrids = {}; return colorGrids; });
+  }
+  return colorGridsLoading;
+}
+function gridAvgColor(id) {
+  var e = state.entry;
+  if (!e || e.key == null || !colorGrids) return null;
+  var g = colorGrids[String(e.key)];
+  if (!g) return null;
+  var n = state.n, home = pieceHome(id, n), G = COLOR_GRID_N;
+  var ix0 = Math.max(0, Math.floor((home.col + 0.2) / n * G)), ix1 = Math.min(G - 1, Math.ceil((home.col + 0.8) / n * G) - 1);
+  var iy0 = Math.max(0, Math.floor((home.row + 0.2) / n * G)), iy1 = Math.min(G - 1, Math.ceil((home.row + 0.8) / n * G) - 1);
+  var r = 0, gg = 0, b = 0, cnt = 0;
+  for (var y = iy0; y <= iy1; y++) for (var x = ix0; x <= ix1; x++) {
+    var o = (y * G + x) * 3;
+    r += g[o]; gg += g[o + 1]; b += g[o + 2]; cnt++;
+  }
+  return cnt ? [r / cnt, gg / cnt, b / cnt] : null;
+}
 function pieceAvgColor(id, sctx2) {
   var n = state.n;
   var home = pieceHome(id, n);
@@ -3174,7 +3218,13 @@ function pieceAvgColor(id, sctx2) {
   var cw = src.width / n, ch = src.height / n;
   var x0 = Math.floor(home.col * cw + cw * 0.2), y0 = Math.floor(home.row * ch + ch * 0.2);
   var w = Math.max(2, Math.floor(cw * 0.6)), h = Math.max(2, Math.floor(ch * 0.6));
-  var data = sctx2.getImageData(x0, y0, w, h).data;
+  var data;
+  try { data = sctx2.getImageData(x0, y0, w, h).data; }
+  catch (err) {
+    var gc = gridAvgColor(id);
+    if (gc) return gc;
+    throw err;
+  }
   var r = 0, g = 0, b = 0, cnt = 0;
   for (var i = 0; i < data.length; i += 16) { r += data[i]; g += data[i + 1]; b += data[i + 2]; cnt++; }
   return [r / cnt, g / cnt, b / cnt];
@@ -3207,6 +3257,16 @@ function sortSinglesByColor() {
   selRect = null;
   var singles = state.clusters.filter(function (c) { return c.pieces.length === 1; });
   if (singles.length < 2) { showToast('バラのピースが少ないよ'); draw(); return; }
+  try { runSortSingles(singles); }
+  catch (err) {
+    // ピクセルが読めない画像 (CORS 汚染): 平均色グリッドを読み込んで一度だけやり直す
+    loadColorGrids().then(function () {
+      try { runSortSingles(singles); }
+      catch (err2) { showToast('この画像では色分けできなかったよ'); draw(); }
+    });
+  }
+}
+function runSortSingles(singles) {
   var sctx2 = state.srcCanvas.getContext('2d');
   var buckets = {};
   singles.forEach(function (c) {
