@@ -1125,7 +1125,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(html.indexOf('id="wallShareBtn"') !== -1 && appSrc.indexOf('shareWallImage') !== -1 && appSrc.indexOf('buildWallShareImage') !== -1, '壁共有配線: 壁画面に共有ボタンと壁全体の画像生成がある');
 
   // 壁まわり改善 (2026-11-08 実機テスト): 壁でも BGM / 配置 SE / クレジット分離 / 壁紙名ラベルなし
-  ok(appSrc.indexOf('function bgmOnTitle() { return uiHome && !uiWall; }') !== -1, '壁BGM: タイトル判定は壁画面を例外にする (壁では流れる)');
+  ok(appSrc.indexOf('function bgmOnTitle() { return uiHome && !uiWall && !bgm.started; }') !== -1, 'BGM: タイトル無音は「まだ一度も流れていない間」だけ。一度流れ始めたらトップに戻っても止めない (id 19 改訂)');
+  ok(appSrc.indexOf('function bgmEnterTitle() { /* 流し続ける: 何もしない */ }') !== -1, 'BGM: トップに戻る動線 (bgmEnterTitle) は停止しない no-op');
   const showWallBody = appSrc.slice(appSrc.indexOf('function showWall(from)'), appSrc.indexOf('function hideWall()'));
   ok(showWallBody.indexOf('bgmTryPlay()') !== -1, '壁BGM: 壁を開くたびに開始/再開を試みる');
   ok(appSrc.indexOf('function seUnplace()') !== -1 && appSrc.indexOf('sePlaceOk()') !== -1, '壁SE: 配置可否ゲートと「しまう」音がある');
@@ -1307,6 +1308,10 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('renderWallPreviewCanvas(aspect)') !== -1 && appSrc2.indexOf('padX + f.x * W') !== -1 && appSrc2.indexOf('padX + p.x * W') !== -1, '壁帯プレビュー: 帯が横長な分は下地を左右延長し、額と小物と猫は壁座標のまま描く (横の切れ目なし)');
   ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決める');
   ok(appSrc2.indexOf("wallPreviewKey() + '@'") === -1 && appSrc2.indexOf('wallPreviewCache = { key: key, cv: full }') !== -1, '壁帯プレビュー: キャッシュキーは壁の内容だけ (アスペクトを混ぜると起動直後のレイアウト揺れで装飾が出ないバグになる)');
+  const previewBody = appSrc2.slice(appSrc2.indexOf('function renderWallPreviewCanvas('), appSrc2.indexOf('var wallPreviewCache'));
+  const shareBody = appSrc2.slice(appSrc2.indexOf('function buildWallShareImage()'), appSrc2.indexOf('function downloadWallShareImage'));
+  ok(previewBody.indexOf('ctx.ellipse(padX + p.x * W') !== -1 && previewBody.indexOf('ctx.drawImage(img, padX + p.x * W - wpx / 2, feetY - hpx') !== -1, '壁帯プレビュー: 猫も額・小物と同じ padX 付き座標で描く (padX 漏れで左にずれるバグの再発防止)');
+  ok(shareBody.indexOf('padX') === -1, '壁共有画像: padX は存在しない (プレビュー専用の延長量。混入すると ReferenceError で共有が壊れる)');
   // 机の有限化 (PBI #27): クランプは平行移動のみ、範囲内は冪等でセーブが変わらない
   const deskRect36 = L.scatterRect(36);
   const clBounds = L.clusterCellBounds({ pieces: [0, 1, 7], gx: 2, gy: 3 }, 6);

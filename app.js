@@ -1758,7 +1758,7 @@ function loadStore() {
     var raw = localStorage.getItem(STORE_KEY);
     if (raw) { var s = JSON.parse(raw); if (s && s.progress && s.records) return s; }
   } catch (e) { /* ignore */ }
-  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true };
+  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true, seVolume: 1 };
 }
 var store = loadStore();
 store.uiTheme = normalizeUiTheme(store.uiTheme); // 旧テーマ値は無効値として既定 'walnut' に落とす
@@ -1939,6 +1939,7 @@ function saveAudioSettings() {
   store.bgmOn = bgmOn;
   store.bgmVolume = bgmVolume;
   store.seOn = seOn;
+  store.seVolume = seVolume;
   saveStore();
 }
 
@@ -1953,6 +1954,10 @@ function syncAudioControls() {
   var vol = Math.round(bgmVolume * 100);
   ['bgmVolume', 'bgmVolumeStart'].forEach(function (id) {
     var el = $(id); if (el) el.value = vol;
+  });
+  var svol = Math.round(seVolume * 100);
+  ['seVolume', 'seVolumeStart'].forEach(function (id) {
+    var el = $(id); if (el) el.value = svol;
   });
 }
 function onBgmToggleChanged(checked) {
@@ -1970,6 +1975,13 @@ function onSeToggleChanged(checked) {
   saveAudioSettings();
   syncAudioControls();
 }
+function onSeVolumeInput(value) {
+  seVolume = value / 100;
+  saveAudioSettings();
+  applySeVolume();
+  syncAudioControls();
+  if (seOn) sePlaceOk(); // 調整中その場で試聴できるように
+}
 
 /* ---- BGM ----
  * プレイリスト 13 曲 (合計 40:56)。選曲 UI は持たず、シャッフルで
@@ -1979,7 +1991,7 @@ function onSeToggleChanged(checked) {
  * 持ち回し、終わり際の数秒で前曲をフェードアウトしながら次曲を
  * フェードインする。ゲイン曲線と時間の計算は PureLogic。
  * 再生は机に入ってから (id 19): タイトル画面 (スタート画面) では
- * 開始せず、戻ってきたら止める。最初の play() が端末に受け付けられ
+ * 開始しない。ただし一度流れ始めたら戻っても止めない (2026-11-10 改訂)。最初の play() が端末に受け付けられ
  * なかった場合に備え、ユーザー操作のたびに再試行する (bgmTryPlay)。
  * 曲名と作者は、その曲が再生されている間ずっと右下へ小さく
  * 出しっぱなしにする (クレジット表示を兼ねる)。 */
@@ -2177,10 +2189,12 @@ function bgmStopAll() {
   bgm.fading = null;
   bgm.decks.forEach(function (d) { if (d) d.audio.pause(); });
 }
-/* タイトル画面 (スタート画面) にいる間は音を出さない (id 19)。
- * ただし壁画面は例外: スタート画面から入っても BGM を流す。
+/* タイトル画面 (スタート画面) では、まだ一度も BGM が流れていない
+ * 間だけ音を出さない (id 19 の改訂、2026-11-10 ユーザー指示)。
+ * 一度流れ始めたら (bgm.started)、トップに戻っても止めずに流し続ける。
+ * 壁画面は従来どおり最初から例外 (スタート画面から入っても流れる)。
  * uiHome / uiWall は同じクロージャ内で後から宣言される var (参照は実行時のみ)。 */
-function bgmOnTitle() { return uiHome && !uiWall; }
+function bgmOnTitle() { return uiHome && !uiWall && !bgm.started; }
 /* 最初の再生開始。呼ばれるのは机に入った時点 (openBox 完了・つづき再開) と、
  * ジェスチャごとの再試行 (bgmTryPlay) から。タイトル画面では開始しない */
 function bgmStart() {
@@ -2193,7 +2207,7 @@ function bgmStart() {
 }
 /* ユーザー操作を合図に「鳴るべきなら鳴らす」。未開始なら開始し、開始済み
  * でも止まっていたら音量を適用し直して play() を再試行する。
- * タイトル画面にいる間は何もしない (id 19: タイトルでは音を出さない)。
+ * まだ流れていない間のタイトル画面では何もしない (id 19)。
  * オフのとき・全曲読めなかった (dead) とき・タブが隠れているときも同様 */
 function bgmTryPlay() {
   if (!bgmOn || bgm.dead || bgmOnTitle()) return;
@@ -2229,17 +2243,12 @@ function bgmApplySettings() {
     }
   }
 }
-/* タイトル画面に戻るとき: 再生中なら止める。フェード中なら先に確定させて
- * から止める (次に机へ入ったときは bgmTryPlay がアクティブデッキを再開する) */
-function bgmEnterTitle() {
-  if (!bgm.started) return;
-  if (bgm.fading) bgmFinishFade();
-  var deck = bgm.decks[bgm.active];
-  if (deck) deck.audio.pause();
-  bgmHideNowPlaying();
-}
-/* タブが隠れたら一時停止し、戻ったら再開する (設定でオフのとき・タイトル
- * 画面にいるときは再開しない) */
+/* タイトル画面に戻るとき: 一度流れ始めた BGM は止めない (id 19 改訂)。
+ * 停止は BGM オフとタブを隠したときだけ。旧仕様の呼び出し箇所
+ * (goToStartScreen / restartPuzzle) はそのまま残してある */
+function bgmEnterTitle() { /* 流し続ける: 何もしない */ }
+/* タブが隠れたら一時停止し、戻ったら再開する (設定でオフのとき・
+ * まだ一度も流れていないタイトル画面では再開しない) */
 document.addEventListener('visibilitychange', function () {
   if (!bgm.started) return;
   if (document.hidden) {
@@ -2273,6 +2282,13 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
+/* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
+ * 基準 SE_MASTER_BASE × seVolume。既定の基準は 0.22 → 0.26 に微増 (2026-11-10 ユーザー指示) */
+var SE_MASTER_BASE = 0.26;
+var seVolume = (typeof store.seVolume === 'number' && isFinite(store.seVolume))
+  ? Math.min(1, Math.max(0, store.seVolume)) : 1;
+function seMasterGain() { return SE_MASTER_BASE * seVolume; }
+function applySeVolume() { if (seMaster && seCtx) seMaster.gain.setTargetAtTime(seMasterGain(), seCtx.currentTime, 0.02); }
 var seCtx = null, seMaster = null, seNoiseBuf = null;
 function ensureSeContext() {
   if (seCtx) {
@@ -2284,7 +2300,7 @@ function ensureSeContext() {
   try {
     seCtx = new AC();
     seMaster = seCtx.createGain();
-    seMaster.gain.value = 0.22; // マスターは控えめ (0.15〜0.3 の範囲)
+    seMaster.gain.value = seMasterGain(); // 基準 0.26 × ユーザーの SE音量 (既定 1)
     seMaster.connect(seCtx.destination);
   } catch (e) { seCtx = null; }
 }
@@ -4557,9 +4573,9 @@ function renderWallPreviewCanvas(aspect) {
           ctx.save();
           ctx.fillStyle = 'rgba(60,38,18,0.30)';
           ctx.beginPath();
-          ctx.ellipse(p.x * W, feetY, wpx * 0.36, Math.max(2, 5 * k), 0, 0, Math.PI * 2);
+          ctx.ellipse(padX + p.x * W, feetY, wpx * 0.36, Math.max(2, 5 * k), 0, 0, Math.PI * 2);
           ctx.fill();
-          ctx.drawImage(img, p.x * W - wpx / 2, feetY - hpx, wpx, hpx);
+          ctx.drawImage(img, padX + p.x * W - wpx / 2, feetY - hpx, wpx, hpx);
           ctx.restore();
           res();
         };
@@ -4615,11 +4631,19 @@ function updateWallPreview() {
   if (wallPreviewCache.key === key && wallPreviewCache.cv) {
     var srcC = wallPreviewCache.cv;
     cv.width = bw; cv.height = bh;
-    ctx.fillStyle = '#f7f2e7';
-    ctx.fillRect(0, 0, bw, bh);
-    var sc = Math.min(bw / srcC.width, bh / srcC.height);
-    var dw = Math.round(srcC.width * sc), dh = Math.round(srcC.height * sc);
-    ctx.drawImage(srcC, Math.round((bw - dw) / 2), Math.round((bh - dh) / 2), dw, dh);
+    // 余白をベタ色で埋めると「壁が左右で切れた」ように見えるので、
+    // 帯いっぱいに引き伸ばして描く (アスペクト差はレイアウト揺れ由来の
+    // 数%程度で、歪みは目立たない)。ただし差が大きいときは従来の
+    // フィット描画 (大きい歪みより余白のほうがまし)
+    if (Math.abs(srcC.width / srcC.height - bw / bh) < 0.15) {
+      ctx.drawImage(srcC, 0, 0, bw, bh);
+    } else {
+      ctx.fillStyle = '#f7f2e7';
+      ctx.fillRect(0, 0, bw, bh);
+      var sc = Math.min(bw / srcC.width, bh / srcC.height);
+      var dw = Math.round(srcC.width * sc), dh = Math.round(srcC.height * sc);
+      ctx.drawImage(srcC, Math.round((bw - dw) / 2), Math.round((bh - dh) / 2), dw, dh);
+    }
     return;
   }
   // まず壁紙だけの即席で帯いっぱいに埋める (額・小物・猫の重い描画は後追い)
@@ -4628,7 +4652,7 @@ function updateWallPreview() {
   if (wallPreviewBusyKey === key) return;
   wallPreviewBusyKey = key;
   setTimeout(function () {
-    renderWallPreviewCanvas(aspect).then(function (full) {
+    renderWallPreviewCanvas(wallPreviewAspect()).then(function (full) {
       wallPreviewBusyKey = '';
       if (!full) return;
       wallPreviewCache = { key: key, cv: full };
@@ -5872,7 +5896,7 @@ function showPlay() {
 function goToStartScreen() {
   carry = null; // 画面を離れたら運び中は解除する (配置はせず、その場の座標のまま)
   if (state) persistProgress();
-  bgmEnterTitle(); // タイトル画面では音を出さない (id 19)
+  bgmEnterTitle(); // 一度流れ始めた BGM はトップでも止めない (id 19 改訂: 中身は no-op)
   uiHome = true;
   uiCollection = false;
   replayStage = null; // スタートに戻ったら最新の未挑戦ステージへ
@@ -6279,17 +6303,10 @@ function openPreview() {
 
 /* ---------- 設定メニュー (開いている間はタイマー停止) ---------- */
 var settingsAutoPaused = false;
-function updateSettingsPauseBtn() {
-  var btn = $('settingsPauseBtn');
-  if (!state || !state.started || state.cleared) { btn.disabled = true; btn.textContent = '一時停止'; return; }
-  btn.disabled = false;
-  btn.textContent = state.paused ? '再開する' : '一時停止する';
-}
 function openSettings() {
   if (!state || state.phase !== 'play' || uiHome || uiCollection || uiWall) return;
   settingsAutoPaused = false;
   if (timerRunning()) { pauseTimer(); settingsAutoPaused = true; persistProgress(); }
-  updateSettingsPauseBtn();
   $('settingsModal').hidden = false;
   navPush('settings');
   setTimeout(function () { maybeTourAuto('settings'); }, 350); // 初回だけ設定のツアー
@@ -6460,7 +6477,7 @@ function restartPuzzle() {
   navGoHome(); // どの画面からでも未開封の箱 (スタート画面) に戻る遷移
   if (store.progress[playDate]) delete store.progress[playDate][difficulty];
   saveStore();
-  bgmEnterTitle(); // タイトル画面 (未開封の箱) に戻るので音は止める (id 19)
+  bgmEnterTitle(); // 一度流れ始めた BGM はトップでも止めない (id 19 改訂: 中身は no-op)
   uiHome = true;
   startGame(state.pool);
 }
@@ -6504,6 +6521,8 @@ function wireControls() {
   $('bgmVolumeStart').addEventListener('input', function () { onBgmVolumeInput($('bgmVolumeStart').value); });
   $('seToggle').addEventListener('change', function () { onSeToggleChanged($('seToggle').checked); });
   $('seToggleStart').addEventListener('change', function () { onSeToggleChanged($('seToggleStart').checked); });
+  $('seVolume').addEventListener('input', function () { onSeVolumeInput($('seVolume').value); });
+  $('seVolumeStart').addEventListener('input', function () { onSeVolumeInput($('seVolumeStart').value); });
   document.querySelectorAll('[data-settings-close]').forEach(function (el) {
     el.addEventListener('click', function () { navBack(); });
   });
@@ -6516,24 +6535,10 @@ function wireControls() {
   document.querySelectorAll('[data-credits-close]').forEach(function (el) {
     el.addEventListener('click', function () { navBack(); });
   });
-  $('settingsPauseBtn').addEventListener('click', function () {
-    if (!state || !state.started || state.cleared) return;
-    if (state.paused) resumeTimer(); else pauseTimer();
-    settingsAutoPaused = false; // ユーザーが明示的に切り替えたら自動再開しない
-    updateSettingsPauseBtn();
-    persistProgress();
-    $('timerText').textContent = formatTime(currentElapsed());
-  });
   $('settingsPreviewBtn').addEventListener('click', function () {
     closeSettings();
     navSilentPop('settings');
     openPreview();
-  });
-  $('settingsCollectionBtn').addEventListener('click', function () {
-    closeSettings();
-    navSilentPop('settings');
-    collectionBackToHome = false; // プレイ中からのコレクションはプレイ画面へ戻る
-    showCollection();
   });
   $('settingsHomeBtn').addEventListener('click', function () {
     closeSettings();
@@ -6614,11 +6619,6 @@ function wireControls() {
     if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); showWall('home'); }
   });
   window.addEventListener('resize', function () { if (!$('startView').hidden) updateWallPreview(); });
-  $('settingsWallBtn').addEventListener('click', function () {
-    closeSettings();
-    navSilentPop('settings');
-    showWall('play');
-  });
   $('wallBack').addEventListener('click', function () { navBack(); });
   $('wallUnplaceBtn').addEventListener('click', function () { unplaceWallSelected(); });
   $('wallFrameBtn').addEventListener('click', function () { openFramePicker(); });
