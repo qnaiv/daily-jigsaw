@@ -1590,6 +1590,72 @@ function recordWallHistory(wall, date, ids) {
   ids.forEach(function (id) { if (cur.indexOf(id) < 0) cur.push(id); });
   wall.history[date] = cur;
 }
+/* ---- 額のサイズ3段階 (2026-11-10 ユーザー設計) ----
+ * 段階値は幅比 w。大は小の面積4倍 (幅2倍)、中は幅の中間で現行標準。
+ * 既存の額 (0.30 / 初期 0.28) は移行なしで「中」扱い */
+var FRAME_SIZE_TIERS = [
+  { id: 's', label: '小', w: 0.20 },
+  { id: 'm', label: '中', w: 0.30 },
+  { id: 'l', label: '大', w: 0.40 }
+];
+/* 幅比から最も近い段階の添字を返す (境界は仕様どおり 0.25 / 0.35) */
+function frameSizeTierOf(w) {
+  if (w < 0.25) return 0;
+  if (w <= 0.35) return 1;
+  return 2;
+}
+/* サイズ変更後の中心クランプ: 中心は維持し、額が壁からはみ出す場合
+ * だけ、はみ出し分を内側へ寄せて全体を壁に収める。幅の壁内比は
+ * f.w/size.w、高さ比は f.w/size.h (額は正方形で単位空間では一辺 f.w) */
+function clampFrameCenter(f, size) {
+  var hw = f.w / size.w / 2, hh = f.w / size.h / 2;
+  return {
+    x: Math.min(1 - hw, Math.max(hw, f.x)),
+    y: Math.min(1 - hh, Math.max(hh, f.y))
+  };
+}
+/* ---- 壁画面のサンプル箱 (猫の配置ガイド、2026-11-10 ユーザー決定) ----
+ * スタート画面の壁帯でギフト箱が壁に被る範囲を、壁座標 (比率) で返す。
+ * 帯の幾何は renderWallPreviewCanvas / updateWallPreview と同じ式:
+ * 帯はビューポート全幅、帯高 = min(壁の自然高, 画面高の 28%)、帯が
+ * 壁より横長な分は下地だけが左右へ延長され、壁本体は中央に収まる。
+ * 箱は CSS (.gift-box: width min(86%, 400px)、.wallband-box:
+ * bottom 0 + translateY(48%)) から決まり、アートワーク本体
+ * (viewBox 416x190 の x=64..352 / y=84..163) の範囲を壁比率へ換算する。
+ * 換算値は puppeteer 実測 (412x915) と 0.002 以内で一致する (テスト参照) */
+var SAMPLE_BOX_ART = { x0: 64 / 416, x1: 352 / 416, y0: 84 / 190, y1: 163 / 190 };
+function sampleBoxArtRect(vw, vh, size) {
+  var dispW = vw;
+  var natH = dispW * (1.25 * size.h) / size.w;
+  var cap = vw <= 700 ? vh * 0.28 : Infinity;
+  var bandH = Math.min(natH, cap);
+  var aspect = dispW / bandH;
+  var uw = size.w, uh = 1.25 * size.h;
+  var ext = uw / uh < aspect ? uh * aspect : uw;
+  var wallLeftPx = dispW * (ext - uw) / 2 / ext;
+  var wallWidthPx = dispW * uw / ext;
+  var elW = Math.min(0.86 * dispW, 400), elH = elW * 190 / 416;
+  var elLeft = (dispW - elW) / 2;
+  var elTop = bandH - 0.52 * elH; /* 要素の下端は帯下端 + 要素高の 48% */
+  var artL = elLeft + elW * SAMPLE_BOX_ART.x0, artR = elLeft + elW * SAMPLE_BOX_ART.x1;
+  var artT = elTop + elH * SAMPLE_BOX_ART.y0, artB = elTop + elH * SAMPLE_BOX_ART.y1;
+  return {
+    left: (artL - wallLeftPx) / wallWidthPx,
+    top: artT / bandH,
+    width: (artR - artL) / wallWidthPx,
+    height: (artB - artT) / bandH
+  };
+}
+/* アートワーク矩形 → SVG 要素全体の矩形 (壁比率)。要素の高さは
+ * ワールドの px アスペクト (幅px/高さpx) 経由で決まる */
+function sampleBoxElementRect(vw, vh, size, worldAspect) {
+  var art = sampleBoxArtRect(vw, vh, size);
+  var elW = art.width / (SAMPLE_BOX_ART.x1 - SAMPLE_BOX_ART.x0);
+  var elLeft = art.left - elW * SAMPLE_BOX_ART.x0;
+  var elH = elW * worldAspect * (190 / 416);
+  var elTop = art.top - elH * SAMPLE_BOX_ART.y0;
+  return { left: elLeft, top: elTop, width: elW, height: elH, art: art };
+}
 /* 壁の端でクランプ: アイテム/額の中心は壁 (比率 0〜1) の内側に収める */
 function clampItemPos(x, y) {
   function c(v) { return typeof v === 'number' && isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5; }
@@ -1719,6 +1785,8 @@ var PureLogic = {
   WALL_STARTER_ITEMS: WALL_STARTER_ITEMS,
   wallItemById: wallItemById, wallItemWidthRatio: wallItemWidthRatio,
   CAT_CATALOG: CAT_CATALOG, catById: catById, collectibleById: collectibleById, CAT_FEET_Y: CAT_FEET_Y,
+  FRAME_SIZE_TIERS: FRAME_SIZE_TIERS, frameSizeTierOf: frameSizeTierOf, clampFrameCenter: clampFrameCenter,
+  SAMPLE_BOX_ART: SAMPLE_BOX_ART, sampleBoxArtRect: sampleBoxArtRect, sampleBoxElementRect: sampleBoxElementRect,
   emptyWall: emptyWall, normalizeWall: normalizeWall, nextWallItemUid: nextWallItemUid,
   TOUR_SEGMENTS: TOUR_SEGMENTS, TOUR_STEP_COUNT: TOUR_STEP_COUNT,
   wallDrawEligible: wallDrawEligible, drawWallItem: drawWallItem,
@@ -4365,6 +4433,7 @@ function renderWall() {
   store.wall.frames.forEach(function (f) { world.appendChild(buildWallFrameEl(f)); });
   store.wall.placed.forEach(function (p) { world.appendChild(buildWallItemEl(p)); });
   (store.wall.catsPlaced || []).forEach(function (p) { world.appendChild(buildWallCatEl(p)); });
+  world.appendChild(buildWallSampleBox()); // 猫の配置ガイドは最前面 (半透明)
   var fit = document.createElement('button');
   fit.id = 'wallFitBtn';
   fit.className = 'wall-fit-btn';
@@ -4685,6 +4754,32 @@ function wallCatPlacedEntry(id) {
   var placed = store.wall.catsPlaced || [];
   for (var i = 0; i < placed.length; i++) if (placed[i].id === id) return placed[i];
   return null;
+}
+/* 壁画面のサンプル箱: スタート画面の壁帯でギフト箱が壁に被る範囲を、
+ * 壁の床に半透明で示すガイド (猫の配置用、2026-11-10 ユーザー決定)。
+ * 柄はスタート画面の箱と同じ (現在のステージの柄)。操作は受け付けず
+ * (pointer-events: none)、猫・小物・額より手前に置くので、裏にいる
+ * 猫が透けて「スタート画面では隠れる」ことが見て分かる。
+ * 濃さ: 常時 0.35、猫の選択中/ドラッグ中は 0.55 */
+function sampleBoxActive() {
+  return !!((wallSelected && wallSelected.kind === 'cat') || (wallDrag && wallDrag.kind === 'cat'));
+}
+function updateSampleBoxOpacity() {
+  var el = $('wallSampleBox');
+  if (el) el.style.opacity = sampleBoxActive() ? '0.55' : '0.35';
+}
+function buildWallSampleBox() {
+  var el = document.createElement('div');
+  el.className = 'wall-samplebox';
+  el.id = 'wallSampleBox';
+  var d = wallWorldPx();
+  var r = sampleBoxElementRect(window.innerWidth, window.innerHeight, wallSize(), d.w / d.h);
+  el.style.left = (r.left * 100) + '%';
+  el.style.top = (r.top * 100) + '%';
+  el.style.width = (r.width * 100) + '%';
+  el.innerHTML = giftBoxSvg(BOX_PATTERNS[stageBoxPatternIndex(playStage)].id, 'wall');
+  el.style.opacity = sampleBoxActive() ? '0.55' : '0.35';
+  return el;
 }
 /* 床の猫の要素: 足元は床に固定 (bottom 指定)、移動は x だけ */
 function buildWallCatEl(p) {
@@ -5393,6 +5488,7 @@ function attachWallDrag(el, kind, key) {
     if (!wallDrag || wallDrag.kind !== kind || wallDrag.key !== key) return;
     var wasDrag = wallDrag.moved;
     wallDrag = null;
+    updateSampleBoxOpacity();
     if (wasDrag) { saveStore(); sePlace(); }
   }
   el.addEventListener('pointerup', endDrag);
@@ -5406,6 +5502,7 @@ function selectWall(kind, key) {
   });
   updateWallSelBar();
   renderWallTray();
+  updateSampleBoxOpacity();
 }
 function updateWallSelBar() {
   var bar = $('wallSelBar');
@@ -5420,7 +5517,8 @@ function updateWallSelBar() {
   } else selName = (collectibleById(wallSelected.key) || {}).name || '';
   $('wallSelName').textContent = selName;
   $('wallFrameColors').hidden = !isFrame;
-  if (isFrame) renderFrameColorSwatches();
+  $('wallFrameSizes').hidden = !isFrame;
+  if (isFrame) { renderFrameColorSwatches(); renderFrameSizeButtons(); }
 }
 /* フレーム色の選択肢: 解放済みスタイルだけを出す */
 function renderFrameColorSwatches() {
@@ -5439,6 +5537,34 @@ function renderFrameColorSwatches() {
       var fr = wallFrameEntry(wallSelected.key);
       if (!fr) return;
       fr.color = st.id;
+      saveStore();
+      renderWall();
+      selectWall('frame', fr.recordKey);
+    });
+    box.appendChild(b);
+  });
+}
+/* 額のサイズ3段階ボタン: 小/中/大。中心は維持し、拡大ではみ出す
+ * ときだけ clampFrameCenter で内側へ寄せる (2026-11-10 ユーザー設計) */
+function renderFrameSizeButtons() {
+  var box = $('wallFrameSizes');
+  box.innerHTML = '';
+  var f = wallSelected && wallSelected.kind === 'frame' ? wallFrameEntry(wallSelected.key) : null;
+  if (!f) return;
+  var cur = frameSizeTierOf(f.w);
+  FRAME_SIZE_TIERS.forEach(function (tier, i) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'frame-size-btn' + (i === cur ? ' active' : '');
+    b.textContent = tier.label;
+    b.setAttribute('aria-label', '額のサイズ ' + tier.label);
+    b.addEventListener('click', function () {
+      var fr = wallFrameEntry(wallSelected.key);
+      if (!fr) return;
+      fr.w = tier.w;
+      var c = clampFrameCenter(fr, wallSize());
+      fr.x = c.x;
+      fr.y = c.y;
       saveStore();
       renderWall();
       selectWall('frame', fr.recordKey);

@@ -926,6 +926,20 @@ button { font: inherit; cursor: pointer; }
   padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
 .frame-swatch.active { outline: 2px solid var(--brass); outline-offset: 1px; }
+#wallFrameSizes { display: flex; gap: 6px; }
+#wallFrameSizes[hidden] { display: none; }
+.frame-size-btn {
+  min-width: 36px; height: 26px; padding: 0 9px; border-radius: 999px;
+  border: 2px solid rgba(0,0,0,.18); background: #fffdf6; color: var(--screen-ink);
+  font-size: 13px; font-weight: 700; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.frame-size-btn.active { outline: 2px solid var(--brass); outline-offset: 1px; }
+/* 壁画面のサンプル箱 (猫の配置ガイド): スタート帯で箱が被る範囲を
+ * 半透明で示す。操作は受け付けず、猫・小物・額より手前に置く */
+.wall-samplebox {
+  position: absolute; z-index: 5; pointer-events: none;
+}
+.wall-samplebox svg { width: 100%; height: auto; display: block; }
 .wall-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .wall-frame-count { font-size: 12px; color: var(--screen-ink); opacity: .65; }
 #wallTray { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px; padding: 10px 2px 14px; }

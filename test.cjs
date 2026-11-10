@@ -1386,5 +1386,45 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.buildShareText({ stage: 12, pieces: 36, timeSec: 65, moves: 40 }).indexOf('ステージ12') !== -1, '共有文: ステージ番号で組む');
 }
 
+/* 額サイズ3段階 + 壁画面サンプル箱 (2026-11-10 ユーザー設計/決定) */
+{
+  ok(eq(L.FRAME_SIZE_TIERS.map(t => t.w), [0.2, 0.3, 0.4]), '額サイズ: 段階は 小0.20 / 中0.30 / 大0.40');
+  ok(Math.abs(Math.pow(0.4 / 0.2, 2) - 4) < 1e-9 && Math.abs((0.2 + 0.4) / 2 - 0.3) < 1e-9, '額サイズ: 大は小の面積4倍、中は幅の中間');
+  ok(L.frameSizeTierOf(0.2) === 0 && L.frameSizeTierOf(0.24) === 0 && L.frameSizeTierOf(0.25) === 1 &&
+     L.frameSizeTierOf(0.28) === 1 && L.frameSizeTierOf(0.3) === 1 && L.frameSizeTierOf(0.35) === 1 &&
+     L.frameSizeTierOf(0.36) === 2 && L.frameSizeTierOf(0.4) === 2, '額サイズ: 最も近い段階の判定 (既存の 0.28 / 0.30 は中)');
+  const wsz0 = { w: 1.5, h: 1.2 };
+  ok(eq(L.clampFrameCenter({ x: 0.5, y: 0.4, w: 0.3 }, wsz0), { x: 0.5, y: 0.4 }), '額サイズ: 壁に収まっている額の中心は動かない');
+  const clL = L.clampFrameCenter({ x: 0.05, y: 0.97, w: 0.4 }, wsz0);
+  ok(Math.abs(clL.x - 0.4 / 1.5 / 2) < 1e-9 && Math.abs(clL.y - (1 - 0.4 / 1.2 / 2)) < 1e-9, '額サイズ: 大への拡大ではみ出し分だけ中心を内側へ寄せる');
+  const clS = L.clampFrameCenter({ x: 0.99, y: 0.01, w: 0.2 }, { w: 3.0, h: 1.4 });
+  ok(Math.abs(clS.x - (1 - 0.2 / 3 / 2)) < 1e-9 && Math.abs(clS.y - 0.2 / 1.4 / 2) < 1e-9, '額サイズ: 拡張壁でもクランプが効く');
+  // サンプル箱の換算は puppeteer 実測 (412x915、帯と箱の実矩形から換算) と一致する
+  const art0 = L.sampleBoxArtRect(412, 915, wsz0);
+  ok(Math.abs(art0.left - 0.0213) < 0.002 && Math.abs(art0.top - 0.9508) < 0.002 &&
+     Math.abs(art0.width - 0.9574) < 0.002 && Math.abs(art0.height - 0.2625) < 0.002,
+     'サンプル箱: 段階0のアートワーク範囲が実測と一致 (' + art0.left.toFixed(4) + ',' + art0.top.toFixed(4) + ',' + art0.width.toFixed(4) + ')');
+  const art1 = L.sampleBoxArtRect(412, 915, { w: 3.0, h: 1.4 });
+  ok(Math.abs(art1.left - 0.2023) < 0.002 && Math.abs(art1.width - 0.5954) < 0.002 && Math.abs(art1.top - 0.9475) < 0.002,
+     'サンプル箱: 拡張壁では箱が相対的に小さくなる (' + art1.left.toFixed(4) + ',' + art1.width.toFixed(4) + ')');
+  ok(Math.abs(art0.left + art0.width / 2 - 0.5) < 0.002 && Math.abs(art1.left + art1.width / 2 - 0.5) < 0.002, 'サンプル箱: 横は壁の中央に来る');
+  ok(art0.top > 0.885 && art0.top + art0.height > 1, 'サンプル箱: 床帯 (下端11.5%) の内側から始まって下へはみ出す');
+  const elr = L.sampleBoxElementRect(412, 915, wsz0, 1);
+  ok(Math.abs(elr.width - art0.width / (288 / 416)) < 1e-9 &&
+     Math.abs(elr.left + elr.width * (64 / 416) - art0.left) < 1e-9 &&
+     Math.abs(elr.top + elr.height * (84 / 190) - art0.top) < 1e-9,
+     'サンプル箱: 要素矩形からアートワーク矩形が復元できる');
+  const fsB = require('fs'), pathB = require('path');
+  const appSB = fsB.readFileSync(pathB.join(__dirname, 'app.js'), 'utf8');
+  const htmlSB = fsB.readFileSync(pathB.join(__dirname, 'index.html'), 'utf8');
+  const swSB = fsB.readFileSync(pathB.join(__dirname, 'sw.js'), 'utf8');
+  const cssSB = fsB.readFileSync(pathB.join(__dirname, 'style.css'), 'utf8');
+  ok(appSB.indexOf('function buildWallSampleBox(') !== -1 && appSB.indexOf('wallSampleBox') !== -1 && appSB.indexOf('function updateSampleBoxOpacity(') !== -1 &&
+     cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動がある');
+  ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
+     htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
+  ok(swSB.indexOf("VERSION = 'v18'") !== -1, 'sw: VERSION は v18');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
