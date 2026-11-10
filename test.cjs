@@ -1308,6 +1308,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(require('fs').readFileSync(__dirname + '/index.html', 'utf8').indexOf('id="wallFrameBtn" class="btn" type="button">パズルを飾る</button>') !== -1 && require('fs').readFileSync(__dirname + '/index.html', 'utf8').indexOf('>額装する</button>') === -1, '壁: 額装ボタンは「パズルを飾る」表記 (ユーザー指示)');
   const htmlSB2 = require('fs').readFileSync(__dirname + '/index.html', 'utf8');
   ok(htmlSB2.indexOf('🎁') === -1 && htmlSB2.indexOf('🖼') === -1 && htmlSB2.indexOf('⚙') === -1 && htmlSB2.indexOf('btn-ico') !== -1, '絵文字排除: 通知ボタンと設定ボタンは絵文字でなく自前SVGアイコン (端末差をなくす)');
+  ok(htmlSB2.indexOf('stroke-dasharray') === -1 && htmlSB2.indexOf('rotate(-28 9 6)') !== -1, 'アイコン幾何: 歯車は破線円でなく明示パス (歯の間隔が均等)、ギフトは楕円ループ (デザイナーレビュー承認案)');
   ok(css2.indexOf('#wallTray { display: grid;') !== -1 && css2.indexOf('overflow-x: auto; margin-top: 10px; padding: 10px 2px 14px') === -1, '壁トレイ: 横スクロールをやめ、複数列グリッドで下へ並べる');
   ok(appSrc2.indexOf('function tourRun(') !== -1 && appSrc2.indexOf("maybeTourAuto('start')") !== -1 && appSrc2.indexOf("maybeTourAuto('play')") !== -1 && appSrc2.indexOf("maybeTourAuto('settings')") !== -1 && appSrc2.indexOf("maybeTourAuto('wall')") !== -1, 'ツアー (コーチマーク式): 各画面の初回だけ自動で出す');
   ok(appSrc2.indexOf('function startFullTour()') !== -1 && appSrc2.indexOf('tourMarkSeen') !== -1 && appSrc2.indexOf('function openTutorial()') === -1, 'ツアー: あそびかたから全ステップ再生でき、旧モーダルは廃止');
@@ -1477,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v33'") !== -1, 'sw: VERSION は v33');
+  ok(swSB.indexOf("VERSION = 'v34'") !== -1, 'sw: VERSION は v34');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
