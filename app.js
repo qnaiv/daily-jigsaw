@@ -1407,16 +1407,16 @@ var WALL_SIZE_RATIO = { S: 0.20, M: 0.28, L: 0.40 };
  * 画像は cats/<id>.webp (512×512 透過)。w = 床での幅 (ステージ幅比)。
  * 画風はシンプル・ミニマル (ユーザーがサンプルで承認した方向)。 */
 var CAT_CATALOG = [
-  { id: 'c01', name: '白猫 (お座り)', rarity: 1, w: 0.15 },
-  { id: 'c02', name: '茶トラ (香箱座り)', rarity: 2, w: 0.17 },
-  { id: 'c03', name: '三毛猫 (のび)', rarity: 2, w: 0.27 },
-  { id: 'c04', name: '黒猫 (お座り)', rarity: 2, w: 0.15 },
-  { id: 'c05', name: 'キジトラ (丸まって寝る)', rarity: 2, w: 0.18 },
-  { id: 'c06', name: '三毛猫 (寝そべり)', rarity: 2, w: 0.28 },
-  { id: 'c07', name: 'ハチワレ (クッション)', rarity: 2, w: 0.18 },
-  { id: 'c08', name: '子猫と毛糸玉', rarity: 2, w: 0.19 },
-  { id: 'c09', name: '長毛猫 (ふわふわ)', rarity: 2, w: 0.17 },
-  { id: 'c10', name: '白猫 (ごろごろ)', rarity: 3, w: 0.23 }
+  { id: 'c01', name: '白猫 (お座り)', rarity: 1, w: 0.225 },
+  { id: 'c02', name: '茶トラ (香箱座り)', rarity: 2, w: 0.255 },
+  { id: 'c03', name: '三毛猫 (のび)', rarity: 2, w: 0.405 },
+  { id: 'c04', name: '黒猫 (お座り)', rarity: 2, w: 0.225 },
+  { id: 'c05', name: 'キジトラ (丸まって寝る)', rarity: 2, w: 0.27 },
+  { id: 'c06', name: '三毛猫 (寝そべり)', rarity: 2, w: 0.42 },
+  { id: 'c07', name: 'ハチワレ (クッション)', rarity: 2, w: 0.27 },
+  { id: 'c08', name: '子猫と毛糸玉', rarity: 2, w: 0.285 },
+  { id: 'c09', name: '長毛猫 (ふわふわ)', rarity: 2, w: 0.255 },
+  { id: 'c10', name: '白猫 (ごろごろ)', rarity: 3, w: 0.345 }
 ];
 var CAT_STARTER_ID = 'c01';
 var CAT_FEET_Y = 0.972; // 猫の足元の高さ (ワールド高さ比・床帯の中)
@@ -1557,6 +1557,9 @@ function normalizeWall(w) {
         out.catsPlaced.push({ id: p.id, x: Math.min(0.97, Math.max(0.03, p.x)) });
       }
     });
+    // 猫は同時に1匹だけ (2026-11-10 ユーザー決定)。旧セーブで複数置いて
+    // ある場合は先頭の1匹を残し、残りは所持に戻る (データは消えない)
+    if (out.catsPlaced.length > 1) out.catsPlaced = out.catsPlaced.slice(0, 1);
   }
   // 壁の広さ段階: 有効な段階が保存されていれば引き継ぐ。無ければ段階制より
   // 前のセーブ (1.0 x 1.0 の壁) として、段階0の広さへ座標を移行する
@@ -5686,8 +5689,8 @@ function renderWallTray() {
       '<span class="decor-chip-state">' + (placed ? '配置中' : '未配置') + '</span>';
     b.addEventListener('click', function () {
       if (!wallCatPlacedEntry(c.id)) {
-        if (!Array.isArray(store.wall.catsPlaced)) store.wall.catsPlaced = [];
-        store.wall.catsPlaced.push({ id: c.id, x: Math.min(0.95, Math.max(0.05, wallCam.x)) });
+        // 猫は同時に1匹だけ: 新しく出すと今いる猫は所持に戻る (入れ替え)
+        store.wall.catsPlaced = [{ id: c.id, x: Math.min(0.95, Math.max(0.05, wallCam.x)) }];
         saveStore();
         sePlace();
         renderWall();

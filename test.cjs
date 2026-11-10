@@ -1330,6 +1330,9 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('id="giftBox"') !== -1 && html2.indexOf('box-single wallband-box') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを壁帯に重ねて出す (PBI #24 案A)');
   ok(html2.indexOf('id="startWallBand"') !== -1 && html2.indexOf('id="wallPreviewCanvas"') !== -1 && html2.indexOf('start-wallwrap') !== -1 && appSrc2.indexOf('function updateWallPreview(') !== -1 && appSrc2.indexOf('function renderWallPreviewCanvas(') !== -1 && appSrc2.indexOf('wallPreviewCache') !== -1, '壁帯プレビュー: スタート画面最上部に飾った壁を描き、壁が変わらない間はキャッシュを使う');
   ok(css2.indexOf('transform: translateY(47%);') !== -1 && css2.indexOf('margin: -26px -20px 71px;') !== -1 && css2.indexOf('width: min(73%, 340px);') !== -1, '壁帯の箱: v19 で幅 min(73%,340px) に縮小し、絵の天面 (SVG y=84) が帯下端から約12pxだけ床帯に入る translateY(47%) + はみ出し分を確保する margin-bottom 71px (要素基準で計算すると絵が帯から離れてタイトルに被る)');
+  ok(JSON.stringify(L.CAT_CATALOG.map(function (c) { return c.w; })) === JSON.stringify([0.225, 0.255, 0.405, 0.225, 0.27, 0.42, 0.27, 0.285, 0.255, 0.345]), '猫サイズ: 全匹 ×1.5 (2026-11-10 ユーザー選択)');
+  var wallN = L.normalizeWall({ catsOwned: ['c01', 'c02', 'c03'], catsPlaced: [{ id: 'c02', x: 0.3 }, { id: 'c03', x: 0.6 }, { id: 'c01', x: 0.8 }] });
+  ok(wallN.catsPlaced.length === 1 && wallN.catsPlaced[0].id === 'c02', '猫は同時に1匹だけ: 複数配置の旧セーブは先頭の1匹を残す');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
   ok(appSrc2.indexOf('renderWallPreviewCanvas(aspect)') !== -1 && appSrc2.indexOf('padX + f.x * W') !== -1 && appSrc2.indexOf('padX + p.x * W') !== -1, '壁帯プレビュー: 帯が横長な分は下地を左右延長し、額と小物と猫は壁座標のまま描く (横の切れ目なし)');
   ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決める');
@@ -1458,7 +1461,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v21'") !== -1, 'sw: VERSION は v21');
+  ok(swSB.indexOf("VERSION = 'v22'") !== -1, 'sw: VERSION は v22');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
