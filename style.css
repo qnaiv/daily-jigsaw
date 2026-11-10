@@ -858,7 +858,7 @@ button { font: inherit; cursor: pointer; }
 #decorTray[hidden] { display: none; }
 .decor-empty { color: var(--paper-dim); font-size: 12.5px; padding: 8px 2px; }
 .decor-chip {
-  flex: 0 0 auto; width: 86px; padding: 7px 5px 6px;
+  width: 100%; min-width: 0; padding: 7px 5px 6px;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   background: var(--panel); color: var(--ink);
   border: 1px solid var(--line); border-radius: 10px;
@@ -964,7 +964,11 @@ button { font: inherit; cursor: pointer; }
 .wall-samplebox svg { width: 100%; height: auto; display: block; }
 .wall-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .wall-frame-count { font-size: 12px; color: var(--screen-ink); opacity: .65; }
-#wallTray { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px; padding: 10px 2px 14px; }
+/* トレイは横スクロールでなく複数列グリッドで下へ並べる (コレクションと
+ * 同じ眺め方。ユーザー指示 2026-11-10)。列数は幅で増える */
+#wallTray { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; padding: 10px 2px 14px; }
+@media (max-width: 380px) { #wallTray { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 700px) { #wallTray { grid-template-columns: repeat(6, 1fr); } }
 #unlockList {
   display: flex; flex-direction: column; gap: 8px; margin: 12px 0;
   max-height: 46vh; overflow-y: auto;

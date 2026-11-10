@@ -875,9 +875,9 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // 床の猫: カタログ/スターター/抽選/付与/保存
   ok(L.CAT_CATALOG.length === 10 && eq(L.CAT_CATALOG.map(c => c.id), ['c01', 'c02', 'c03', 'c04', 'c05', 'c06', 'c07', 'c08', 'c09', 'c10']), '猫: 10 匹のカタログ');
   ok(L.catById('c01').name.indexOf('白猫') === 0 && L.collectibleById('c10') === L.catById('c10') && L.collectibleById('w001') === L.wallItemById('w001'), '猫: catById / collectibleById の解決');
-  ok(eq(L.emptyWall().catsOwned, ['c01']) && eq(L.emptyWall().catsPlaced, [{ id: 'c01', x: 0.5 }]), '猫: 新規は白猫が床の中央にいる');
+  ok(eq(L.emptyWall().catsOwned, ['c01']) && eq(L.emptyWall().catsPlaced, []), '猫: 新規は白猫を所持するが、最初から置きはしない (何も置かない初期状態)');
   const catMig = L.normalizeWall({ owned: [], placed: [], frames: [] });
-  ok(eq(catMig.catsOwned, ['c01']) && eq(catMig.catsPlaced, [{ id: 'c01', x: 0.5 }]), '猫移行: 旧セーブにも白猫が補われ床に出る');
+  ok(eq(catMig.catsOwned, ['c01']) && eq(catMig.catsPlaced, []), '猫移行: 配置情報の無い旧セーブでも白猫は所持のみで、勝手に置かない');
   const catKeep = L.normalizeWall({ owned: [], placed: [], frames: [], catsOwned: ['c01', 'c04'], catsPlaced: [] });
   ok(eq(catKeep.catsOwned, ['c01', 'c04']) && eq(catKeep.catsPlaced, []), '猫保存: 空の配置 (全てしまった) は尊重される');
   const catNorm = L.normalizeWall({ owned: [], placed: [], frames: [], catsOwned: ['c04', 'c99'], catsPlaced: [{ id: 'c04', x: 1.4 }, { id: 'c05', x: 0.3 }, { id: 'c04', x: 0.2 }] });
@@ -1300,7 +1300,10 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf("wallStageEl.addEventListener('lostpointercapture', wallPtrEnd)") !== -1, '壁ジェスチャ: lostpointercapture でも指を掃除する');
   ok(appSrc2.indexOf('nextWallItemUid(store.wall.placed)') !== -1 && appSrc2.indexOf('wallPlacedByUid(wallSelected.key)') !== -1, '壁配置 (PBI21): トレイは uid 付きで新規配置し、選択/しまう は uid 単位');
   ok(appSrc2.indexOf('store.wall.placed.filter(function (p) { return p.uid !== wallSelected.key; })') !== -1, '壁配置 (PBI21): しまう は選択した1点だけを戻す');
-  ok(L.TOUR_STEP_COUNT === 7 && L.TOUR_SEGMENTS.start.join() === '0,1' && L.TOUR_SEGMENTS.play.join() === '2,3' && L.TOUR_SEGMENTS.settings.join() === '4' && L.TOUR_SEGMENTS.wall.join() === '5,6', 'ツアー: 7ステップを画面別セグメントに配分する');
+  ok(L.TOUR_STEP_COUNT === 8 && L.TOUR_SEGMENTS.start.join() === '0,1' && L.TOUR_SEGMENTS.play.join() === '2,3' && L.TOUR_SEGMENTS.settings.join() === '4,5' && L.TOUR_SEGMENTS.wall.join() === '6,7', 'ツアー: 8ステップを画面別セグメントに配分する (おたすけ追加)');
+  ok(appSrc2.indexOf("sel: '.settings-help'") !== -1 && appSrc2.indexOf('色ごとにまとめる') !== -1, 'ツアー: おたすけステップが設定のおたすけセクションを指す');
+  ok(appSrc2.indexOf('tourRun([0, 1, 2, 3, 4, 5, 6, 7]') !== -1, 'ツアー: 全ステップ再生は8ステップ全てを含む');
+  ok(css2.indexOf('#wallTray { display: grid;') !== -1 && css2.indexOf('overflow-x: auto; margin-top: 10px; padding: 10px 2px 14px') === -1, '壁トレイ: 横スクロールをやめ、複数列グリッドで下へ並べる');
   ok(appSrc2.indexOf('function tourRun(') !== -1 && appSrc2.indexOf("maybeTourAuto('start')") !== -1 && appSrc2.indexOf("maybeTourAuto('play')") !== -1 && appSrc2.indexOf("maybeTourAuto('settings')") !== -1 && appSrc2.indexOf("maybeTourAuto('wall')") !== -1, 'ツアー (コーチマーク式): 各画面の初回だけ自動で出す');
   ok(appSrc2.indexOf('function startFullTour()') !== -1 && appSrc2.indexOf('tourMarkSeen') !== -1 && appSrc2.indexOf('function openTutorial()') === -1, 'ツアー: あそびかたから全ステップ再生でき、旧モーダルは廃止');
   const htmlTour = require('fs').readFileSync(__dirname + '/index.html', 'utf8');
@@ -1469,7 +1472,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v28'") !== -1, 'sw: VERSION は v28');
+  ok(swSB.indexOf("VERSION = 'v30'") !== -1, 'sw: VERSION は v30');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */

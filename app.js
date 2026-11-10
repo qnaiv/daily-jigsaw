@@ -1470,7 +1470,7 @@ function wallItemWidthRatio(item) {
  * 所持済みを対象から外すので、ここに入っていれば二重に届くことはない */
 var WALL_STARTER_ITEMS = ['w007', 'w030', 'w037']; // ユーカリリース / 葉っぱガーランド / ハートガーランド
 function emptyWall() {
-  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], sizeStage: 0, pendingExpand: false, lastDate: null, grantDates: {}, history: {}, catsOwned: [CAT_STARTER_ID], catsPlaced: [{ id: CAT_STARTER_ID, x: 0.5 }] };
+  return { owned: WALL_STARTER_ITEMS.slice(), seen: {}, pending: [], placed: [], frames: [], frameUnlocks: ['oak', 'walnut'], pendingUnlocks: [], paper: 'kinari', paperUnlocks: ['kinari', 'sage'], pendingPaperUnlocks: [], sizeStage: 0, pendingExpand: false, lastDate: null, grantDates: {}, history: {}, catsOwned: [CAT_STARTER_ID], catsPlaced: [] };
 }
 /* 保存データの形が崩れていても使える形に寄せる (旧データには wall 自体がない)。
  * placed は配列順 = 重なり順を保つ。壁アイテムは同じものを複数置ける
@@ -1575,8 +1575,9 @@ function normalizeWall(w) {
     });
   }
   // 床の猫: 所持と配置 (配置は x のみ、足元は床固定)。スターターの白猫は
-  // 常時所持。catsPlaced が配列で保存されていればその内容を尊重し (空配列 =
-  // 全てしまった状態)、無い旧セーブではスターターを床の中央に置く
+  // 常時所持するが、最初から置きはしない (2026-11-10 ユーザー指示:
+  // 一番最初は何も置かない)。catsPlaced が配列で保存されていればその
+  // 内容を尊重する (空配列 = 全てしまった状態も含む)
   if (Array.isArray(w.catsOwned)) {
     out.catsOwned = w.catsOwned.filter(function (id, idx) { return !!catById(id) && w.catsOwned.indexOf(id) === idx; });
   }
@@ -1802,8 +1803,8 @@ function nextWallItemUid(placed) {
 }
 /* コーチマーク式チュートリアルの画面別セグメント (ステップ番号の配分)。
  * ステップの文面と対象要素はブラウザ側の TOUR_STEP_DEFS が持つ */
-var TOUR_SEGMENTS = { start: [0, 1], play: [2, 3], settings: [4], wall: [5, 6] };
-var TOUR_STEP_COUNT = 7;
+var TOUR_SEGMENTS = { start: [0, 1], play: [2, 3], settings: [4, 5], wall: [6, 7] };
+var TOUR_STEP_COUNT = 8;
 var PureLogic = {
   BASE_DATE_FALLBACK: BASE_DATE_FALLBACK, DIFFICULTIES: DIFFICULTIES,
   TABSIZE: TABSIZE, JITTER: JITTER, SNAP_DIST: SNAP_DIST,
@@ -6760,9 +6761,10 @@ var TOUR_STEP_DEFS = [
   { screen: 'start', sel: '.start-difficulty', title: 'ピース数を選ぶ', text: '難易度はここで自由に選べます。クリアすると次のステージに進みます。' },
   { screen: 'play', sel: '#stageWrap', shrink: 0.55, bubbleBottom: true, title: 'ピースをつなげる', text: 'ピースをドラッグして、となり合うピースに近づけるとくっつきます。全部が1つの塊になったらクリアです。' },
   { screen: 'play', sel: '#settingsBtn', circle: true, title: '設定はここ', text: '歯車ボタン（または戻るジェスチャー）で設定が開きます。' },
+  { screen: 'settings', sel: '.settings-help', title: 'おたすけ', text: '「完成図を見る」で絵を確認したり、「色ごとにまとめる」でバラバラのピースを色の山に分けられます。あそびかた（ドラッグ／持ち運び）の切り替えもこの設定の中です。' },
   { screen: 'settings', sel: '#settingsHomeBtn', title: 'タイトルに戻る', text: '「スタート画面に戻る」でタイトルへ戻れます。中断したパズルは、タイトルの箱をタップすれば続きから遊べます。' },
-  { screen: 'wall', sel: '#wallTray', title: '小物を置く', text: 'クリア報酬でもらった小物は、このトレイから壁に置けます。同じものも何個でも置けます。' },
-  { screen: 'wall', sel: '#wallFrameBtn', title: '額装する', text: 'クリアした絵は額に入れて壁に飾れます。' }
+  { screen: 'wall', sel: '#wallTray', title: '小物を置く', text: 'クリア報酬でもらった小物は、このトレイから壁に置けます。同じものも何個でも置けます。猫もここから置けます（同時に1匹だけ）。' },
+  { screen: 'wall', sel: '#wallFrameBtn', title: '額装する', text: 'クリアした絵は額に入れて壁に飾れます。額の大きさは、小／中／大の3段階で変えられます。' }
 ];
 var tour = null; // { steps: [通し番号...], pos, mode: 'auto'|'full' }
 var tourTimer = null;
@@ -6887,7 +6889,7 @@ function tourFinish() {
 function startFullTour() {
   if (tour) return;
   if (!$('settingsModal').hidden) { closeSettings(); navSilentPop('settings'); }
-  tourRun([0, 1, 2, 3, 4, 5, 6], 'full');
+  tourRun([0, 1, 2, 3, 4, 5, 6, 7], 'full');
 }
 /* 画面を初めて開いたときだけ、その画面のセグメントを自動で出す */
 function maybeTourAuto(screen) {
