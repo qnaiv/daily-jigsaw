@@ -574,6 +574,17 @@ button { font: inherit; cursor: pointer; }
 .stats .stat b { font-size: 16px; }
 .empty { color: var(--screen-ink); opacity: .6; padding: 24px 0; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+/* コレクション一覧 (2026-11-10 改修): 最低3列 (広い画面では増える)。
+ * タイルは額入りの絵のみで、テキスト情報は出さない (詳細に集約) */
+#collectionGrid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (min-width: 560px) { #collectionGrid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 760px) { #collectionGrid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 1024px) { #collectionGrid { grid-template-columns: repeat(6, 1fr); } }
+.card.framed-tile {
+  background: transparent; border: none; box-shadow: none; border-radius: 0;
+  overflow: visible; padding: 0; cursor: pointer;
+}
+.card.framed-tile .tile-canvas { width: 100%; height: auto; display: block; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
   text-align: left; padding: 0; width: 100%;
@@ -705,8 +716,10 @@ button { font: inherit; cursor: pointer; }
 .settings-close-x:active { transform: translateY(1px); }
 .settings-actions { display: flex; gap: 8px; }
 .settings-actions .settings-item { flex: 1; min-height: 56px; font-size: 14px; line-height: 1.35; padding: 6px 2px; }
-.settings-actions #settingsSortBtn { font-size: 12px; }
-.settings-nav { border-top: 1px solid var(--line); margin-top: 12px; }
+/* おたすけセクション (2026-11-10): 戻る/やりなおす を最上段へ移し、
+ * 完成図・色まとめは見出し付きセクションにまとめた */
+.settings-help { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.settings-nav { margin-top: 2px; }
 .settings-nav .settings-item {
   background: transparent; border: none; box-shadow: none; border-radius: 0;
   border-bottom: 1px solid var(--line); min-height: 48px;

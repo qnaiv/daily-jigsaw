@@ -180,6 +180,30 @@ function unlockedImageKeys(records) {
   (records || []).forEach(function (r) { var k = recordImageKey(r); if (k) set.add(k); });
   return set;
 }
+/* コレクションタイル用: その絵の記録群から最も大きいピース数の記録を返す。
+ * 一覧の額装飾ティアと継ぎ目の行列は「最高クリア難易度」で決めるため、
+ * 詳細の代表記録 (最速タイム) とは別にこちらを使う。 */
+function topDifficultyRecord(records) {
+  var top = null;
+  (records || []).forEach(function (r) {
+    if (r && typeof r.pieces === 'number' && (!top || r.pieces > top.pieces)) top = r;
+  });
+  return top;
+}
+/* コレクションタイルの描画プラン。タイルは小さい (3列で約130px表示) ので
+ * 盤面解像度と辺サンプリング密度は詳細より落とすが、辺データ自体は本物
+ * (generateEdges) で形は実物と同一になる。額は壁の額と同じ寸法系
+ * (frameGeometry / paintFrameUnit) で描く。 */
+function collectionTilePlan(pieces) {
+  var n = Math.round(Math.sqrt(pieces));
+  return {
+    n: n,
+    boardPx: 288,
+    perSeg: n >= 28 ? 4 : n >= 15 ? 6 : 10,
+    frameU: 200,
+    frameScale: 1.6
+  };
+}
 /* 箱の包装柄はステージ番号で回す (従来の日付×グループは廃止) */
 function stageBoxPatternIndex(stage) {
   var raw = Math.max(1, Math.floor(stage) || 1) - 1;
@@ -1757,6 +1781,7 @@ var PureLogic = {
   stageDate: stageDate, stageCycle: stageCycle, stageOrderForCycle: stageOrderForCycle,
   stageEntryIndex: stageEntryIndex, stageEntry: stageEntry, recordStage: recordStage,
   clearedStages: clearedStages, nextStage: nextStage, unlockedImageKeys: unlockedImageKeys,
+  topDifficultyRecord: topDifficultyRecord, collectionTilePlan: collectionTilePlan,
   stageBoxPatternIndex: stageBoxPatternIndex,
   entryPhotoUrl: entryPhotoUrl, entryThumbUrl: entryThumbUrl,
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
@@ -4693,8 +4718,10 @@ function updateWallPreview() {
   // キャッシュキーは壁の内容だけにする。アスペクトを混ぜると、起動直後の
   // レイアウト確定 (URLバー収納等) でアスペクトが揺れたときに完了コール
   // バックのキー照合が外れ、本描画が二度と表示されない (開いた直後は
-  // 壁紙だけで、ボタンを押すと装飾が出るバグの原因)。描画済みキャンバスは
-  // フィット描画で吸収するので、アスペクト違いは見た目に影響しない
+  // 壁紙だけで、ボタンを押すと装飾が出るバグの原因)。ただしアスペクトの
+  // ずれ自体は吸収できない: キャッシュ画像は描画時アスペクトを内蔵する
+  // ため、ずれが大きいときは下で現在のアスペクトへ描き直す (キー照合は
+  // 内容キーだけで行い、描き直しの採否はアスペクト一致で別途判定する)
   var key = wallPreviewKey();
   var ctx = cv.getContext('2d');
   if (!ctx) return;
@@ -4702,33 +4729,46 @@ function updateWallPreview() {
   // 帯のほうが横長な分は壁紙と床を左右へ継ぎ目なく伸ばして埋める。
   // 紙色の余白や横の切れ目は出ない (額・小物・猫は変形しない)
   var bw = Math.max(2, Math.round(dispW * 2)), bh = Math.max(2, Math.round(Math.min(natH, cap) * 2));
-  if (wallPreviewCache.key === key && wallPreviewCache.cv) {
-    var srcC = wallPreviewCache.cv;
-    cv.width = bw; cv.height = bh;
-    // 余白をベタ色で埋めると「壁が左右で切れた」ように見えるので、
-    // 帯いっぱいに引き伸ばして描く (アスペクト差はレイアウト揺れ由来の
-    // 数%程度で、歪みは目立たない)。ただし差が大きいときは従来の
-    // フィット描画 (大きい歪みより余白のほうがまし)
-    if (Math.abs(srcC.width / srcC.height - bw / bh) < 0.15) {
+  var targetAspect = bw / bh;
+  var srcC = (wallPreviewCache.key === key && wallPreviewCache.cv) ? wallPreviewCache.cv : null;
+  if (srcC) {
+    var drift = Math.abs(srcC.width / srcC.height - targetAspect);
+    if (drift <= 0.02) {
+      // アスペクト一致 (誤差はレイアウト揺れの範囲): そのまま貼る
+      cv.width = bw; cv.height = bh;
       ctx.drawImage(srcC, 0, 0, bw, bh);
-    } else {
-      ctx.fillStyle = '#f7f2e7';
-      ctx.fillRect(0, 0, bw, bh);
-      var sc = Math.min(bw / srcC.width, bh / srcC.height);
-      var dw = Math.round(srcC.width * sc), dh = Math.round(srcC.height * sc);
-      ctx.drawImage(srcC, Math.round((bw - dw) / 2), Math.round((bh - dh) / 2), dw, dh);
+      return;
     }
-    return;
+    // キャッシュは描画時のアスペクト (下地の左右延長量) を内蔵している。
+    // 壁画面から戻る間に URL バーの出入りで innerHeight が変わると帯の
+    // アスペクトがずれ、引き伸ばし (縦つぶれ) やレターボックス (上下の
+    // 紙色余白) になる (2026-11-10 実機報告)。誤魔化さず現在のアスペクト
+    // で描き直す。描き直し中はフィット描画でつなぐ
+    cv.width = bw; cv.height = bh;
+    ctx.fillStyle = '#f7f2e7';
+    ctx.fillRect(0, 0, bw, bh);
+    var sc = Math.min(bw / srcC.width, bh / srcC.height);
+    var dw = Math.round(srcC.width * sc), dh = Math.round(srcC.height * sc);
+    ctx.drawImage(srcC, Math.round((bw - dw) / 2), Math.round((bh - dh) / 2), dw, dh);
+  } else {
+    // まず壁紙だけの即席で帯いっぱいに埋める (額・小物・猫の重い描画は後追い)
+    cv.width = bw; cv.height = bh;
+    paintWallBase(ctx, bw, bh, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
   }
-  // まず壁紙だけの即席で帯いっぱいに埋める (額・小物・猫の重い描画は後追い)
-  cv.width = bw; cv.height = bh;
-  paintWallBase(ctx, bw, bh, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
-  if (wallPreviewBusyKey === key) return;
-  wallPreviewBusyKey = key;
+  var busyK = key + '@' + targetAspect.toFixed(3);
+  if (wallPreviewBusyKey === busyK) return;
+  wallPreviewBusyKey = busyK;
+  var renderAspect = wallPreviewAspect();
   setTimeout(function () {
-    renderWallPreviewCanvas(wallPreviewAspect()).then(function (full) {
-      wallPreviewBusyKey = '';
+    renderWallPreviewCanvas(renderAspect).then(function (full) {
+      if (wallPreviewBusyKey === busyK) wallPreviewBusyKey = '';
       if (!full) return;
+      // 描画中にアスペクトがまた動いた (URL バーの収納が続いている) ら
+      // その結果は採用せず、現在のアスペクトで描き直す
+      if (Math.abs(wallPreviewAspect() - renderAspect) > 0.02 || wallPreviewKey() !== key) {
+        if (!$('startView').hidden) updateWallPreview();
+        return;
+      }
       wallPreviewCache = { key: key, cv: full };
       if (wallPreviewKey() === key && !$('startView').hidden) updateWallPreview();
     });
@@ -6139,9 +6179,140 @@ window.addEventListener('popstate', function () {
   } finally { navPopping = false; }
 });
 try { history.replaceState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ }
-/* コレクション (ステージ制): 全ステージの絵を並べ、未クリアは「？」の
- * まま伏せる。クリアすると絵柄が解放されてサムネイルが出る。
- * 解放済みタイルのタップで記録詳細 (再プレイ導線つき) を開く */
+/* ---------- コレクション一覧タイル (額 + 継ぎ目) ----------
+ * クリア済みタイルは「オーク額 + 完成盤面」を Canvas に描く。盤面は
+ * 詳細/壁の額と同じ本物レンダラー (generateEdges → detailPiecePath →
+ * ベベル + 縁線) で、その絵の最高クリア難易度 (topDifficultyRecord) の
+ * 行列で描き、額の装飾ティアもその難易度に連動させる。描画はタイル毎に
+ * 1回だけ行ってキャッシュし、IntersectionObserver で画面に入った
+ * タイルから描く (遅延描画)。 */
+var collectionTileCache = {};  // imageKey@pieces -> 完成 Canvas
+var collectionTileJobs = {};   // imageKey@pieces -> Promise<Canvas>
+var collectionObserver = null;
+
+/* タイル用の小さいソースを用意する (詳細の loadDetailSource と同じ流儀。
+ * 読み込み失敗時はゲーム本体と同じ抽象画フォールバック) */
+function loadTileSource(rec) {
+  var size = 400;
+  var url = entryPhotoUrl(entryForRecord(rec), size);
+  if (!url) return Promise.resolve(makeFallbackCanvas(rec.date));
+  return loadImgCorsFallback(url).then(function (img) {
+    var draw = function () {
+      var side = Math.min(img.naturalWidth, img.naturalHeight);
+      var cv = document.createElement('canvas');
+      cv.width = size; cv.height = size;
+      cv.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+      return cv;
+    };
+    // load 直後に描くと Firefox で描画欠けが出るため decode() を待つ (詳細と同対策)
+    if (img.decode) return img.decode().then(draw, draw);
+    return draw();
+  }, function () { return makeFallbackCanvas(rec.date); });
+}
+/* 完成盤面をタイル用サイズで src から同期描画する (継ぎ目の本体)。
+ * renderBoardCanvasAt と同じレシピで、解像度とサンプリングだけタイル用
+ * (collectionTilePlan)。辺の形は実物と同一。 */
+function paintTileBoard(cv, rec, src) {
+  var plan = collectionTilePlan(rec.pieces);
+  var ctx = cv.getContext('2d');
+  var layout = { n: plan.n, cellPx: plan.boardPx / plan.n, ox: 0, oy: 0, boardPx: plan.boardPx };
+  var edges = generateEdges(rec.date, rec.pieces);
+  for (var id = 0; id < plan.n * plan.n; id++) {
+    var home = pieceHome(id, plan.n);
+    var path = detailPiecePath(edges, home.col, home.row, layout, plan.perSeg);
+    ctx.save();
+    ctx.clip(path);
+    ctx.drawImage(src, 0, 0, plan.boardPx, plan.boardPx);
+    ctx.restore();
+    strokePieceBevel(ctx, path, pieceRelief(layout.cellPx).bevel); // プレイ画面と揃える
+    ctx.strokeStyle = 'rgba(30,30,30,0.35)';
+    ctx.lineWidth = Math.max(1, layout.cellPx * 0.02);
+    ctx.stroke(path);
+  }
+}
+function renderTileBoardCanvas(rec) {
+  var plan = collectionTilePlan(rec.pieces);
+  var bcv = document.createElement('canvas');
+  bcv.width = plan.boardPx;
+  bcv.height = plan.boardPx;
+  return loadTileSource(rec).then(function (src) {
+    paintTileBoard(bcv, rec, src);
+    return bcv;
+  });
+}
+/* タイル Canvas のピクセル寸法 (レイアウト確定用に先に決める) */
+function collectionTilePx(pieces) {
+  var plan = collectionTilePlan(pieces);
+  var geo = frameGeometry(plan.frameU, frameStyleById('oak'));
+  return Math.round(geo.size * plan.frameScale);
+}
+/* 額 (オーク) + 盤面 + ティア装飾のタイル Canvas を作る。壁の額
+ * (paintWallFrameUnit) と同じ手順: プレースホルダを描き、盤面が
+ * できたら同じ Canvas に描き直す (乱数はシード固定で枠は不変) */
+function buildCollectionTile(rec) {
+  var plan = collectionTilePlan(rec.pieces);
+  var st = frameStyleById('oak');
+  var geo = frameGeometry(plan.frameU, st);
+  var px = Math.round(geo.size * plan.frameScale);
+  var cv = document.createElement('canvas');
+  cv.width = px;
+  cv.height = px;
+  var upper = isUpperTier(rec.pieces) ? rec.pieces : 0;
+  var seedKey = recordImageKey(rec);
+  function paint(board) {
+    var ctx = cv.getContext('2d');
+    ctx.setTransform(plan.frameScale, 0, 0, plan.frameScale, 0, 0);
+    ctx.clearRect(0, 0, geo.size, geo.size);
+    paintFrameUnit(ctx, st, plan.frameU, board, board ? 'ready' : 'loading', seedKey, upper);
+  }
+  paint(null);
+  return renderTileBoardCanvas(rec).then(function (board) {
+    paint(board);
+    return cv;
+  });
+}
+function collectionTileFor(rec) {
+  var k = recordImageKey(rec) + '@' + rec.pieces;
+  if (collectionTileCache[k]) return Promise.resolve(collectionTileCache[k]);
+  if (collectionTileJobs[k]) return collectionTileJobs[k];
+  var job = buildCollectionTile(rec).then(function (cv) {
+    collectionTileCache[k] = cv;
+    delete collectionTileJobs[k];
+    return cv;
+  }, function () {
+    delete collectionTileJobs[k];
+    return null;
+  });
+  collectionTileJobs[k] = job;
+  return job;
+}
+/* 一覧側のタイル Canvas へ中身を流し込む。完成済みキャッシュがあれば
+ * 即コピー、無ければプレースホルダ額を描いて完成後に差し替える */
+function fillCollectionTile(cv, rec) {
+  var px = collectionTilePx(rec.pieces);
+  cv.width = px;
+  cv.height = px;
+  var done = collectionTileCache[recordImageKey(rec) + '@' + rec.pieces];
+  if (done) {
+    cv.getContext('2d').drawImage(done, 0, 0);
+    return;
+  }
+  var plan = collectionTilePlan(rec.pieces);
+  var ctx = cv.getContext('2d');
+  ctx.setTransform(plan.frameScale, 0, 0, plan.frameScale, 0, 0);
+  paintFrameUnit(ctx, frameStyleById('oak'), plan.frameU, null, 'loading', recordImageKey(rec), isUpperTier(rec.pieces) ? rec.pieces : 0);
+  collectionTileFor(rec).then(function (built) {
+    if (!built || !cv.isConnected) return;
+    var c2 = cv.getContext('2d');
+    c2.setTransform(1, 0, 0, 1, 0, 0);
+    c2.clearRect(0, 0, cv.width, cv.height);
+    c2.drawImage(built, 0, 0);
+  });
+}
+
+/* コレクション (ステージ制): 全ステージの絵を最低3列で並べ、未クリアは
+ * 「？」のまま伏せる。クリア済みは額入りの絵だけを出し (テキスト情報は
+ * 詳細モーダルに集約)、タップで記録詳細 (再プレイ導線つき) を開く */
 function renderCollection() {
   var pool = state && state.pool;
   var entries = poolEntries(pool);
@@ -6157,6 +6328,16 @@ function renderCollection() {
   $('collectionEmpty').hidden = true;
   var grid = $('collectionGrid');
   grid.innerHTML = '';
+  if (collectionObserver) { collectionObserver.disconnect(); collectionObserver = null; }
+  if (typeof IntersectionObserver !== 'undefined') {
+    collectionObserver = new IntersectionObserver(function (es) {
+      es.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        collectionObserver.unobserve(e.target);
+        fillCollectionTile(e.target, e.target._tileRec);
+      });
+    }, { rootMargin: '300px' });
+  }
   entries.forEach(function (entry, idx) {
     var stage = idx + 1;
     var key = poolEntryKey(entry);
@@ -6164,25 +6345,27 @@ function renderCollection() {
     if (!recsForKey.length) {
       var locked = document.createElement('div');
       locked.className = 'card locked';
-      locked.innerHTML = '<span class="card-locked-mark">？</span>' +
-        '<span class="card-body"><span class="card-date">ステージ ' + stage + '</span></span>';
+      locked.innerHTML = '<span class="card-locked-mark">？</span>';
       grid.appendChild(locked);
       return;
     }
     var best = recsForKey.slice().sort(function (a, b) { return a.bestTimeSec - b.bestTimeSec; })[0];
+    var top = topDifficultyRecord(recsForKey);
     var card = document.createElement('button');
-    card.className = 'card';
+    card.className = 'card framed-tile';
     card.type = 'button';
-    var badges = '<span class="badge">' + best.pieces + 'ピース</span>' +
-      (best.previewViewed ? '<span class="badge">完成図: 見た</span>' : '<span class="badge praise">完成図を見ずにクリア</span>');
-    var thumb = entryThumbUrl(entry);
-    var titleLine = entry && entry.type === 'url' && entry.title
-      ? '<span class="card-title">' + escapeHtml(entry.title) + '</span>' : '';
-    card.innerHTML = (thumb ? '<img loading="lazy" src="' + thumb + '" alt="">' : '') +
-      '<span class="card-body"><span class="card-date">ステージ ' + stage + '</span>' + titleLine +
-      '<span>クリアタイム ' + formatTime(best.bestTimeSec) + '</span>' + badges + '</span>';
+    card.setAttribute('aria-label', 'ステージ ' + stage + ' の記録詳細を開く');
+    var cv = document.createElement('canvas');
+    cv.className = 'tile-canvas';
+    cv._tileRec = top;
+    var px = collectionTilePx(top.pieces);
+    cv.width = px;
+    cv.height = px;
+    card.appendChild(cv);
     card.addEventListener('click', function () { openDetail(best); });
     grid.appendChild(card);
+    if (collectionObserver) collectionObserver.observe(cv);
+    else fillCollectionTile(cv, top);
   });
 }
 /* ---------- コレクション詳細: 完成盤面をジグソー風に描く ----------

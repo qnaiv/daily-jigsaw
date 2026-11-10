@@ -507,3 +507,31 @@
 - 額サイズ段階の繰り下げ: FRAME_SIZE_TIERS を 小=0.30 / 中=0.45 / 大=0.60 に (大は小の面積4倍=幅2倍、中は幅の中間という既定ルールを新しい小=0.30 に適用)。frameSizeTierOf の境界は中間点 0.375 / 0.525。既存の額 (0.30 / 初期 0.28) は移行なし・サイズ不変で、新しい「小」として表示される (実測: w=0.28 の額を選択すると「小」が active)。
 - sw.js VERSION v18 → v19。test.cjs の該当テストを更新し 577 passed / 0 failed。
 - 確認画像: design-samples/samplebox-wall-v19.png (クリップされたサンプル箱)、design-samples/start-band-v19.png (小さい箱、同じシード)、design-samples/framesize-v19.png (額を新しい「大」0.60 にして選択中、要素幅 40% = 0.60/1.5 を実測)。
+
+## 実装: コレクション一覧改修 + 設定シート並び替え + 壁帯の縦つぶれ修正 (2026-11-10、sw v20、ローカル実装・push/デプロイ前)
+### コレクション一覧 (ユーザー仕様 2026-11-10)
+- グリッドは最低3列 (#collectionGrid: repeat(3, 1fr) ベース、560px→4列 / 760px→5列 / 1024px→6列)。
+- タイルには画像以外の情報を出さない: 旧 .card の card-body (ステージ番号/作品名/クリアタイム/バッジ) を廃止し、情報は詳細モーダルに集約 (詳細の導線・再プレイは不変、代表記録は従来どおり最速の best で開く)。未クリアは「？」のみ (ステージ番号も出さない)。
+- クリア済みは全て額入り: 額はオーク (frameStyleById('oak')) で統一し、壁の額と同じ paintFrameUnit で描く。装飾ティアはその絵の最高クリア難易度 (PureLogic に関数 topDifficultyRecord を追加) に連動: 100=銅 / 225=銀 / 400=金 / 1024=ロイヤル (drawFrameCornerCaps がそのまま効く)。
+- 継ぎ目も最高クリア難易度の行列で、本物レンダラー (generateEdges → detailPiecePath → strokePieceBevel + 縁線、renderBoardCanvasAt と同じレシピ) で描く。タイル用プラン collectionTilePlan: 盤面 288px (壁帯と同じ)、辺サンプリング perSeg は n>=28 で 4 (詳細は 6)、額 U=200 × scale 1.6 → Canvas 422px。
+- 遅延描画 + キャッシュ: IntersectionObserver (rootMargin 300px) で画面に入ったタイルから描画し、完成 Canvas を collectionTileCache (imageKey@pieces) に保持。再表示はキャッシュコピーで即時。ソース画像はタイル用に 400px 級を読み直す (loadTileSource、詳細と同じ decode 待ち + 抽象画フォールバック)。
+- 実測 (puppeteer、代替画像ローカル応答): 1024 (32x32) タイル1枚の描画は cold 401ms (コレクションを開いてから盤面が見えるまで、画像取得・デコード込み)、キャッシュ後は 2ms。シード (36 / 100銅 / 225銀 / 400金 / 1024ロイヤル / 36+400→金 の混在) で全タイルの額・キャップ色・継ぎ目密度が期待どおりになることを確認。
+- 確認画像: design-samples/collection-v20.png (一覧)、design-samples/collection-detail-v20.png (詳細モーダル、1024)。
+
+### 設定シート並び替え (ユーザー指示 2026-11-10)
+- 順序を変更: ヘッダー → スタート画面に戻る/やりなおす (行リスト、最上段) → 新セクション「おたすけ」 → みため → あそびかた → おと → そのほか。
+- 「おたすけ」はひらがな表記 (ユーザー指定)。中身は 完成図を見る (settingsPreviewBtn) と 色ごとにまとめる (settingsSortBtn、旧ラベル「お助け（色ごとの山にまとめる）」から短縮)。ボタン ID・動作 (完成図モーダル / sortConfirmModal) は不変。セクション構造は .settings-help ラッパー + .settings-section-label、他のセクションと同格の見た目。
+- .settings-nav は最上段になったため border-top / margin-top を撤去。.settings-actions #settingsSortBtn の縮小フォント (旧長ラベル用) も撤去し、完成図ボタンと同サイズに。
+
+### 壁帯の縦つぶれ修正 (ユーザー実機報告 2026-11-10)
+- 症状: 起動直後は正常だが、壁画面へ行って戻るとスタート画面上部の壁帯が全体的に縦につぶれ、帯上部に紙色の余白が出て箱の位置もずれて見える。
+- 再現 (puppeteer、~/workspace/.tools/bandreturn.js): 素の往復 (A) と壁での額サイズ変更 (B) では再現せず、壁表示中に viewport 高が変わる (URL バーの出入りで innerHeight が変わる) ケース (C) で再現。実測 (C、915→1015): 戻った後の帯で床ライン位置が 0.887 → 0.849 にずれ、Canvas 上端に紙色 (#f7f2e7) の行が 14 行 (×2解像度) 出た。
+- 原因: プレビューのキャッシュ Canvas は描画時のアスペクト (下地の左右延長量 EW) を内蔵している。戻った時点の帯アスペクトとずれると、旧 updateWallPreview は差 <0.15 で引き伸ばし (縦つぶれ)、差 >=0.15 でレターボックス (紙色余白+圧縮) で誤魔化していた。v13 でキャッシュキーからアスペクトを外した際の「フィット描画で吸収する」前提が、実機の URL バー変動量 (アスペクト差 0.16 級) では成り立たなかった。
+- 修正 (updateWallPreview): ずれ drift <= 0.02 のときだけキャッシュをそのまま貼る。それ以外はフィット描画でつなぎつつ、現在のアスペクトで renderWallPreviewCanvas を再実行する (多重起動防止キーは 内容キー@アスペクト)。描画完了時にアスペクトが再び動いていたら結果を採用せず描き直す。キャッシュキー自体は従来どおり壁の内容のみ (v13 の初回表示バグ対策は維持)。
+- 検証: 修正後に同じ4シナリオを再実測し、全ケースで遷移前後の floorFrac = 0.887 一致・紙色行 0・箱アートワークの重なり -12px 一致を確認。回帰テスト 4 件を test.cjs に追加。
+- 確認画像: design-samples/band-return-v20.png (シナリオC = 再現条件での往復後、修正版)。
+
+### 共通
+- 変更ファイル: app.js / index.html (設定シート) / style.css / sw.js (VERSION v19 → v20) / test.cjs / DESIGN.md。
+- test.cjs: 598 passed / 0 failed (v19 の 577 から +21: コレクション 13、設定 4、壁帯 4)。
+- 確認画像: design-samples/settings-v20.png (設定シート新レイアウト)。

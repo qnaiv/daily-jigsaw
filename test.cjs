@@ -1137,6 +1137,12 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(settingsBlock.indexOf('bgmCredits') === -1 && settingsBlock.indexOf('photoCredits') === -1 && settingsBlock.indexOf('settingsCreditsBtn') !== -1, 'クレジット: 設定シート内に長い一覧は残っていない');
   ok(settingsBlock.indexOf('class="settings-actions"') !== -1 && settingsBlock.indexOf('class="settings-nav"') !== -1 && settingsBlock.indexOf('class="settings-other"') !== -1, '設定レイアウト確定形: 操作ボタン/行リスト/その他リンクのグループがある');
   ok(settingsBlock.indexOf('>みため<') !== -1 && settingsBlock.indexOf('>あそびかた<') !== -1 && settingsBlock.indexOf('>おと<') !== -1 && settingsBlock.indexOf('>そのほか<') !== -1, '設定レイアウト確定形: グループ見出しは みため/あそびかた/おと/そのほか');
+  // 設定レイアウト v20 (2026-11-10 ユーザー指示): 戻る/やりなおす を最上段へ、
+  // 完成図/色まとめは「おたすけ」セクション (ひらがな表記) にまとめる
+  ok(settingsBlock.indexOf('class="settings-nav"') < settingsBlock.indexOf('>おたすけ<') && settingsBlock.indexOf('>おたすけ<') < settingsBlock.indexOf('>みため<'), '設定レイアウト v20: 順序は 行リスト (戻る/やりなおす) → おたすけ → みため');
+  ok(settingsBlock.indexOf('>おたすけ<') !== -1 && settingsBlock.indexOf('>お助け<') === -1, '設定レイアウト v20: セクション名はひらがな「おたすけ」');
+  ok(settingsBlock.indexOf('id="settingsPreviewBtn"') > settingsBlock.indexOf('>おたすけ<') && settingsBlock.indexOf('id="settingsSortBtn"') > settingsBlock.indexOf('>おたすけ<'), '設定レイアウト v20: 完成図を見る/色ごとにまとめる は おたすけ セクションの中');
+  ok(settingsBlock.indexOf('>色ごとにまとめる<') !== -1 && settingsBlock.indexOf('お助け（色ごとの山にまとめる）') === -1, '設定レイアウト v20: ソートボタンのラベルは「色ごとにまとめる」 (旧長ラベルは廃止)');
   ok(settingsBlock.indexOf('settingsPauseBtn') === -1 && settingsBlock.indexOf('settingsCollectionBtn') === -1 && settingsBlock.indexOf('settingsWallBtn') === -1, '設定レイアウト確定形: 一時停止/コレクション/壁ボタンは設定に無い (シート自体が一時停止、他はトップから)');
   ok(settingsBlock.indexOf('設定（一時停止中）') !== -1 && settingsBlock.indexOf('settings-close-x') !== -1, '設定レイアウト確定形: 見出しに一時停止中を表示し、閉じるは右上の✕');
   ok(settingsBlock.indexOf('swatch-btn') !== -1 && settingsBlock.indexOf('theme-swatch sw-walnut') !== -1, '設定レイアウト確定形: テーマは色タイル (スウォッチ) で選ぶ');
@@ -1269,6 +1275,24 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('upper-chip') !== -1 && appSrc2.indexOf('frameTier(r.pieces)') !== -1 && appSrc2.indexOf('上級クリア') !== -1, 'コレクション詳細: ティア対象の記録にチップを出す');
   ok(css2.indexOf('.upper-chip') !== -1, 'コレクション詳細: チップの CSS がある');
 
+  // コレクション一覧改修 (2026-11-10, sw v20): 最低3列・タイルは額入りの
+  // 絵のみ (テキストは詳細に集約)・装飾と継ぎ目は最高クリア難易度で描く
+  ok(L.topDifficultyRecord([{ pieces: 36 }, { pieces: 400 }, { pieces: 100 }]).pieces === 400, 'コレクション: 最高クリア難易度の記録を選ぶ');
+  ok(L.topDifficultyRecord([{ pieces: 1024 }, { pieces: 1225 }]).pieces === 1225, 'コレクション: 旧1225も最大として扱う (ティアは金)');
+  ok(L.topDifficultyRecord([]) === null && L.topDifficultyRecord(null) === null, 'コレクション: 記録が無ければ null');
+  ok(L.collectionTilePlan(1024).n === 32 && L.collectionTilePlan(36).n === 6 && L.collectionTilePlan(225).n === 15, 'コレクションタイル: 行列はピース数の平方根');
+  ok(L.collectionTilePlan(1024).perSeg < L.detailRenderPlan(1024).perSeg, 'コレクションタイル: 最重ケース (1024) は詳細より辺サンプリングを落として軽くする');
+  ok(L.collectionTilePlan(1024).boardPx === 288, 'コレクションタイル: 盤面は壁帯と同じ 288px で描く');
+  const colBody = appSrc2.slice(appSrc2.indexOf('function renderCollection()'), appSrc2.indexOf('function openDetail('));
+  ok(colBody.indexOf('card-body') === -1 && colBody.indexOf('card-date') === -1 && colBody.indexOf('クリアタイム') === -1 && colBody.indexOf('card-title') === -1, 'コレクション一覧: タイルにテキスト情報を出さない (詳細に集約)');
+  ok(colBody.indexOf('topDifficultyRecord(recsForKey)') !== -1 && colBody.indexOf('openDetail(best)') !== -1, 'コレクション一覧: 描画は最高難易度・詳細は従来の代表記録で開く');
+  ok(colBody.indexOf('IntersectionObserver') !== -1 && colBody.indexOf('fillCollectionTile(') !== -1, 'コレクション一覧: 画面に入ったタイルから遅延描画する');
+  const tileBody = appSrc2.slice(appSrc2.indexOf('function paintTileBoard('), appSrc2.indexOf('function renderTileBoardCanvas('));
+  ok(tileBody.indexOf('generateEdges(rec.date, rec.pieces)') !== -1 && tileBody.indexOf('detailPiecePath(') !== -1 && tileBody.indexOf('strokePieceBevel(') !== -1, 'コレクションタイル: 継ぎ目は本物レンダラー (辺生成→輪郭パス→ベベル) で描く');
+  ok(appSrc2.indexOf('collectionTileCache') !== -1 && appSrc2.indexOf('function buildCollectionTile(') !== -1 && appSrc2.indexOf("frameStyleById('oak')") !== -1, 'コレクションタイル: オーク額で統一し、描画結果をキャッシュする');
+  ok(appSrc2.indexOf('paintFrameUnit(ctx, st, plan.frameU, board, board ? \'ready\' : \'loading\', seedKey, upper)') !== -1, 'コレクションタイル: 額は壁と同じ paintFrameUnit でティア装飾ごと描く');
+  ok(css2.indexOf('#collectionGrid { grid-template-columns: repeat(3, 1fr);') !== -1 && css2.indexOf('.card.framed-tile') !== -1, 'コレクション一覧: CSS は最低3列 + 額タイルは素通し');
+
   // 2026-11-08 追加分: 箱の柄分離 / 矢印 / 面の統合 / 共有の描画欠け対策 (ラウンド制・カルーセルは 2026-11-09 のステージ制で廃止)
   ok(appSrc2.indexOf("var pid = 'giftPat' + (uid || '')") !== -1 && appSrc2.indexOf("giftBoxSvg(BOX_PATTERNS[stageBoxPatternIndex(playStage)].id, '')") !== -1, '箱の柄: ステージ番号で柄を決める (箱は1つ)');
   ok(appSrc2.indexOf("stage.addEventListener('lostpointercapture', endPointer)") !== -1 && appSrc2.indexOf('function resetGestureState()') !== -1 && appSrc2.indexOf("ev.type === 'lostpointercapture'") !== -1, 'ジェスチャ: 中断で取り残された指 (ゴースト) を掃除し、1本指スワイプが拡大縮小にならない');
@@ -1309,6 +1333,15 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('renderWallPreviewCanvas(aspect)') !== -1 && appSrc2.indexOf('padX + f.x * W') !== -1 && appSrc2.indexOf('padX + p.x * W') !== -1, '壁帯プレビュー: 帯が横長な分は下地を左右延長し、額と小物と猫は壁座標のまま描く (横の切れ目なし)');
   ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決める');
   ok(appSrc2.indexOf("wallPreviewKey() + '@'") === -1 && appSrc2.indexOf('wallPreviewCache = { key: key, cv: full }') !== -1, '壁帯プレビュー: キャッシュキーは壁の内容だけ (アスペクトを混ぜると起動直後のレイアウト揺れで装飾が出ないバグになる)');
+  // 壁帯の縦つぶれ対策 (2026-11-10 実機報告): 壁から戻る間に URL バーで
+  // innerHeight が変わると帯アスペクトがずれ、旧実装は引き伸ばし/レター
+  // ボックスで誤魔化して壁が縦つぶれ+紙色余白になっていた。ずれが大きい
+  // キャッシュは現在のアスペクトで描き直す
+  const updBody = appSrc2.slice(appSrc2.indexOf('function updateWallPreview()'), appSrc2.indexOf('/* 壁画像で共有'));
+  ok(updBody.indexOf('var drift = Math.abs(srcC.width / srcC.height - targetAspect);') !== -1 && updBody.indexOf('if (drift <= 0.02)') !== -1, '壁帯: キャッシュのアスペクトずれを検出し、一致したときだけそのまま貼る');
+  ok(updBody.indexOf('0.15') === -1, '壁帯: 旧の引き伸ばし閾値 (0.15) は廃止 (ずれは描き直しで解消)');
+  ok(updBody.indexOf("key + '@' + targetAspect.toFixed(3)") !== -1 && updBody.indexOf('renderWallPreviewCanvas(renderAspect)') !== -1, '壁帯: 描き直しは内容キー+アスペクトで多重起動を防ぎ、現在のアスペクトで描く');
+  ok(updBody.indexOf('Math.abs(wallPreviewAspect() - renderAspect) > 0.02') !== -1, '壁帯: 描画中にアスペクトが動いた結果は採用せず描き直す');
   const previewBody = appSrc2.slice(appSrc2.indexOf('function renderWallPreviewCanvas('), appSrc2.indexOf('var wallPreviewCache'));
   const shareBody = appSrc2.slice(appSrc2.indexOf('function buildWallShareImage()'), appSrc2.indexOf('function downloadWallShareImage'));
   ok(previewBody.indexOf('ctx.ellipse(padX + p.x * W') !== -1 && previewBody.indexOf('ctx.drawImage(img, padX + p.x * W - wpx / 2, feetY - hpx') !== -1, '壁帯プレビュー: 猫も額・小物と同じ padX 付き座標で描く (padX 漏れで左にずれるバグの再発防止)');
@@ -1424,7 +1457,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v19'") !== -1, 'sw: VERSION は v19');
+  ok(swSB.indexOf("VERSION = 'v20'") !== -1, 'sw: VERSION は v20');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
