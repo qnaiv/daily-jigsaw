@@ -1304,7 +1304,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(css2.indexOf('bottom: calc(66px') === -1, '曲名トースト: 廃止した丸ボタンの分の上げ底 (66px) が残っていない');
   ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('id="giftBox"') !== -1 && html2.indexOf('box-single wallband-box') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを壁帯に重ねて出す (PBI #24 案A)');
   ok(html2.indexOf('id="startWallBand"') !== -1 && html2.indexOf('id="wallPreviewCanvas"') !== -1 && html2.indexOf('start-wallwrap') !== -1 && appSrc2.indexOf('function updateWallPreview(') !== -1 && appSrc2.indexOf('function renderWallPreviewCanvas(') !== -1 && appSrc2.indexOf('wallPreviewCache') !== -1, '壁帯プレビュー: スタート画面最上部に飾った壁を描き、壁が変わらない間はキャッシュを使う');
-  ok(css2.indexOf('transform: translateY(48%);') !== -1 && css2.indexOf('margin: -26px -20px 84px;') !== -1, '壁帯の箱: 絵の天面 (SVG y=84) が帯下端から少しだけ床帯に入る translateY(48%) + はみ出し分を確保する margin-bottom 84px (要素基準で計算すると絵が帯から離れてタイトルに被る)');
+  ok(css2.indexOf('transform: translateY(47%);') !== -1 && css2.indexOf('margin: -26px -20px 71px;') !== -1 && css2.indexOf('width: min(73%, 340px);') !== -1, '壁帯の箱: v19 で幅 min(73%,340px) に縮小し、絵の天面 (SVG y=84) が帯下端から約12pxだけ床帯に入る translateY(47%) + はみ出し分を確保する margin-bottom 71px (要素基準で計算すると絵が帯から離れてタイトルに被る)');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
   ok(appSrc2.indexOf('renderWallPreviewCanvas(aspect)') !== -1 && appSrc2.indexOf('padX + f.x * W') !== -1 && appSrc2.indexOf('padX + p.x * W') !== -1, '壁帯プレビュー: 帯が横長な分は下地を左右延長し、額と小物と猫は壁座標のまま描く (横の切れ目なし)');
   ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決める');
@@ -1388,24 +1388,24 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
 /* 額サイズ3段階 + 壁画面サンプル箱 (2026-11-10 ユーザー設計/決定) */
 {
-  ok(eq(L.FRAME_SIZE_TIERS.map(t => t.w), [0.2, 0.3, 0.4]), '額サイズ: 段階は 小0.20 / 中0.30 / 大0.40');
-  ok(Math.abs(Math.pow(0.4 / 0.2, 2) - 4) < 1e-9 && Math.abs((0.2 + 0.4) / 2 - 0.3) < 1e-9, '額サイズ: 大は小の面積4倍、中は幅の中間');
-  ok(L.frameSizeTierOf(0.2) === 0 && L.frameSizeTierOf(0.24) === 0 && L.frameSizeTierOf(0.25) === 1 &&
-     L.frameSizeTierOf(0.28) === 1 && L.frameSizeTierOf(0.3) === 1 && L.frameSizeTierOf(0.35) === 1 &&
-     L.frameSizeTierOf(0.36) === 2 && L.frameSizeTierOf(0.4) === 2, '額サイズ: 最も近い段階の判定 (既存の 0.28 / 0.30 は中)');
+  ok(eq(L.FRAME_SIZE_TIERS.map(t => t.w), [0.3, 0.45, 0.6]), '額サイズ: 段階は 小0.30 / 中0.45 / 大0.60 (v19 繰り下げ)');
+  ok(Math.abs(Math.pow(0.6 / 0.3, 2) - 4) < 1e-9 && Math.abs((0.3 + 0.6) / 2 - 0.45) < 1e-9, '額サイズ: 大は小の面積4倍、中は幅の中間');
+  ok(L.frameSizeTierOf(0.3) === 0 && L.frameSizeTierOf(0.28) === 0 && L.frameSizeTierOf(0.37) === 0 &&
+     L.frameSizeTierOf(0.375) === 1 && L.frameSizeTierOf(0.45) === 1 && L.frameSizeTierOf(0.52) === 1 && L.frameSizeTierOf(0.525) === 1 &&
+     L.frameSizeTierOf(0.53) === 2 && L.frameSizeTierOf(0.6) === 2, '額サイズ: 最も近い段階の判定 (境界 0.375 / 0.525、既存の 0.28 / 0.30 は新しい小)');
   const wsz0 = { w: 1.5, h: 1.2 };
   ok(eq(L.clampFrameCenter({ x: 0.5, y: 0.4, w: 0.3 }, wsz0), { x: 0.5, y: 0.4 }), '額サイズ: 壁に収まっている額の中心は動かない');
-  const clL = L.clampFrameCenter({ x: 0.05, y: 0.97, w: 0.4 }, wsz0);
-  ok(Math.abs(clL.x - 0.4 / 1.5 / 2) < 1e-9 && Math.abs(clL.y - (1 - 0.4 / 1.2 / 2)) < 1e-9, '額サイズ: 大への拡大ではみ出し分だけ中心を内側へ寄せる');
-  const clS = L.clampFrameCenter({ x: 0.99, y: 0.01, w: 0.2 }, { w: 3.0, h: 1.4 });
-  ok(Math.abs(clS.x - (1 - 0.2 / 3 / 2)) < 1e-9 && Math.abs(clS.y - 0.2 / 1.4 / 2) < 1e-9, '額サイズ: 拡張壁でもクランプが効く');
-  // サンプル箱の換算は puppeteer 実測 (412x915、帯と箱の実矩形から換算) と一致する
+  const clL = L.clampFrameCenter({ x: 0.05, y: 0.97, w: 0.6 }, wsz0);
+  ok(Math.abs(clL.x - 0.6 / 1.5 / 2) < 1e-9 && Math.abs(clL.y - (1 - 0.6 / 1.2 / 2)) < 1e-9, '額サイズ: 大 (0.60) への拡大ではみ出し分だけ中心を内側へ寄せる');
+  const clS = L.clampFrameCenter({ x: 0.99, y: 0.01, w: 0.3 }, { w: 3.0, h: 1.4 });
+  ok(Math.abs(clS.x - (1 - 0.3 / 3 / 2)) < 1e-9 && Math.abs(clS.y - 0.3 / 1.4 / 2) < 1e-9, '額サイズ: 拡張壁でもクランプが効く');
+  // サンプル箱の換算は puppeteer 実測 (412x915 / 412x1047、帯と箱の実矩形から換算) と一致する (v19 の小さい箱で実測し直し)
   const art0 = L.sampleBoxArtRect(412, 915, wsz0);
-  ok(Math.abs(art0.left - 0.0213) < 0.002 && Math.abs(art0.top - 0.9508) < 0.002 &&
-     Math.abs(art0.width - 0.9574) < 0.002 && Math.abs(art0.height - 0.2625) < 0.002,
+  ok(Math.abs(art0.left - 0.0936) < 0.002 && Math.abs(art0.top - 0.9529) < 0.002 &&
+     Math.abs(art0.width - 0.8127) < 0.002 && Math.abs(art0.height - 0.2229) < 0.002,
      'サンプル箱: 段階0のアートワーク範囲が実測と一致 (' + art0.left.toFixed(4) + ',' + art0.top.toFixed(4) + ',' + art0.width.toFixed(4) + ')');
   const art1 = L.sampleBoxArtRect(412, 915, { w: 3.0, h: 1.4 });
-  ok(Math.abs(art1.left - 0.2023) < 0.002 && Math.abs(art1.width - 0.5954) < 0.002 && Math.abs(art1.top - 0.9475) < 0.002,
+  ok(Math.abs(art1.left - 0.2473) < 0.002 && Math.abs(art1.width - 0.5054) < 0.002 && Math.abs(art1.top - 0.9497) < 0.002,
      'サンプル箱: 拡張壁では箱が相対的に小さくなる (' + art1.left.toFixed(4) + ',' + art1.width.toFixed(4) + ')');
   ok(Math.abs(art0.left + art0.width / 2 - 0.5) < 0.002 && Math.abs(art1.left + art1.width / 2 - 0.5) < 0.002, 'サンプル箱: 横は壁の中央に来る');
   ok(art0.top > 0.885 && art0.top + art0.height > 1, 'サンプル箱: 床帯 (下端11.5%) の内側から始まって下へはみ出す');
@@ -1420,10 +1420,11 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const swSB = fsB.readFileSync(pathB.join(__dirname, 'sw.js'), 'utf8');
   const cssSB = fsB.readFileSync(pathB.join(__dirname, 'style.css'), 'utf8');
   ok(appSB.indexOf('function buildWallSampleBox(') !== -1 && appSB.indexOf('wallSampleBox') !== -1 && appSB.indexOf('function updateSampleBoxOpacity(') !== -1 &&
-     cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動がある');
+     appSB.indexOf('wall-samplebox-clip') !== -1 &&
+     cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v18'") !== -1, 'sw: VERSION は v18');
+  ok(swSB.indexOf("VERSION = 'v19'") !== -1, 'sw: VERSION は v19');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

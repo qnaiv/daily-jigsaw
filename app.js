@@ -1590,18 +1590,20 @@ function recordWallHistory(wall, date, ids) {
   ids.forEach(function (id) { if (cur.indexOf(id) < 0) cur.push(id); });
   wall.history[date] = cur;
 }
-/* ---- 額のサイズ3段階 (2026-11-10 ユーザー設計) ----
- * 段階値は幅比 w。大は小の面積4倍 (幅2倍)、中は幅の中間で現行標準。
- * 既存の額 (0.30 / 初期 0.28) は移行なしで「中」扱い */
+/* ---- 額のサイズ3段階 (2026-11-10 ユーザー設計、v19 で段階値を繰り下げ) ----
+ * 段階値は幅比 w。大は小の面積4倍 (幅2倍)、中は幅の中間。
+ * v19: ユーザー指定「今の中サイズを小の大きさにして」で
+ * 小=0.30 / 中=0.45 / 大=0.60 に繰り下げ。既存の額 (0.30 / 初期 0.28) は
+ * 移行なし・サイズ自体は不変で、新しい「小」として表示される */
 var FRAME_SIZE_TIERS = [
-  { id: 's', label: '小', w: 0.20 },
-  { id: 'm', label: '中', w: 0.30 },
-  { id: 'l', label: '大', w: 0.40 }
+  { id: 's', label: '小', w: 0.30 },
+  { id: 'm', label: '中', w: 0.45 },
+  { id: 'l', label: '大', w: 0.60 }
 ];
-/* 幅比から最も近い段階の添字を返す (境界は仕様どおり 0.25 / 0.35) */
+/* 幅比から最も近い段階の添字を返す (境界は中間点 0.375 / 0.525) */
 function frameSizeTierOf(w) {
-  if (w < 0.25) return 0;
-  if (w <= 0.35) return 1;
+  if (w < 0.375) return 0;
+  if (w <= 0.525) return 1;
   return 2;
 }
 /* サイズ変更後の中心クランプ: 中心は維持し、額が壁からはみ出す場合
@@ -1619,10 +1621,13 @@ function clampFrameCenter(f, size) {
  * 帯の幾何は renderWallPreviewCanvas / updateWallPreview と同じ式:
  * 帯はビューポート全幅、帯高 = min(壁の自然高, 画面高の 28%)、帯が
  * 壁より横長な分は下地だけが左右へ延長され、壁本体は中央に収まる。
- * 箱は CSS (.gift-box: width min(86%, 400px)、.wallband-box:
- * bottom 0 + translateY(48%)) から決まり、アートワーク本体
+ * 箱は CSS (.gift-box: width min(73%, 340px)、.wallband-box:
+ * bottom 0 + translateY(47%)) から決まり、アートワーク本体
  * (viewBox 416x190 の x=64..352 / y=84..163) の範囲を壁比率へ換算する。
- * 換算値は puppeteer 実測 (412x915) と 0.002 以内で一致する (テスト参照) */
+ * v19 で箱自体を従来比約85%に縮小 (min(86%,400px) → min(73%,340px)) し、
+ * 絵の天面が帯下端から約12px入るルールは維持 (translateY は 48% → 47%)。
+ * 換算値は puppeteer 実測 (412x915 / 412x1047、段階0/1) と 0.002 以内で
+ * 一致する (テスト参照) */
 var SAMPLE_BOX_ART = { x0: 64 / 416, x1: 352 / 416, y0: 84 / 190, y1: 163 / 190 };
 function sampleBoxArtRect(vw, vh, size) {
   var dispW = vw;
@@ -1634,9 +1639,9 @@ function sampleBoxArtRect(vw, vh, size) {
   var ext = uw / uh < aspect ? uh * aspect : uw;
   var wallLeftPx = dispW * (ext - uw) / 2 / ext;
   var wallWidthPx = dispW * uw / ext;
-  var elW = Math.min(0.86 * dispW, 400), elH = elW * 190 / 416;
+  var elW = Math.min(0.73 * dispW, 340), elH = elW * 190 / 416;
   var elLeft = (dispW - elW) / 2;
-  var elTop = bandH - 0.52 * elH; /* 要素の下端は帯下端 + 要素高の 48% */
+  var elTop = bandH - 0.53 * elH; /* 要素の下端は帯下端 + 要素高の 47% */
   var artL = elLeft + elW * SAMPLE_BOX_ART.x0, artR = elLeft + elW * SAMPLE_BOX_ART.x1;
   var artT = elTop + elH * SAMPLE_BOX_ART.y0, artB = elTop + elH * SAMPLE_BOX_ART.y1;
   return {
@@ -4433,7 +4438,7 @@ function renderWall() {
   store.wall.frames.forEach(function (f) { world.appendChild(buildWallFrameEl(f)); });
   store.wall.placed.forEach(function (p) { world.appendChild(buildWallItemEl(p)); });
   (store.wall.catsPlaced || []).forEach(function (p) { world.appendChild(buildWallCatEl(p)); });
-  world.appendChild(buildWallSampleBox()); // 猫の配置ガイドは最前面 (半透明)
+  world.appendChild(buildWallSampleBox()); // 猫の配置ガイドは最前面 (半透明、壁の下端でクリップ)
   var fit = document.createElement('button');
   fit.id = 'wallFitBtn';
   fit.className = 'wall-fit-btn';
@@ -4760,7 +4765,11 @@ function wallCatPlacedEntry(id) {
  * 柄はスタート画面の箱と同じ (現在のステージの柄)。操作は受け付けず
  * (pointer-events: none)、猫・小物・額より手前に置くので、裏にいる
  * 猫が透けて「スタート画面では隠れる」ことが見て分かる。
- * 濃さ: 常時 0.35、猫の選択中/ドラッグ中は 0.55 */
+ * 濃さ: 常時 0.35、猫の選択中/ドラッグ中は 0.55
+ * v19: 箱は壁の下端より下には表示しない。#wallWorld 自体に overflow を
+ * 掛けると端に置いた額・小物のはみ出し表示まで変わるので、壁と同寸の
+ * クリップ用ラッパー (.wall-samplebox-clip) の中に入れて切る。ラッパー
+ * 内の % 座標はワールド基準と同一なので、壁内に残る部分の幾何は不変 */
 function sampleBoxActive() {
   return !!((wallSelected && wallSelected.kind === 'cat') || (wallDrag && wallDrag.kind === 'cat'));
 }
@@ -4769,6 +4778,8 @@ function updateSampleBoxOpacity() {
   if (el) el.style.opacity = sampleBoxActive() ? '0.55' : '0.35';
 }
 function buildWallSampleBox() {
+  var wrap = document.createElement('div');
+  wrap.className = 'wall-samplebox-clip';
   var el = document.createElement('div');
   el.className = 'wall-samplebox';
   el.id = 'wallSampleBox';
@@ -4779,7 +4790,8 @@ function buildWallSampleBox() {
   el.style.width = (r.width * 100) + '%';
   el.innerHTML = giftBoxSvg(BOX_PATTERNS[stageBoxPatternIndex(playStage)].id, 'wall');
   el.style.opacity = sampleBoxActive() ? '0.55' : '0.35';
-  return el;
+  wrap.appendChild(el);
+  return wrap;
 }
 /* 床の猫の要素: 足元は床に固定 (bottom 指定)、移動は x だけ */
 function buildWallCatEl(p) {
