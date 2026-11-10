@@ -1097,20 +1097,19 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
   // 壁の広さ段階制 (段階0: 横1.5/縦1.2 → 段階1: 横3.0/縦1.4、累計15クリアで解放)
   const near = (a, b) => Math.abs(a - b) < 1e-9;
-  ok(eq(L.WALL_SIZE_STAGES, [{ w: 1.5, h: 1.2 }, { w: 3.0, h: 1.4 }]) && L.WALL_EXPAND_CLEARS === 15, '壁拡張: 段階表 (横1.5→3.0 / 縦1.2→1.4) と解放条件 (累計15クリア)');
+  ok(eq(L.WALL_SIZE_STAGES, [{ w: 1.5, h: 1.2 }]) && eq(L.wallSizeOf(0), { w: 1.5, h: 1.2 }) && eq(L.wallSizeOf(1), { w: 1.5, h: 1.2 }) && eq(L.wallSizeOf(-1), { w: 1, h: 1 }), '壁: 広さは単一サイズ固定 (1.5x1.2、段階拡張は廃止。旧形式だけ移行用に 1x1)');
+  ok(L.WALL_STAGE_ASPECT === 6 / 5 && L.WALL_BAND_CAP === 0.32, '壁: 窓のアスペクトは 6/5 (低く)、トップ帯の上限は画面高の32%');
   ok(L.emptyWall().sizeStage === 0 && L.emptyWall().pendingExpand === false, '壁拡張: 新規セーブは段階0・拡張未通知なし');
   ok(L.spreadWallX(0.5, 1, 1.5) === 0.5 && near(L.spreadWallX(0, 1, 1.5), 1 / 6) && near(L.spreadWallX(1, 1, 3), 2 / 3), '壁拡張: 横は中心基準で広がる (中心は不動、端は内側へ)');
   ok(L.spreadWallY(1, 1, 1.4) === 1 && near(L.spreadWallY(0, 1, 1.2), 1 / 6) && near(L.spreadWallY(0.5, 1.2, 1.4), 4 / 7), '壁拡張: 縦は床基準 (床=1は不動) で上方向へ広がる');
   const legW = L.normalizeWall({ owned: ['w007'], placed: [{ id: 'w007', x: 0, y: 1 }], frames: [] });
   ok(legW.sizeStage === 0 && near(legW.placed[0].x, 1 / 6) && legW.placed[0].y === 1, '壁拡張移行: 段階制前のセーブ (1.0x1.0) は段階0の広さへ座標移行');
   const keptW = L.normalizeWall({ sizeStage: 1, owned: ['w007'], placed: [{ id: 'w007', x: 0.2, y: 0.3 }], frames: [] });
-  ok(keptW.sizeStage === 1 && keptW.placed[0].x === 0.2 && keptW.placed[0].y === 0.3, '壁拡張移行: 段階が保存されたセーブは座標そのまま保持');
+  ok(keptW.sizeStage === 0 && keptW.placed[0].x === 0.2 && keptW.placed[0].y === 0.3, '壁移行: 拡張済み (段階1) セーブは座標そのまま固定サイズで引き継ぐ');
   const exW = L.emptyWall();
   exW.placed.push({ id: 'w007', x: 0.5, y: 0.5 });
-  ok(L.applyWallExpand(exW, 14) === false && exW.sizeStage === 0, '壁拡張: 累計14クリアでは広がらない');
-  ok(L.applyWallExpand(exW, 15) === true && exW.sizeStage === 1 && exW.pendingExpand === true, '壁拡張: 累計15クリアで段階1に広がり通知待ちになる');
-  ok(exW.placed[0].x === 0.5 && near(exW.placed[0].y, 4 / 7), '壁拡張: 広げるとき配置は 中心x不変・床基準y で移る');
-  ok(L.applyWallExpand(exW, 99) === false && exW.sizeStage === 1, '壁拡張: 段階1が上限 (無限には広がらない)');
+  ok(L.applyWallExpand(exW, 99) === false && exW.sizeStage === 0 && exW.pendingExpand === false, '壁拡張廃止: 累計クリアが増えても壁は広がらない');
+  ok(exW.placed[0].x === 0.5 && exW.placed[0].y === 0.5, '壁拡張廃止: 配置はそのまま');
 
   // 配線: index.html / app.js / style.css が壁紙 UI を持つ
   const fs = require('fs');
@@ -1123,6 +1122,9 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(css.indexOf('.wall-bg') !== -1 && css.indexOf('#paperPickerGrid') !== -1 && css.indexOf('#wallStage::after') === -1, '壁紙配線: style.css に背景 Canvas とピッカーの様式があり、旧 ::after 巾木は撤去');
   ok(appSrc.indexOf('wallWorld') !== -1 && appSrc.indexOf('applyWallCam') !== -1 && appSrc.indexOf('wallFitBtn') !== -1 && css.indexOf('#wallWorld') !== -1, '壁拡張配線: ワールド層とカメラと全体ボタンがある');
   ok(html.indexOf('id="wallShareBtn"') !== -1 && appSrc.indexOf('shareWallImage') !== -1 && appSrc.indexOf('buildWallShareImage') !== -1, '壁共有配線: 壁画面に共有ボタンと壁全体の画像生成がある');
+  ok(html.indexOf('id="sharePreviewModal"') !== -1 && html.indexOf('id="sharePreviewImg"') !== -1 && html.indexOf('id="sharePreviewCopyBtn"') !== -1, '共有プレビュー: 画像を見せてから共有/コピー/保存を選ぶモーダルがある');
+  ok(appSrc.indexOf('openSharePreview(cv,') !== -1 && appSrc.indexOf("openSharePreview(cv, 'mainichi-jigsaw-wall.png')") !== -1, '共有プレビュー: クリア結果と壁の両方がプレビュー導線を通る');
+  ok(css.indexOf('aspect-ratio: 6 / 5') !== -1, '壁窓: アスペクトは 6/5 (従来 4/5 より低い)');
 
   // 壁まわり改善 (2026-11-08 実機テスト): 壁でも BGM / 配置 SE / クレジット分離 / 壁紙名ラベルなし
   ok(appSrc.indexOf('function bgmOnTitle() { return uiHome && !uiWall && !bgm.started; }') !== -1, 'BGM: タイトル無音は「まだ一度も流れていない間」だけ。一度流れ始めたらトップに戻っても止めない (id 19 改訂)');
@@ -1340,7 +1342,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf("cv.parentElement.style.opacity = '0'") !== -1 && appSrc2.indexOf("reveal();") !== -1, '壁の額: 読み込み中プレースホルダは見せず、本描画が終わるまで額を透明にして完成形だけ出す');
   ok(appSrc2.indexOf('wallPreviewReadyKey') !== -1 && appSrc2.indexOf("cv.style.opacity = '0'") !== -1 && appSrc2.indexOf('band.dataset.h') !== -1, '壁帯: 本描画が完成するまで帯を透明に保ち、透明な間は帯の高さを縮めない (戻る瞬間の潰れ対策)');
   ok(appSrc2.indexOf('COLLECTION_TILE_PAD = 0.045') !== -1 && css2.indexOf('gap: 6px') !== -1, 'コレクションタイル: 額の余白を 0.16→0.045 に詰め、グリッド間隔 10px→6px で写真を大きくする');
-  ok(appSrc2.indexOf('innerWidth <= 700') === -1 && (appSrc2.match(/innerHeight \* 0\.28/g) || []).length >= 2, '壁帯: 高さ上限 (画面高の28%) は画面幅によらず常に効く (タブレット幅で帯が縦長化し帯内アスペクトが壁と食い違う不具合の修正)');
+  ok(appSrc2.indexOf('innerWidth <= 700') === -1 && (appSrc2.match(/innerHeight \* WALL_BAND_CAP/g) || []).length >= 2 && L.WALL_BAND_CAP === 0.32, '壁帯: 高さ上限 (画面高の32%) は画面幅によらず常に効く (タブレット幅で帯が縦長化し帯内アスペクトが壁と食い違う不具合の修正)');
   ok(appSrc2.indexOf('wallCam.zoom = wallFitZoom();') !== -1 && appSrc2.indexOf("? '全体' : 'ズーム'") !== -1, '壁画面: 開いたときは常に全体表示で、ボタンは全体表示中は「ズーム」(押すと等倍)、ズーム中は「全体」');
   ok(appSrc2.indexOf('function snapRisk(') !== -1 && appSrc2.indexOf('Math.round(q.x) - rx === dc') !== -1, '初期散布: 隣同士が開始直後のドロップで吸着する配置 (グリッド丸め後一致 + 生距離) を候補から外す');
   var wallN = L.normalizeWall({ catsOwned: ['c01', 'c02', 'c03'], catsPlaced: [{ id: 'c02', x: 0.3 }, { id: 'c03', x: 0.6 }, { id: 'c01', x: 0.8 }] });
@@ -1450,12 +1452,12 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(Math.abs(clS.x - (1 - 0.3 / 3 / 2)) < 1e-9 && Math.abs(clS.y - 0.3 / 1.4 / 2) < 1e-9, '額サイズ: 拡張壁でもクランプが効く');
   // サンプル箱の換算は puppeteer 実測 (412x915 / 412x1047、帯と箱の実矩形から換算) と一致する (v19 の小さい箱で実測し直し)
   const art0 = L.sampleBoxArtRect(412, 915, wsz0);
-  ok(Math.abs(art0.left - 0.0936) < 0.002 && Math.abs(art0.top - 0.9529) < 0.002 &&
-     Math.abs(art0.width - 0.8127) < 0.002 && Math.abs(art0.height - 0.2229) < 0.002,
-     'サンプル箱: 段階0のアートワーク範囲が実測と一致 (' + art0.left.toFixed(4) + ',' + art0.top.toFixed(4) + ',' + art0.width.toFixed(4) + ')');
+  ok(Math.abs(art0.left - 0.2473) < 0.002 && Math.abs(art0.top - 0.9560) < 0.002 &&
+     Math.abs(art0.width - 0.5054) < 0.002 && Math.abs(art0.height - 0.2079) < 0.002,
+     'サンプル箱: 固定サイズのアートワーク範囲が実測と一致 (' + art0.left.toFixed(4) + ',' + art0.top.toFixed(4) + ',' + art0.width.toFixed(4) + ')');
   const art1 = L.sampleBoxArtRect(412, 915, { w: 3.0, h: 1.4 });
-  ok(Math.abs(art1.left - 0.2473) < 0.002 && Math.abs(art1.width - 0.5054) < 0.002 && Math.abs(art1.top - 0.9497) < 0.002,
-     'サンプル箱: 拡張壁では箱が相対的に小さくなる (' + art1.left.toFixed(4) + ',' + art1.width.toFixed(4) + ')');
+  ok(Math.abs(art1.left - 0.2473) < 0.002 && Math.abs(art1.width - 0.5054) < 0.002 && Math.abs(art1.top - 0.9246) < 0.002,
+     'サンプル箱: 仮想の広い壁 (3.0x1.4) でも換算が成立する (' + art1.left.toFixed(4) + ',' + art1.width.toFixed(4) + ')');
   ok(Math.abs(art0.left + art0.width / 2 - 0.5) < 0.002 && Math.abs(art1.left + art1.width / 2 - 0.5) < 0.002, 'サンプル箱: 横は壁の中央に来る');
   ok(art0.top > 0.885 && art0.top + art0.height > 1, 'サンプル箱: 床帯 (下端11.5%) の内側から始まって下へはみ出す');
   const elr = L.sampleBoxElementRect(412, 915, wsz0, 1);
@@ -1473,7 +1475,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v31'") !== -1, 'sw: VERSION は v30');
+  ok(swSB.indexOf("VERSION = 'v32'") !== -1, 'sw: VERSION は v32');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */

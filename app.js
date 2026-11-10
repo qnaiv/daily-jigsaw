@@ -1390,12 +1390,22 @@ function applyPaperUnlocks(wall, totalClears) {
  * 段階制より前のセーブは 1.0 x 1.0 の壁として扱い、段階0へ移行する。
  * 座標の移行: 横は中心基準 (今の並びが真ん中に残り両側が開く)、
  * 縦は床基準 (床からの高さ = 1 - y を保存し、上方向にだけ伸びる)。 */
-var WALL_SIZE_STAGES = [{ w: 1.5, h: 1.2 }, { w: 3.0, h: 1.4 }];
+/* 壁の広さは単一サイズ固定 (2026-11-10 ユーザー指示で段階拡張を廃止)。
+ * 広さは従来の初期段階と同じ 1.5 x 1.2 で、狭すぎず広すぎないバランス。
+ * 壁窓 (ステージ) のアスペクトは 6/5 (幅/高さ) で従来 (4/5) より低くし、
+ * トップ画面の帯で壁を大きく見せる */
+var WALL_FIXED_SIZE = { w: 1.5, h: 1.2 };
+var WALL_SIZE_STAGES = [WALL_FIXED_SIZE];
+var WALL_STAGE_ASPECT = 6 / 5; // 壁窓の幅/高さ
+var WALL_H_PER_W = 1 / WALL_STAGE_ASPECT; // 単位幅あたりの壁窓の高さ
+var WALL_BAND_CAP = 0.32; // トップ画面の壁帯の高さ上限 (画面高比)
 var WALL_LEGACY_SIZE = { w: 1, h: 1 };
 var WALL_EXPAND_CLEARS = 15;
 function wallSizeOf(stage) {
-  if (stage === -1) return WALL_LEGACY_SIZE;
-  return WALL_SIZE_STAGES[stage] || WALL_SIZE_STAGES[0];
+  if (stage === -1) return WALL_LEGACY_SIZE; // 段階制より前のセーブの移行用
+  // 拡張廃止: それ以外のどの段階でも固定サイズ (拡張済みセーブの座標は
+  // 比率のまま読むので、並びはそのまま保たれる)
+  return WALL_FIXED_SIZE;
 }
 function spreadWallX(x, fromW, toW) {
   var v = 0.5 + (x - 0.5) * (fromW / toW);
@@ -1420,15 +1430,9 @@ function applyWallSizeStage(wall, stage) {
   }
   wall.sizeStage = stage;
 }
-/* 壁の拡張解放: 段階0で累計クリアが条件に達したら段階1へ広げ、
- * 未通知分として pendingExpand を立てる。戻り値: 今回広げたか */
+/* 壁の拡張は廃止 (2026-11-10)。互換のため関数は残すが常に広げない */
 function applyWallExpand(wall, totalClears) {
-  var cur = typeof wall.sizeStage === 'number' ? wall.sizeStage : 0;
-  if (cur >= WALL_SIZE_STAGES.length - 1) return false;
-  if (totalClears < WALL_EXPAND_CLEARS) return false;
-  applyWallSizeStage(wall, cur + 1);
-  wall.pendingExpand = true;
-  return true;
+  return false;
 }
 /* アイテムの表示幅 (壁の幅に対する比率) の目安: カタログのサイズ感から決める */
 var WALL_SIZE_RATIO = { S: 0.20, M: 0.28, L: 0.40 };
@@ -1597,13 +1601,13 @@ function normalizeWall(w) {
   }
   // 壁の広さ段階: 有効な段階が保存されていれば引き継ぐ。無ければ段階制より
   // 前のセーブ (1.0 x 1.0 の壁) として、段階0の広さへ座標を移行する
-  if (typeof w.sizeStage === 'number' && WALL_SIZE_STAGES[w.sizeStage]) {
-    out.sizeStage = w.sizeStage;
+  if (typeof w.sizeStage === 'number' && (w.sizeStage === 0 || w.sizeStage === 1)) {
+    out.sizeStage = 0; // 拡張廃止: 段階1のセーブも座標そのまま固定サイズへ
   } else {
     out.sizeStage = -1; // applyWallSizeStage に旧形式として読ませるための番兵
     applyWallSizeStage(out, 0);
   }
-  out.pendingExpand = w.pendingExpand === true;
+  out.pendingExpand = false; // 拡張廃止: 未通知の拡張は打ち切る
   return out;
 }
 /* 抽選対象に入るか: 未所持で、季節物はその月の間だけ */
@@ -1692,11 +1696,11 @@ function clampFrameCenter(f, size) {
 var SAMPLE_BOX_ART = { x0: 64 / 416, x1: 352 / 416, y0: 84 / 190, y1: 163 / 190 };
 function sampleBoxArtRect(vw, vh, size) {
   var dispW = vw;
-  var natH = dispW * (1.25 * size.h) / size.w;
-  var cap = vw <= 700 ? vh * 0.28 : Infinity;
+  var natH = dispW * (WALL_H_PER_W * size.h) / size.w;
+  var cap = vh * WALL_BAND_CAP;
   var bandH = Math.min(natH, cap);
   var aspect = dispW / bandH;
-  var uw = size.w, uh = 1.25 * size.h;
+  var uw = size.w, uh = WALL_H_PER_W * size.h;
   var ext = uw / uh < aspect ? uh * aspect : uw;
   var wallLeftPx = dispW * (ext - uw) / 2 / ext;
   var wallWidthPx = dispW * uw / ext;
@@ -1846,6 +1850,7 @@ var PureLogic = {
   WALLPAPERS: WALLPAPERS, wallpaperById: wallpaperById,
   newPaperUnlocks: newPaperUnlocks, applyPaperUnlocks: applyPaperUnlocks,
   WALL_SIZE_STAGES: WALL_SIZE_STAGES, WALL_EXPAND_CLEARS: WALL_EXPAND_CLEARS,
+  WALL_FIXED_SIZE: WALL_FIXED_SIZE, WALL_STAGE_ASPECT: WALL_STAGE_ASPECT, WALL_H_PER_W: WALL_H_PER_W, WALL_BAND_CAP: WALL_BAND_CAP,
   wallSizeOf: wallSizeOf, spreadWallX: spreadWallX, spreadWallY: spreadWallY,
   applyWallSizeStage: applyWallSizeStage, applyWallExpand: applyWallExpand,
   RARITY_TABLE: RARITY_TABLE, rarityLabel: rarityLabel,
@@ -4180,6 +4185,72 @@ function shareResultImage() {
   if (!lastClearResult) return;
   buildShareImage(lastClearResult).then(function (cv) {
     if (!cv) return;
+    openSharePreview(cv, 'mainichi-jigsaw-' + lastClearResult.date + '.png');
+  });
+}
+/* 共有画像のプレビューを開く (クリア結果・壁 共通)。生成した Canvas を
+ * その場で見せ、共有/コピー/保存はボタンから選ばせる。files 共有が
+ * 使えない環境 (Firefox / アプリ内ブラウザ) でも画像は必ず目に入り、
+ * 長押し保存もできる。「押しても何も起きない」をなくすための導線 */
+var pendingShareImage = null; // { cv, name }
+function openSharePreview(cv, name) {
+  pendingShareImage = { cv: cv, name: name };
+  var img = $('sharePreviewImg');
+  if (img) img.src = cv.toDataURL('image/png');
+  $('sharePreviewModal').hidden = false;
+}
+function closeSharePreview() {
+  $('sharePreviewModal').hidden = true;
+  pendingShareImage = null;
+}
+function sharePreviewSend() {
+  var p = pendingShareImage;
+  if (!p) return;
+  var done = function () { closeSharePreview(); };
+  if (!p.cv.toBlob) { downloadShareImage(p.cv); showToast(SHARE_SAVE_NOTE); done(); return; }
+  p.cv.toBlob(function (blob) {
+    if (!blob) { downloadShareImage(p.cv); showToast(SHARE_SAVE_NOTE); done(); return; }
+    var file = new File([blob], p.name, { type: 'image/png' });
+    if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).then(done, function (err) {
+        if (err && err.name === 'AbortError') return; // キャンセル時はプレビューを残す
+        downloadShareImage(p.cv); showToast(SHARE_SAVE_NOTE); done();
+      });
+    } else {
+      showToast('このブラウザでは直接共有できないため、コピーか保存を使ってください');
+    }
+  }, 'image/png');
+}
+function sharePreviewCopy() {
+  var p = pendingShareImage;
+  if (!p) return;
+  if (!navigator.clipboard || typeof ClipboardItem === 'undefined' || !p.cv.toBlob) {
+    showToast('このブラウザでは画像のコピーができません。保存を使ってください');
+    return;
+  }
+  p.cv.toBlob(function (blob) {
+    if (!blob) { showToast('コピーできませんでした'); return; }
+    var item = {};
+    item['image/png'] = blob;
+    navigator.clipboard.write([new ClipboardItem(item)]).then(function () {
+      showToast('画像をコピーしました');
+      closeSharePreview();
+    }, function () {
+      showToast('このブラウザでは画像のコピーができません。保存を使ってください');
+    });
+  }, 'image/png');
+}
+function sharePreviewSave() {
+  var p = pendingShareImage;
+  if (!p) return;
+  downloadShareImage(p.cv);
+  showToast('画像を保存しました');
+  closeSharePreview();
+}
+function shareResultImageLegacy() {
+  if (!lastClearResult) return;
+  buildShareImage(lastClearResult).then(function (cv) {
+    if (!cv) return;
     if (!cv.toBlob) { saveShareImageFallback(cv); return; }
     cv.toBlob(function (blob) {
       if (!blob) { saveShareImageFallback(cv); return; }
@@ -4668,7 +4739,7 @@ function downloadWallShareImage(cv) {
 function renderWallPreviewCanvas(aspect) {
   var s = wallSize();
   var unit = 412;
-  var worldW = unit * s.w, worldH = unit * 1.25 * s.h;
+  var worldW = unit * s.w, worldH = unit * WALL_H_PER_W * s.h;
   var extW = worldW;
   if (aspect && worldW / worldH < aspect) extW = Math.round(worldH * aspect);
   var k = Math.min(2, 824 / extW);
@@ -4757,8 +4828,8 @@ function wallPreviewKey() {
 function wallPreviewAspect() {
   var s = wallSize();
   var dispW = ($('startWallBand') || {}).clientWidth || 412;
-  var natH = dispW * (1.25 * s.h) / s.w;
-  var cap = window.innerHeight * 0.28;
+  var natH = dispW * (WALL_H_PER_W * s.h) / s.w;
+  var cap = window.innerHeight * WALL_BAND_CAP;
   return dispW / Math.max(1, Math.min(natH, cap));
 }
 function updateWallPreview() {
@@ -4771,8 +4842,8 @@ function updateWallPreview() {
   if (wallPreviewReadyKey !== wallPreviewKey()) cv.style.opacity = '0';
   var s = wallSize();
   var dispW = band.clientWidth || 412;
-  var natH = dispW * (1.25 * s.h) / s.w;
-  var cap = window.innerHeight * 0.28;
+  var natH = dispW * (WALL_H_PER_W * s.h) / s.w;
+  var cap = window.innerHeight * WALL_BAND_CAP;
   var bandH = Math.round(Math.min(natH, cap));
   var heldH = +(band.dataset.h || 0);
   if (cv.style.opacity === '0' && heldH && bandH < heldH) {
@@ -4849,22 +4920,8 @@ function updateWallPreview() {
 /* 壁画像で共有: クリア画像と同じ作法 (files 共有 → 無ければ保存 + 注記) */
 function shareWallImage() {
   buildWallShareImage().then(function (cv) {
-    if (!cv) return;
-    if (!cv.toBlob) { downloadWallShareImage(cv); showToast(SHARE_SAVE_NOTE); return; }
-    cv.toBlob(function (blob) {
-      if (!blob) { downloadWallShareImage(cv); showToast(SHARE_SAVE_NOTE); return; }
-      var file = new File([blob], 'mainichi-jigsaw-wall.png', { type: 'image/png' });
-      if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
-        navigator.share({ files: [file] }).catch(function (err) {
-          if (err && err.name === 'AbortError') return;
-          downloadWallShareImage(cv);
-          showToast(SHARE_SAVE_NOTE);
-        });
-      } else {
-        downloadWallShareImage(cv);
-        showToast(SHARE_SAVE_NOTE);
-      }
-    }, 'image/png');
+    if (!cv) { showToast('壁の画像を作れませんでした'); return; }
+    openSharePreview(cv, 'mainichi-jigsaw-wall.png');
   });
 }
 function wallCatPlacedEntry(id) {
@@ -7035,6 +7092,12 @@ function wireControls() {
   $('shareCancelBtn').addEventListener('click', function () { $('shareChoiceModal').hidden = true; });
   $('shareTextBtn').addEventListener('click', shareResultText);
   $('shareImageBtn').addEventListener('click', shareResultImage);
+  $('sharePreviewSendBtn').addEventListener('click', sharePreviewSend);
+  $('sharePreviewCopyBtn').addEventListener('click', sharePreviewCopy);
+  $('sharePreviewSaveBtn').addEventListener('click', sharePreviewSave);
+  document.querySelectorAll('[data-share-preview-close]').forEach(function (el) {
+    el.addEventListener('click', closeSharePreview);
+  });
   /* クリア報酬: ごほうびリビール / フレーム解放通知 / 壁をかざる の導線 */
   $('rewardBtn').addEventListener('click', function () { showRewardReveal(); });
   $('rewardLaterBtn').addEventListener('click', function () { navBack(); });

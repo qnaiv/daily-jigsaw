@@ -307,6 +307,23 @@
   </div>
 </div>
 
+<!-- 共有画像のプレビュー (クリア結果・壁 共通)。画像そのものを見せてから
+     共有/コピー/保存を選ばせる。ファイル共有 API が無い環境でも、まず
+     画像が見えるので「何も起きない」ことにはならない -->
+<div id="sharePreviewModal" class="modal" hidden>
+  <div class="modal-backdrop" data-share-preview-close></div>
+  <div class="modal-body result-body">
+    <h2>共有する画像</h2>
+    <img id="sharePreviewImg" alt="共有画像のプレビュー">
+    <div class="result-actions">
+      <button id="sharePreviewSendBtn" class="btn" type="button">共有する</button>
+      <button id="sharePreviewCopyBtn" class="btn" type="button">画像をコピー</button>
+      <button id="sharePreviewSaveBtn" class="btn" type="button">保存する</button>
+      <button id="sharePreviewCloseBtn" class="btn btn-underline" type="button" data-share-preview-close>キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <!-- 結果の共有方法の選択 (文字 / 画像) -->
 <div id="shareChoiceModal" class="modal" hidden>
   <div class="modal-backdrop"></div>
