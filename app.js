@@ -6166,19 +6166,19 @@ function updateStartWallRow() {
   var pendE = !!wall.pendingExpand;
   $('unlockBtn').hidden = !(pendU.length || pendP.length || pendE);
   if (pendE && !pendU.length && !pendP.length) {
-    $('unlockBtn').textContent = '🖼 壁が広くなりました →';
+    $('unlockBtnLabel').textContent = '壁が広くなりました →';
   } else if (pendU.length && pendP.length) {
-    $('unlockBtn').textContent = '🖼 新しいフレームと壁紙が使えるようになりました →';
+    $('unlockBtnLabel').textContent = '新しいフレームと壁紙が使えるようになりました →';
   } else if (pendP.length === 1) {
     var pp = wallpaperById(pendP[0]);
-    $('unlockBtn').textContent = '🖼 新しい壁紙『' + (pp ? pp.name : '') + '』が使えるようになりました →';
+    $('unlockBtnLabel').textContent = '新しい壁紙『' + (pp ? pp.name : '') + '』が使えるようになりました →';
   } else if (pendP.length > 1) {
-    $('unlockBtn').textContent = '🖼 新しい壁紙が ' + pendP.length + ' 種使えるようになりました →';
+    $('unlockBtnLabel').textContent = '新しい壁紙が ' + pendP.length + ' 種使えるようになりました →';
   } else if (pendU.length === 1) {
     var ust = frameStyleById(pendU[0]);
-    $('unlockBtn').textContent = '🖼 新しいフレーム『' + (ust ? ust.name : '') + '』が使えるようになりました →';
+    $('unlockBtnLabel').textContent = '新しいフレーム『' + (ust ? ust.name : '') + '』が使えるようになりました →';
   } else if (pendU.length > 1) {
-    $('unlockBtn').textContent = '🖼 新しいフレームが ' + pendU.length + ' 種使えるようになりました →';
+    $('unlockBtnLabel').textContent = '新しいフレームが ' + pendU.length + ' 種使えるようになりました →';
   }
 }
 

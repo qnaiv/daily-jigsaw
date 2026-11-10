@@ -401,6 +401,9 @@ button { font: inherit; cursor: pointer; }
   display: grid; place-items: center; font-size: 13px; color: var(--paper-dim);
 }
 .nav-btn.notice { justify-content: center; color: var(--brass); font-size: 13.5px; font-weight: 700; letter-spacing: .04em; }
+.btn-ico { width: 16px; height: 16px; flex: 0 0 auto; }
+#settingsBtn { display: flex; align-items: center; justify-content: center; }
+#settingsBtn svg { width: 21px; height: 21px; display: block; }
 
 /* スタート画面のテーマ切替: 設定シートと同じ選択肢を、紙面に馴染む控えめな
  * 文字 + 色見本で置く。active の同期は app.js の applyTheme が
