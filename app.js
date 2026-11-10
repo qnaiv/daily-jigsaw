@@ -4716,7 +4716,7 @@ function wallPreviewAspect() {
   var s = wallSize();
   var dispW = ($('startWallBand') || {}).clientWidth || 412;
   var natH = dispW * (1.25 * s.h) / s.w;
-  var cap = window.innerWidth <= 700 ? window.innerHeight * 0.28 : Infinity;
+  var cap = window.innerHeight * 0.28;
   return dispW / Math.max(1, Math.min(natH, cap));
 }
 function updateWallPreview() {
@@ -4730,7 +4730,7 @@ function updateWallPreview() {
   var s = wallSize();
   var dispW = band.clientWidth || 412;
   var natH = dispW * (1.25 * s.h) / s.w;
-  var cap = window.innerWidth <= 700 ? window.innerHeight * 0.28 : Infinity;
+  var cap = window.innerHeight * 0.28;
   var bandH = Math.round(Math.min(natH, cap));
   var heldH = +(band.dataset.h || 0);
   if (cv.style.opacity === '0' && heldH && bandH < heldH) {

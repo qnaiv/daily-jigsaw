@@ -1336,6 +1336,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf("cv.parentElement.style.opacity = '0'") !== -1 && appSrc2.indexOf("reveal();") !== -1, '壁の額: 読み込み中プレースホルダは見せず、本描画が終わるまで額を透明にして完成形だけ出す');
   ok(appSrc2.indexOf('wallPreviewReadyKey') !== -1 && appSrc2.indexOf("cv.style.opacity = '0'") !== -1 && appSrc2.indexOf('band.dataset.h') !== -1, '壁帯: 本描画が完成するまで帯を透明に保ち、透明な間は帯の高さを縮めない (戻る瞬間の潰れ対策)');
   ok(appSrc2.indexOf('COLLECTION_TILE_PAD = 0.045') !== -1 && css2.indexOf('gap: 6px') !== -1, 'コレクションタイル: 額の余白を 0.16→0.045 に詰め、グリッド間隔 10px→6px で写真を大きくする');
+  ok(appSrc2.indexOf('innerWidth <= 700') === -1 && (appSrc2.match(/innerHeight \* 0\.28/g) || []).length >= 2, '壁帯: 高さ上限 (画面高の28%) は画面幅によらず常に効く (タブレット幅で帯が縦長化し帯内アスペクトが壁と食い違う不具合の修正)');
   var wallN = L.normalizeWall({ catsOwned: ['c01', 'c02', 'c03'], catsPlaced: [{ id: 'c02', x: 0.3 }, { id: 'c03', x: 0.6 }, { id: 'c01', x: 0.8 }] });
   ok(wallN.catsPlaced.length === 1 && wallN.catsPlaced[0].id === 'c02', '猫は同時に1匹だけ: 複数配置の旧セーブは先頭の1匹を残す');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
@@ -1466,7 +1467,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v26'") !== -1, 'sw: VERSION は v26');
+  ok(swSB.indexOf("VERSION = 'v27'") !== -1, 'sw: VERSION は v27');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
