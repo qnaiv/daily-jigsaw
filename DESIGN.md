@@ -545,3 +545,10 @@
 - サイズ: CAT_CATALOG の w を全匹 ×1.5 (c01/c04 .15→.225、c02/c09 .17→.255、c05/c07 .18→.27、c08 .19→.285、c10 .23→.345、c03 .27→.405、c06 .28→.42)。描画は壁画面 (buildWallCatEl)・壁帯 (renderWallPreviewCanvas)・共有画像 (buildWallShareImage) が同じ c.w を使うので全部に効く。
 - 1匹制限: normalizeWall の末尾で catsPlaced を先頭1匹に切り詰める (旧セーブで複数置いてある場合の移行も兼ねる。残りは所持に戻るだけで消えない)。トレイの猫チップは「置く = 配列をその1匹で置き換え (入れ替え)」に変更し、出ている猫のチップを押したときは従来どおり選択のみ。
 - 撮影の落とし穴 (再発防止): puppeteer で app.js を書き換えて複数バリアントを撮るとき、(1) 正規表現の文字クラス [^...] が heredoc 経由の書き込みで化ける、(2) 同一ブラウザの複数ページ間で HTTP キャッシュが効いて2枚目以降が素の app.js になる (transferSize=0 が目印)。バリアントごとに createBrowserContext で分離し、書き換えが効いたことを DOM 実測 (猫要素の幅) で確認してから絵を判断すること。
+
+### 画面遷移の簡易暗転 (2026-11-10、sw v23)
+- ユーザー提案: 「一旦全部暗転させて、描き直し終わってから明るくなるのは？」— 壁から戻った直後の一瞬だけ帯の描画が崩れて見える問題 (数値上は遷移直後から正しく、実機ブラウザの描画タイミング由来とみられる) への対策として、画面遷移を暗転で包む方式を採用。
+- 実装: 既存の #fadeVeil (箱→机の暗転用、0.26s) を流用。ヘルパー withScreenFade(fn) = screenFadeBegin (veil on + 連打ガード fadeSwapPending) → 240ms 後に暗転の中で fn (実際の画面切り替え) を実行 → 表示後2フレームで veil off。対象は「画面の入り口」だけ: showWall / hideWall / showCollection / goToStartScreen / restartPuzzle (各 *Now に分離) と、画面が変わる popstate (handlePopstate に分離し、判定してから包む)。openBox の暗転とは pending フラグで競合回避。
+- popstate の判定: top が wall/collection/result/reward/unlock の pop は常に対象。settings/credits/detail/preview/framePicker/paperPicker の pop は「その下が play でない」ときだけ対象 (設定→プレイ復帰の通常フローは暗転しない)。top==='play' の pop (=設定を開く) と確認ダイアログが開いている pop は対象外。履歴は popstate 時点で既に戻っているため、遷移の遅延で履歴は壊れない。
+- ツアー (tourEnsureScreen) は待ち時間を固定で持つため暗転と競合しうる (壁ステップ 500ms 等)。ツアー表示中に暗転が残る可能性は実機で要確認。問題が出たらツアー経由の遷移を暗転対象外にする。
+- 実装時の注意 (検証で判明): 遷移先の中でさらに遷移関数を呼ぶ二重構造 (popstate → hideWall → goToStartScreen 等) では、外側と内側で二重に暗転すると合計約1秒かかって体感が悪い。withScreenFade は fadeSwapPending 中は包まず即時実行する (暗転の中でそのまま切り替える) ことで二重包みを防ぐ。検証: fadecheck.js で壁→戻る (pop) の時系列を実測し、暗転の中で壁→トップへ切り替わりベールが引くことを確認。コレクション往復も正常。

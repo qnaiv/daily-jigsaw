@@ -4350,6 +4350,9 @@ var wallSelected = null; // { kind: 'item' | 'frame', key: id | recordKey }
 var wallDrag = null;     // { kind, key, el, moved, startX, startY, offX, offY }
 
 function showWall(from) {
+  withScreenFade(function () { showWallNow(from); });
+}
+function showWallNow(from) {
   uiWall = true;
   wallBackToHome = from === 'home';
   navPush('wall');
@@ -4375,6 +4378,9 @@ function showWall(from) {
   setTimeout(function () { maybeTourAuto('wall'); }, 450); // 初回だけ壁のツアー
 }
 function hideWall() {
+  withScreenFade(hideWallNow);
+}
+function hideWallNow() {
   uiWall = false;
   wallSelected = null;
   wallDrag = null;
@@ -6064,6 +6070,9 @@ function applyVisibility() {
   if (!uiHome && !uiCollection && !uiWall) resizeStage();
 }
 function showCollection() {
+  withScreenFade(showCollectionNow);
+}
+function showCollectionNow() {
   uiCollection = true;
   navPush('collection');
   applyVisibility();
@@ -6075,6 +6084,9 @@ function showPlay() {
 }
 /* スタート画面に戻る (設定の「スタート画面に戻る」と、クリア画面を閉じたときの共通動線) */
 function goToStartScreen() {
+  withScreenFade(goToStartScreenNow);
+}
+function goToStartScreenNow() {
   carry = null; // 画面を離れたら運び中は解除する (配置はせず、その場の座標のまま)
   if (state) persistProgress();
   bgmEnterTitle(); // 一度流れ始めた BGM はトップでも止めない (id 19 改訂: 中身は no-op)
@@ -6159,6 +6171,29 @@ function navCloseLayer(name) {
 }
 window.addEventListener('popstate', function () {
   if (navPopping) return;
+  // 画面が変わる pop は簡易暗転で包む (モーダルを閉じるだけの pop と
+  // 「プレイ中の戻る = 設定を開く」は暗転しない)。popstate の時点で
+  // 履歴は既に戻っているので、遷移処理を暗転の分だけ遅らせても履歴は
+  // 壊れない。判定は実行前にできる範囲で行い、迷ったら包まない
+  var topName = navTop();
+  var fadeThisPop = !fadeSwapPending && navStack.length > 1 && topName !== 'play' &&
+    !navConfirmOpen();
+  if (fadeThisPop && (topName === 'wall' || topName === 'collection' || topName === 'result' ||
+      topName === 'reward' || topName === 'unlock' ||
+      ((topName === 'settings' || topName === 'credits' || topName === 'detail' || topName === 'preview' || topName === 'framePicker' || topName === 'paperPicker') && navStack[navStack.length - 2] !== 'play'))) {
+    screenFadeBegin();
+    screenFadeSwap(function () { handlePopstate(); });
+    return;
+  }
+  handlePopstate();
+});
+function navConfirmOpen() {
+  var ids = ['resetConfirmModal', 'freshConfirmModal', 'confirmModal', 'shareChoiceModal', 'sortConfirmModal'];
+  for (var i = 0; i < ids.length; i++) if (!$(ids[i]).hidden) return true;
+  return false;
+}
+function handlePopstate() {
+  if (navPopping) return;
   navPopping = true;
   try {
     if (navCloseTopConfirm()) {
@@ -6180,7 +6215,7 @@ window.addEventListener('popstate', function () {
     navStack.pop();
     navCloseLayer(top);
   } finally { navPopping = false; }
-});
+}
 try { history.replaceState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ }
 /* ---------- コレクション一覧タイル (額 + 継ぎ目) ----------
  * クリア済みタイルは「オーク額 + 完成盤面」を Canvas に描く。盤面は
@@ -6798,12 +6833,14 @@ function closeCredits() { $('creditsModal').hidden = true; }
 
 /* ---------- やりなおす (進行を消して未開始の箱に戻る) ---------- */
 function restartPuzzle() {
-  navGoHome(); // どの画面からでも未開封の箱 (スタート画面) に戻る遷移
-  if (store.progress[playDate]) delete store.progress[playDate][difficulty];
-  saveStore();
-  bgmEnterTitle(); // 一度流れ始めた BGM はトップでも止めない (id 19 改訂: 中身は no-op)
-  uiHome = true;
-  startGame(state.pool);
+  withScreenFade(function () {
+    navGoHome(); // どの画面からでも未開封の箱 (スタート画面) に戻る遷移
+    if (store.progress[playDate]) delete store.progress[playDate][difficulty];
+    saveStore();
+    bgmEnterTitle(); // 一度流れ始めた BGM はトップでも止めない (id 19 改訂: 中身は no-op)
+    uiHome = true;
+    startGame(state.pool);
+  });
 }
 
 function wireControls() {
@@ -7212,6 +7249,43 @@ function giftBoxSvg(patternId, uid) {
  * (蓋パカッ＋暗転だけ)。開封自体はタイマーを開始しない
  * (タイマーは最初のピースを掴んだとき)。机へ入った時点で BGM を
  * 開始/再開する (id 19)。 */
+/* ---------- 画面遷移の簡易暗転 (2026-11-10 ユーザー提案) ----------
+ * 壁⇄トップ等の画面切り替えで、切り替え直後の一瞬だけ描画が崩れて
+ * 見える問題 (帯のアスペクト崩れ・箱の位置ずれ。実機ブラウザの描画
+ * タイミング由来で、数値上は遷移直後から正しい) を暗転で覆い隠す。
+ * 仕組み: 入り口が screenFadeBegin() で #fadeVeil を出し、実際の画面
+ * 切り替えは screenFadeSwap(fn) に渡す (240ms 後に暗転の中で実行、
+ * 表示後2フレームでベールが引く)。連打は veil の pointer-events と
+ * fadeSwapPending で防ぐ。箱→机の openBox は独自の暗転タイミングを
+ * 持つので対象外 (対象は「画面の入り口」だけ: 壁/コレクション/ホーム
+ * への遷移と、それらを戻る pop)。fadeVeil の遷移時間 (0.26s) は
+ * そのまま使うので .quick のような上書きはしない */
+var fadeSwapPending = false;
+function screenFadeBegin() {
+  fadeSwapPending = true;
+  $('fadeVeil').classList.add('on');
+}
+function screenFadeSwap(fn) {
+  setTimeout(function () {
+    try { fn(); } finally {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          $('fadeVeil').classList.remove('on');
+          setTimeout(function () { fadeSwapPending = false; }, 300);
+        });
+      });
+    }
+  }, 240);
+}
+function withScreenFade(fn) {
+  if (fadeSwapPending) {
+    fn(); // 暗転の最中に呼ばれた遷移は、二重に包まず暗転の中で即実行する
+    return;
+  }
+  screenFadeBegin();
+  screenFadeSwap(fn);
+}
+
 function openBox() {
   if (!state || state.opening || !uiHome) return;
   var action = boxTapAction({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters });
@@ -7220,6 +7294,7 @@ function openBox() {
   var box = activeGiftBox();
   box.classList.add('opening');
   var veil = $('fadeVeil');
+  fadeSwapPending = true; // 箱→机の暗転中は画面遷移の簡易暗転と競合させない
   setTimeout(function () { veil.classList.add('on'); }, 270); // 蓋が開ききる頃から暗転を始める
   setTimeout(function () {
     if (!state) return;
@@ -7237,6 +7312,7 @@ function openBox() {
     draw();
     bgmTryPlay(); // 机に入ったので BGM を開始 (初回) / 再開する (id 19)
     veil.classList.remove('on');
+    fadeSwapPending = false;
     box.classList.remove('opening'); // 次に箱を出すとき (やりなおし後) は閉じた状態から
     state.opening = false;
     setTimeout(function () { maybeTourAuto('play'); }, 500); // 初回だけプレイ画面のツアー
