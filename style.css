@@ -281,7 +281,7 @@ button { font: inherit; cursor: pointer; }
  * だけに閉じ、箱は外側のラッパー基準で重ねる */
 .start-wallwrap {
   position: relative; flex: none;
-  width: calc(100% + 40px); margin: -26px -20px 26px;
+  width: calc(100% + 40px); margin: -26px -20px 84px;
 }
 .start-wallband {
   position: relative;
@@ -294,13 +294,19 @@ button { font: inherit; cursor: pointer; }
   cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
 #wallPreviewCanvas:focus-visible { outline: 2px solid var(--brass); outline-offset: -2px; }
-/* 箱は帯の床に「ほんのちょっと」だけ重なる (2026-11-10 ユーザー確定):
- * かぶせる量は帯高の 10% 固定。床帯 (帯の下端 11.5%) の内側に収まり、
- * 猫の足元ライン (帯高の約 97.2%) までは箱の天面の奥端 (90%) が届かない
- * ので、猫が床のどこにいても箱に隠れない */
+/* 箱は帯の床に「ほんのちょっと」だけ重なる (2026-11-10 ユーザー確定)。
+ * 注意: 箱 SVG (viewBox 416x190) の絵は y=84〜163 の範囲にしかなく、
+ * 要素の上 44% は透明。重なりは要素ではなく「絵の天面の奥端 (y=84)」
+ * 基準で決めること (v16 は要素基準で計算して絵が帯から 51px 下に
+ * 離れ、タイトルに被る事故になった。実測で検証する)。
+ * translateY(48%): 絵の天面が帯の下端から約 12px (412px幅時) だけ
+ * 床帯 (帯の下端 11.5%) の内側に入る。猫の足元ライン (帯高の約
+ * 97.2%) 付近までしか届かないので、猫が床のどこにいても隠れない。
+ * margin-bottom 84px は、帯の下にはみ出す要素下端 (箱高の 48%) と
+ * 後続要素 (ヒント/タイトル) が被らないための確保分 */
 .wallband-box {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
-  transform: translateY(87%);
+  transform: translateY(48%);
 }
 .start-hint {
   margin: 0; color: var(--paper-dim); font-size: 12.5px; font-weight: 600;

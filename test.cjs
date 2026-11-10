@@ -1304,7 +1304,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(css2.indexOf('bottom: calc(66px') === -1, '曲名トースト: 廃止した丸ボタンの分の上げ底 (66px) が残っていない');
   ok(html2.indexOf('id="boxPrev"') === -1 && html2.indexOf('id="boxNext"') === -1 && html2.indexOf('id="giftBox"') !== -1 && html2.indexOf('box-single wallband-box') !== -1, '箱: 矢印ボタンは廃止し箱1つだけを壁帯に重ねて出す (PBI #24 案A)');
   ok(html2.indexOf('id="startWallBand"') !== -1 && html2.indexOf('id="wallPreviewCanvas"') !== -1 && html2.indexOf('start-wallwrap') !== -1 && appSrc2.indexOf('function updateWallPreview(') !== -1 && appSrc2.indexOf('function renderWallPreviewCanvas(') !== -1 && appSrc2.indexOf('wallPreviewCache') !== -1, '壁帯プレビュー: スタート画面最上部に飾った壁を描き、壁が変わらない間はキャッシュを使う');
-  ok(css2.indexOf('transform: translateY(87%);') !== -1, '壁帯の箱: かぶりは箱高の13%だけ (ほんのちょっと床に重なる。床帯11.5%の内側で猫の足元に届かない)');
+  ok(css2.indexOf('transform: translateY(48%);') !== -1 && css2.indexOf('margin: -26px -20px 84px;') !== -1, '壁帯の箱: 絵の天面 (SVG y=84) が帯下端から少しだけ床帯に入る translateY(48%) + はみ出し分を確保する margin-bottom 84px (要素基準で計算すると絵が帯から離れてタイトルに被る)');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
   ok(appSrc2.indexOf('renderWallPreviewCanvas(aspect)') !== -1 && appSrc2.indexOf('padX + f.x * W') !== -1 && appSrc2.indexOf('padX + p.x * W') !== -1, '壁帯プレビュー: 帯が横長な分は下地を左右延長し、額と小物と猫は壁座標のまま描く (横の切れ目なし)');
   ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決める');
