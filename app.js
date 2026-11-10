@@ -589,6 +589,7 @@ function deskBounds(pieces) {
  * 再訪時の復元は保存済み配置そのままで、この関数は新規開始時にだけ呼ばれる。 */
 function initialScatter(dateStr, pieces) {
   var rect = scatterRect(pieces);
+  var n = Math.round(Math.sqrt(pieces));
   var rng = rngFromString('scatter:' + dateStr + ':' + pieces);
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
   // クラスタ中心 (密度のムラの芯)
@@ -635,24 +636,53 @@ function initialScatter(dateStr, pieces) {
       y: clamp(y, rect.y0, rect.y0 + rect.h - 1)
     };
   }
+  // 既配置ピースとの「開始時くっつき」検査: 本当の隣同士が偶然、正しい
+  // 相対位置の近くに置かれると、開始直後にピースを掴んで離しただけで
+  // 吸着してしまう。ドロップ時はまず両座標がグリッド (整数) へ吸着される
+  // ので、判定は「両方を丸めた後の相対位置が正解と一致するか」で行う
+  // (生座標の距離だけ見ると丸めで一致するケースを取りこぼす)。
+  // 開始時は全ピースばらばらが前提なので、その配置は候補から外す
+  var placedPos = [];
+  function snapRisk(x, y, id) {
+    var home = pieceHome(id, n);
+    var rx = Math.round(x), ry = Math.round(y);
+    for (var k = 0; k < placedPos.length; k++) {
+      var q = placedPos[k];
+      var qh = pieceHome(q.id, n);
+      var dc = qh.col - home.col, dr = qh.row - home.row;
+      if (!((Math.abs(dc) === 1 && dr === 0) || (Math.abs(dr) === 1 && dc === 0))) continue;
+      if (Math.round(q.x) - rx === dc && Math.round(q.y) - ry === dr) return true;
+      var ex = (q.x - x) - dc, ey = (q.y - y) - dr;
+      if (Math.hypot(ex, ey) <= SNAP_DIST) return true;
+    }
+    return false;
+  }
   var clusters = [];
   for (var id = 0; id < pieces; id++) {
     var best = null, bestOv = Infinity, t;
+    var ok1 = false;
     for (t = 0; t < 12; t++) {           // 第1段: クラスタ寄せ＋一様の混合で抽選
       var p1 = sample(false);
       var ov1 = worstOverlap(p1.x, p1.y);
       if (ov1 < bestOv) { bestOv = ov1; best = p1; }
-      if (ov1 <= 0.42) break;
+      if (ov1 <= 0.42 && !snapRisk(p1.x, p1.y, id)) { best = p1; ok1 = true; break; }
     }
-    if (bestOv > 0.42) {                 // 第2段: 一様抽選で逃げ場を探す
+    if (!ok1) {                          // 第2段: 一様抽選で逃げ場を探す
       for (t = 0; t < 28; t++) {
         var p2 = sample(true);
         var ov2 = worstOverlap(p2.x, p2.y);
         if (ov2 < bestOv) { bestOv = ov2; best = p2; }
-        if (ov2 <= 0.42) break;
+        if (ov2 <= 0.42 && !snapRisk(p2.x, p2.y, id)) { best = p2; ok1 = true; break; }
+      }
+    }
+    if (!ok1) {                          // 第3段: 重なりは妥協してもスナップ範囲だけは避ける
+      for (t = 0; t < 40; t++) {
+        var p3 = sample(true);
+        if (!snapRisk(p3.x, p3.y, id)) { best = p3; break; }
       }
     }
     put(best.x, best.y);
+    placedPos.push({ id: id, x: best.x, y: best.y });
     clusters.push({ pieces: [id], surface: 'desk', gx: best.x, gy: best.y });
   }
   // 重なり順もシャッフルする (後ろの要素ほど手前に描かれ、ヒットテストも優先される)
@@ -4365,8 +4395,9 @@ function showWallNow(from) {
   // 累計クリアが条件に達していれば壁を一段広げる (冪等)
   var expanded = applyWallExpand(store.wall, store.records.length);
   wallCam.x = 0.5; wallCam.y = 0.5;
-  // 床に猫がいれば、開いたときに床まで見える全体表示で始める
-  wallCam.zoom = (expanded || (store.wall.catsPlaced || []).length > 0) ? wallFitZoom() : 1;
+  // 開いたときは常に全体表示 (壁全体+床+猫が見える)。ズームはボタンや
+  // ピンチで入る (ユーザー指示 2026-11-10: デフォ全体表示、ボタンでズーム)
+  wallCam.zoom = wallFitZoom();
   // 壁を開いたら未確認のごほうび/解放は確認済み扱いにする
   if (expanded || store.wall.pending.length || store.wall.pendingUnlocks.length || store.wall.pendingPaperUnlocks.length || store.wall.pendingExpand) {
     store.wall.pending = [];
@@ -4429,6 +4460,8 @@ function clampWallCam() {
 function applyWallCam() {
   var world = $('wallWorld');
   if (!world) return;
+  var fb = $('wallFitBtn');
+  if (fb) fb.textContent = wallCam.zoom > wallFitZoom() + 0.01 ? '全体' : 'ズーム';
   var d = wallWorldPx();
   clampWallCam();
   wallCam.tx = d.vw / 2 - wallCam.x * d.w * wallCam.zoom;
@@ -4451,7 +4484,8 @@ function wallCamSetFromScreen(wp, sx, sy) {
   wallCam.x = wp.x - (sx - d.vw / 2) / (wallCam.zoom * d.w);
   wallCam.y = wp.y - (sy - d.vh / 2) / (wallCam.zoom * d.h);
 }
-/* 「全体」ボタン: 全体表示と等倍 (中心) を切り替える */
+/* 「全体/ズーム」ボタン: 全体表示のときは等倍へズームイン、
+ * ズーム中のときは全体表示へ戻る (ユーザー指示 2026-11-10) */
 function toggleWallFit() {
   if (wallCam.zoom > wallFitZoom() + 0.01) {
     wallCam.zoom = wallFitZoom();
@@ -4461,6 +4495,12 @@ function toggleWallFit() {
     wallCam.x = 0.5; wallCam.y = 0.5;
   }
   applyWallCam();
+  updateWallFitBtn();
+}
+function updateWallFitBtn() {
+  var b = $('wallFitBtn');
+  if (!b) return;
+  b.textContent = wallCam.zoom > wallFitZoom() + 0.01 ? '全体' : 'ズーム';
 }
 function renderWall() {
   var stage = $('wallStage');
@@ -4480,10 +4520,11 @@ function renderWall() {
   fit.id = 'wallFitBtn';
   fit.className = 'wall-fit-btn';
   fit.type = 'button';
-  fit.textContent = '全体';
+  fit.textContent = 'ズーム';
   fit.addEventListener('click', function () { toggleWallFit(); });
   stage.appendChild(fit);
   applyWallCam();
+  updateWallFitBtn();
   renderWallTray();
   updateWallSelBar();
 }

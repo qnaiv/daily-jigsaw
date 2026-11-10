@@ -1337,6 +1337,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('wallPreviewReadyKey') !== -1 && appSrc2.indexOf("cv.style.opacity = '0'") !== -1 && appSrc2.indexOf('band.dataset.h') !== -1, '壁帯: 本描画が完成するまで帯を透明に保ち、透明な間は帯の高さを縮めない (戻る瞬間の潰れ対策)');
   ok(appSrc2.indexOf('COLLECTION_TILE_PAD = 0.045') !== -1 && css2.indexOf('gap: 6px') !== -1, 'コレクションタイル: 額の余白を 0.16→0.045 に詰め、グリッド間隔 10px→6px で写真を大きくする');
   ok(appSrc2.indexOf('innerWidth <= 700') === -1 && (appSrc2.match(/innerHeight \* 0\.28/g) || []).length >= 2, '壁帯: 高さ上限 (画面高の28%) は画面幅によらず常に効く (タブレット幅で帯が縦長化し帯内アスペクトが壁と食い違う不具合の修正)');
+  ok(appSrc2.indexOf('wallCam.zoom = wallFitZoom();') !== -1 && appSrc2.indexOf("? '全体' : 'ズーム'") !== -1, '壁画面: 開いたときは常に全体表示で、ボタンは全体表示中は「ズーム」(押すと等倍)、ズーム中は「全体」');
+  ok(appSrc2.indexOf('function snapRisk(') !== -1 && appSrc2.indexOf('Math.round(q.x) - rx === dc') !== -1, '初期散布: 隣同士が開始直後のドロップで吸着する配置 (グリッド丸め後一致 + 生距離) を候補から外す');
   var wallN = L.normalizeWall({ catsOwned: ['c01', 'c02', 'c03'], catsPlaced: [{ id: 'c02', x: 0.3 }, { id: 'c03', x: 0.6 }, { id: 'c01', x: 0.8 }] });
   ok(wallN.catsPlaced.length === 1 && wallN.catsPlaced[0].id === 'c02', '猫は同時に1匹だけ: 複数配置の旧セーブは先頭の1匹を残す');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
@@ -1467,8 +1469,31 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v27'") !== -1, 'sw: VERSION は v27');
+  ok(swSB.indexOf("VERSION = 'v28'") !== -1, 'sw: VERSION は v28');
 }
 
+/* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
+{
+  const dates = ['2026-11-07', '2026-11-08', '2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12'];
+  let badGames = 0, checked = 0;
+  [16, 36, 64].forEach(function (pieces) {
+    const n = Math.round(Math.sqrt(pieces));
+    dates.forEach(function (d) {
+      let clusters = L.initialScatter(d, pieces);
+      checked++;
+      for (let id = 0; id < pieces; id++) {
+        const idx = clusters.findIndex(function (c) { return c.pieces.length === 1 && c.pieces[0] === id; });
+        if (idx < 0) continue;
+        const cl = clusters[idx];
+        const others = clusters.filter(function (_, i) { return i !== idx; });
+        const dropped = { pieces: cl.pieces, surface: cl.surface, gx: L.snapToGrid(cl.gx), gy: L.snapToGrid(cl.gy) };
+        const res = L.absorbMerges(others, dropped, n);
+        if (res.merged) badGames++;
+        clusters = res.clusters;
+      }
+    });
+  });
+  ok(badGames === 0 && checked === 18, '初期散布: 全ピースを掴んで即ドロップしても1つも合体しない (' + checked + ' ゲーム検証)');
+}
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
