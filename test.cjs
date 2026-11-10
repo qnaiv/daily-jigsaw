@@ -1143,6 +1143,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(settingsBlock.indexOf('>おたすけ<') !== -1 && settingsBlock.indexOf('>お助け<') === -1, '設定レイアウト v20: セクション名はひらがな「おたすけ」');
   ok(settingsBlock.indexOf('id="settingsPreviewBtn"') > settingsBlock.indexOf('>おたすけ<') && settingsBlock.indexOf('id="settingsSortBtn"') > settingsBlock.indexOf('>おたすけ<'), '設定レイアウト v20: 完成図を見る/色ごとにまとめる は おたすけ セクションの中');
   ok(settingsBlock.indexOf('>色ごとにまとめる<') !== -1 && settingsBlock.indexOf('お助け（色ごとの山にまとめる）') === -1, '設定レイアウト v20: ソートボタンのラベルは「色ごとにまとめる」 (旧長ラベルは廃止)');
+  ok(/\.settings-actions \.settings-item \{[^}]*min-height: 42px/.test(css) && /\.settings-theme-btns \.btn \{[^}]*min-height: 42px/.test(css), '設定レイアウト v21: おたすけボタンの高さはあそびかたボタンと同じ 42px (コンパクトに統一)');
   ok(settingsBlock.indexOf('settingsPauseBtn') === -1 && settingsBlock.indexOf('settingsCollectionBtn') === -1 && settingsBlock.indexOf('settingsWallBtn') === -1, '設定レイアウト確定形: 一時停止/コレクション/壁ボタンは設定に無い (シート自体が一時停止、他はトップから)');
   ok(settingsBlock.indexOf('設定（一時停止中）') !== -1 && settingsBlock.indexOf('settings-close-x') !== -1, '設定レイアウト確定形: 見出しに一時停止中を表示し、閉じるは右上の✕');
   ok(settingsBlock.indexOf('swatch-btn') !== -1 && settingsBlock.indexOf('theme-swatch sw-walnut') !== -1, '設定レイアウト確定形: テーマは色タイル (スウォッチ) で選ぶ');
@@ -1457,7 +1458,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v20'") !== -1, 'sw: VERSION は v20');
+  ok(swSB.indexOf("VERSION = 'v21'") !== -1, 'sw: VERSION は v21');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

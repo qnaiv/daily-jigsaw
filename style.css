@@ -715,7 +715,7 @@ button { font: inherit; cursor: pointer; }
 }
 .settings-close-x:active { transform: translateY(1px); }
 .settings-actions { display: flex; gap: 8px; }
-.settings-actions .settings-item { flex: 1; min-height: 56px; font-size: 14px; line-height: 1.35; padding: 6px 2px; }
+.settings-actions .settings-item { flex: 1; min-height: 42px; font-size: 13px; line-height: 1.35; padding: 6px 4px; }
 /* おたすけセクション (2026-11-10): 戻る/やりなおす を最上段へ移し、
  * 完成図・色まとめは見出し付きセクションにまとめた */
 .settings-help { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }

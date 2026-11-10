@@ -535,3 +535,7 @@
 - 変更ファイル: app.js / index.html (設定シート) / style.css / sw.js (VERSION v19 → v20) / test.cjs / DESIGN.md。
 - test.cjs: 598 passed / 0 failed (v19 の 577 から +21: コレクション 13、設定 4、壁帯 4)。
 - 確認画像: design-samples/settings-v20.png (設定シート新レイアウト)。
+
+## sw v21 (2026-11-10): おたすけボタンの高さ統一
+- ユーザー指摘: 設定シートで「おたすけ」(完成図を見る/色ごとにまとめる) と「あそびかた」(ドラッグ/持ち運び) でボタンの高さが違う。
+- .settings-actions .settings-item を min-height 56px/font 14px → 42px/13px に変更し、あそびかたボタン (.settings-theme-btns .btn) と一致させた。実測 (puppeteer): 両セクションとも 42px。
