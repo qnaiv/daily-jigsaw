@@ -4701,6 +4701,7 @@ function renderWallPreviewCanvas(aspect) {
  * renderStartScreen は戻るたび・難易度切替のたびに呼ばれるため必須 */
 var wallPreviewCache = { key: '', cv: null };
 var wallPreviewBusyKey = '';
+var wallPreviewReadyKey = ''; // 本描画が完成して表示してよい壁内容キー (それ以外は帯を透明に保つ)
 function wallPreviewKey() {
   var w = store.wall;
   return JSON.stringify([w.paper, w.sizeStage, w.frames, w.placed, w.catsPlaced, store.records.length]);
@@ -4718,11 +4719,26 @@ function wallPreviewAspect() {
 function updateWallPreview() {
   var band = $('startWallBand'), cv = $('wallPreviewCanvas');
   if (!band || !cv || !store.wall) return;
+  // 帯は本描画 (完成形) が貼れる状態になるまで透明に保つ。描き直し待ちの
+  // 旧キャッシュや即席の絵を見せると、実機では一瞬変形して見える絵として
+  // 現れることがある (2026-11-10 実機動画で繰り返し確認)。完成した絵だけ
+  // を見せるのが確実
+  if (wallPreviewReadyKey !== wallPreviewKey()) cv.style.opacity = '0';
   var s = wallSize();
   var dispW = band.clientWidth || 412;
   var natH = dispW * (1.25 * s.h) / s.w;
   var cap = window.innerWidth <= 700 ? window.innerHeight * 0.28 : Infinity;
-  band.style.height = Math.round(Math.min(natH, cap)) + 'px';
+  var bandH = Math.round(Math.min(natH, cap));
+  var heldH = +(band.dataset.h || 0);
+  if (cv.style.opacity === '0' && heldH && bandH < heldH) {
+    // 帯が透明な間は高さを縮めない (実機では戻る瞬間だけ innerHeight が
+    // 小さく返り、帯が一瞬短く=潰れて見える)。表示が戻るときに現在の
+    // 高さへ合わせる
+    bandH = heldH;
+  } else {
+    band.dataset.h = bandH;
+  }
+  band.style.height = bandH + 'px';
   var aspect = wallPreviewAspect();
   // キャッシュキーは壁の内容だけにする。アスペクトを混ぜると、起動直後の
   // レイアウト確定 (URLバー収納等) でアスペクトが揺れたときに完了コール
@@ -4746,6 +4762,7 @@ function updateWallPreview() {
       // アスペクト一致 (誤差はレイアウト揺れの範囲): そのまま貼る
       cv.width = bw; cv.height = bh;
       ctx.drawImage(srcC, 0, 0, bw, bh);
+      cv.style.opacity = ''; // 完成形を表示する
       return;
     }
     // キャッシュは描画時のアスペクト (下地の左右延長量) を内蔵している。
@@ -4778,6 +4795,7 @@ function updateWallPreview() {
         if (!$('startView').hidden) updateWallPreview();
         return;
       }
+      wallPreviewReadyKey = key;
       wallPreviewCache = { key: key, cv: full };
       if (wallPreviewKey() === key && !$('startView').hidden) updateWallPreview();
     });

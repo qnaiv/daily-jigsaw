@@ -1334,6 +1334,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('function withScreenFade(') !== -1 && appSrc2.indexOf('function screenFadeSwap(') !== -1 && appSrc2.indexOf("function showWallNow(from)") !== -1 && appSrc2.indexOf("function hideWallNow()") !== -1, '画面遷移の簡易暗転: 壁の出入りは fadeVeil で包み、遷移は暗転の中で実行する');
   ok(appSrc2.indexOf('function handlePopstate()') !== -1 && appSrc2.indexOf('screenFadeSwap(function () { handlePopstate(); })') !== -1, '画面遷移の簡易暗転: 戻る (popstate) の画面遷移も暗転で包む');
   ok(appSrc2.indexOf("cv.parentElement.style.opacity = '0'") !== -1 && appSrc2.indexOf("reveal();") !== -1, '壁の額: 読み込み中プレースホルダは見せず、本描画が終わるまで額を透明にして完成形だけ出す');
+  ok(appSrc2.indexOf('wallPreviewReadyKey') !== -1 && appSrc2.indexOf("cv.style.opacity = '0'") !== -1 && appSrc2.indexOf('band.dataset.h') !== -1, '壁帯: 本描画が完成するまで帯を透明に保ち、透明な間は帯の高さを縮めない (戻る瞬間の潰れ対策)');
   var wallN = L.normalizeWall({ catsOwned: ['c01', 'c02', 'c03'], catsPlaced: [{ id: 'c02', x: 0.3 }, { id: 'c03', x: 0.6 }, { id: 'c01', x: 0.8 }] });
   ok(wallN.catsPlaced.length === 1 && wallN.catsPlaced[0].id === 'c02', '猫は同時に1匹だけ: 複数配置の旧セーブは先頭の1匹を残す');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
@@ -1464,7 +1465,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v24'") !== -1, 'sw: VERSION は v24');
+  ok(swSB.indexOf("VERSION = 'v25'") !== -1, 'sw: VERSION は v25');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
