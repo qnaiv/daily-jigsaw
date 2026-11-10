@@ -5444,6 +5444,11 @@ function buildWallFrameEl(f) {
 /* 額ユニットの Canvas を生成する。盤面の読み込みが終わったら同じ手順で
  * 描き直す (乱数はシード固定なので枠の見た目は変わらない)。 */
 function paintWallFrameUnit(cv, f, rec, st) {
+  // 読み込み中プレースホルダ (枠+「読み込み中…」) は完成までの間だけ
+  // 見える前提だったが、実機では暗転をすり抜けて見えてしまう (2026-11-10
+  // 実機動画で確認)。額の要素は本描画が終わるまで透明にし、完成形だけを
+  // 見せる。レコードが無い額はプレースホルダのまま即表示する
+  if (rec && cv.parentElement) cv.parentElement.style.opacity = '0';
   var stage = $('wallStage');
   var stageW = (stage && stage.clientWidth) || 360;
   var U = Math.max(24, stageW * f.w);
@@ -5458,13 +5463,15 @@ function paintWallFrameUnit(cv, f, rec, st) {
   var upperPieces = rec && isUpperTier(rec.pieces) ? rec.pieces : 0;
   paintFrameUnit(ctx, st, U, null, rec ? 'loading' : 'missing', f.recordKey, upperPieces);
   if (!rec) return;
+  var reveal = function () { if (cv.parentElement) cv.parentElement.style.opacity = ''; };
   renderWallBoardCanvas(rec).then(function (board) {
     if (!cv.isConnected) return; // 壁を作り直していたら古い描画は捨てる
     var c2 = cv.getContext('2d');
     c2.setTransform(scale, 0, 0, scale, 0, 0);
     c2.clearRect(0, 0, geo.size, geo.size);
     paintFrameUnit(c2, st, U, board, 'ready', f.recordKey, upperPieces);
-  });
+    reveal();
+  }).catch(function () { reveal(); });
 }
 /* 壁の額装パズル: コレクション詳細 (paintDetailBoard) と同じ辺生成・
  * 輪郭パスで、完成盤面をオフスクリーン Canvas に描く。ピースの形と数は
