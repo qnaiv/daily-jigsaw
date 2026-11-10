@@ -6764,7 +6764,7 @@ var TOUR_STEP_DEFS = [
   { screen: 'settings', sel: '.settings-help', title: 'おたすけ', text: '「完成図を見る」で絵を確認したり、「色ごとにまとめる」でバラバラのピースを色の山に分けられます。あそびかた（ドラッグ／持ち運び）の切り替えもこの設定の中です。' },
   { screen: 'settings', sel: '#settingsHomeBtn', title: 'タイトルに戻る', text: '「スタート画面に戻る」でタイトルへ戻れます。中断したパズルは、タイトルの箱をタップすれば続きから遊べます。' },
   { screen: 'wall', sel: '#wallTray', title: '小物を置く', text: 'クリア報酬でもらった小物は、このトレイから壁に置けます。同じものも何個でも置けます。猫もここから置けます（同時に1匹だけ）。' },
-  { screen: 'wall', sel: '#wallFrameBtn', title: '額装する', text: 'クリアした絵は額に入れて壁に飾れます。額の大きさは、小／中／大の3段階で変えられます。' }
+  { screen: 'wall', sel: '#wallFrameBtn', title: 'パズルを飾る', text: 'クリアした絵は額に入れて壁に飾れます。額の大きさは、小／中／大の3段階で変えられます。' }
 ];
 var tour = null; // { steps: [通し番号...], pos, mode: 'auto'|'full' }
 var tourTimer = null;
