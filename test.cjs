@@ -1291,7 +1291,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const tileBody = appSrc2.slice(appSrc2.indexOf('function paintTileBoard('), appSrc2.indexOf('function renderTileBoardCanvas('));
   ok(tileBody.indexOf('generateEdges(rec.date, rec.pieces)') !== -1 && tileBody.indexOf('detailPiecePath(') !== -1 && tileBody.indexOf('strokePieceBevel(') !== -1, 'コレクションタイル: 継ぎ目は本物レンダラー (辺生成→輪郭パス→ベベル) で描く');
   ok(appSrc2.indexOf('collectionTileCache') !== -1 && appSrc2.indexOf('function buildCollectionTile(') !== -1 && appSrc2.indexOf("frameStyleById('oak')") !== -1, 'コレクションタイル: オーク額で統一し、描画結果をキャッシュする');
-  ok(appSrc2.indexOf('paintFrameUnit(ctx, st, plan.frameU, board, board ? \'ready\' : \'loading\', seedKey, upper)') !== -1, 'コレクションタイル: 額は壁と同じ paintFrameUnit でティア装飾ごと描く');
+  ok(appSrc2.indexOf('paintFrameUnit(ctx, st, plan.frameU, board, board ? \'ready\' : \'loading\', seedKey, upper, COLLECTION_TILE_PAD)') !== -1, 'コレクションタイル: 額は壁と同じ paintFrameUnit でティア装飾ごと描く');
   ok(css2.indexOf('#collectionGrid { grid-template-columns: repeat(3, 1fr);') !== -1 && css2.indexOf('.card.framed-tile') !== -1, 'コレクション一覧: CSS は最低3列 + 額タイルは素通し');
 
   // 2026-11-08 追加分: 箱の柄分離 / 矢印 / 面の統合 / 共有の描画欠け対策 (ラウンド制・カルーセルは 2026-11-09 のステージ制で廃止)
@@ -1335,6 +1335,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('function handlePopstate()') !== -1 && appSrc2.indexOf('screenFadeSwap(function () { handlePopstate(); })') !== -1, '画面遷移の簡易暗転: 戻る (popstate) の画面遷移も暗転で包む');
   ok(appSrc2.indexOf("cv.parentElement.style.opacity = '0'") !== -1 && appSrc2.indexOf("reveal();") !== -1, '壁の額: 読み込み中プレースホルダは見せず、本描画が終わるまで額を透明にして完成形だけ出す');
   ok(appSrc2.indexOf('wallPreviewReadyKey') !== -1 && appSrc2.indexOf("cv.style.opacity = '0'") !== -1 && appSrc2.indexOf('band.dataset.h') !== -1, '壁帯: 本描画が完成するまで帯を透明に保ち、透明な間は帯の高さを縮めない (戻る瞬間の潰れ対策)');
+  ok(appSrc2.indexOf('COLLECTION_TILE_PAD = 0.045') !== -1 && css2.indexOf('gap: 6px') !== -1, 'コレクションタイル: 額の余白を 0.16→0.045 に詰め、グリッド間隔 10px→6px で写真を大きくする');
   var wallN = L.normalizeWall({ catsOwned: ['c01', 'c02', 'c03'], catsPlaced: [{ id: 'c02', x: 0.3 }, { id: 'c03', x: 0.6 }, { id: 'c01', x: 0.8 }] });
   ok(wallN.catsPlaced.length === 1 && wallN.catsPlaced[0].id === 'c02', '猫は同時に1匹だけ: 複数配置の旧セーブは先頭の1匹を残す');
   ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
@@ -1465,7 +1466,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v25'") !== -1, 'sw: VERSION は v25');
+  ok(swSB.indexOf("VERSION = 'v26'") !== -1, 'sw: VERSION は v26');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

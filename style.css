@@ -576,7 +576,7 @@ button { font: inherit; cursor: pointer; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
 /* コレクション一覧 (2026-11-10 改修): 最低3列 (広い画面では増える)。
  * タイルは額入りの絵のみで、テキスト情報は出さない (詳細に集約) */
-#collectionGrid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+#collectionGrid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
 @media (min-width: 560px) { #collectionGrid { grid-template-columns: repeat(4, 1fr); } }
 @media (min-width: 760px) { #collectionGrid { grid-template-columns: repeat(5, 1fr); } }
 @media (min-width: 1024px) { #collectionGrid { grid-template-columns: repeat(6, 1fr); } }

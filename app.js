@@ -1282,10 +1282,13 @@ function rainbowColorAt(t) {
 /* 額ユニットの寸法 (CSS px): U = 枠外形の一辺。
  * bw = 枠帯の幅、matW = マット幅 (帯幅の 0.7 倍)、board = 盤面の一辺、
  * pad = Canvas 余白、size = Canvas の一辺。 */
-function frameGeometry(U, st) {
+function frameGeometry(U, st, padRatio) {
   var bw = Math.max(2, U * st.width);
   var matW = st.mat ? bw * 0.7 : 0;
-  var pad = U * FRAME_PAD_RATIO;
+  // padRatio を渡すとその余白で描く (コレクションタイル用: 壁の額の
+  // はみ出し余白は不要なので小さくし、タイル内の写真を大きくする)。
+  // 省略時は従来どおり FRAME_PAD_RATIO
+  var pad = U * (padRatio == null ? FRAME_PAD_RATIO : padRatio);
   return { bw: bw, matW: matW, board: U - 2 * (bw + matW), pad: pad, size: U + 2 * pad };
 }
 /* 累計クリア回数で新しく解放されるスタイル id (未解放のものだけ・表の順) */
@@ -5200,8 +5203,8 @@ function drawFrameBoardPlaceholder(ctx, bx, by, B, U, state) {
  * 外形の左上は (pad, pad)。board は完成盤面の Canvas (null の間は
  * boardState のプレースホルダ)。木目・星の乱数は seedKey で固定し、
  * 盤面ロード後の描き直しでも見た目が変わらないようにする。 */
-function paintFrameUnit(ctx, st, U, board, boardState, seedKey, upperPieces) {
-  var geo = frameGeometry(U, st);
+function paintFrameUnit(ctx, st, U, board, boardState, seedKey, upperPieces, padRatio) {
+  var geo = frameGeometry(U, st, padRatio);
   var bw = geo.bw, matW = geo.matW, B = geo.board;
   var X0 = geo.pad, Y0 = geo.pad, X1 = X0 + U, Y1 = Y0 + U;
   var rng = rngFromString('frame:' + st.id + ':' + seedKey);
@@ -6304,9 +6307,10 @@ function renderTileBoardCanvas(rec) {
   });
 }
 /* タイル Canvas のピクセル寸法 (レイアウト確定用に先に決める) */
+var COLLECTION_TILE_PAD = 0.045; // タイル額の余白 (壁の額 0.16 に対して詰める)
 function collectionTilePx(pieces) {
   var plan = collectionTilePlan(pieces);
-  var geo = frameGeometry(plan.frameU, frameStyleById('oak'));
+  var geo = frameGeometry(plan.frameU, frameStyleById('oak'), COLLECTION_TILE_PAD);
   return Math.round(geo.size * plan.frameScale);
 }
 /* 額 (オーク) + 盤面 + ティア装飾のタイル Canvas を作る。壁の額
@@ -6315,7 +6319,7 @@ function collectionTilePx(pieces) {
 function buildCollectionTile(rec) {
   var plan = collectionTilePlan(rec.pieces);
   var st = frameStyleById('oak');
-  var geo = frameGeometry(plan.frameU, st);
+  var geo = frameGeometry(plan.frameU, st, COLLECTION_TILE_PAD);
   var px = Math.round(geo.size * plan.frameScale);
   var cv = document.createElement('canvas');
   cv.width = px;
@@ -6326,7 +6330,7 @@ function buildCollectionTile(rec) {
     var ctx = cv.getContext('2d');
     ctx.setTransform(plan.frameScale, 0, 0, plan.frameScale, 0, 0);
     ctx.clearRect(0, 0, geo.size, geo.size);
-    paintFrameUnit(ctx, st, plan.frameU, board, board ? 'ready' : 'loading', seedKey, upper);
+    paintFrameUnit(ctx, st, plan.frameU, board, board ? 'ready' : 'loading', seedKey, upper, COLLECTION_TILE_PAD);
   }
   paint(null);
   return renderTileBoardCanvas(rec).then(function (board) {
@@ -6363,7 +6367,7 @@ function fillCollectionTile(cv, rec) {
   var plan = collectionTilePlan(rec.pieces);
   var ctx = cv.getContext('2d');
   ctx.setTransform(plan.frameScale, 0, 0, plan.frameScale, 0, 0);
-  paintFrameUnit(ctx, frameStyleById('oak'), plan.frameU, null, 'loading', recordImageKey(rec), isUpperTier(rec.pieces) ? rec.pieces : 0);
+  paintFrameUnit(ctx, frameStyleById('oak'), plan.frameU, null, 'loading', recordImageKey(rec), isUpperTier(rec.pieces) ? rec.pieces : 0, COLLECTION_TILE_PAD);
   collectionTileFor(rec).then(function (built) {
     if (!built || !cv.isConnected) return;
     var c2 = cv.getContext('2d');
