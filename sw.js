@@ -8,7 +8,7 @@
  *  - 対象は同一オリジンの GET のみ。写真プール等の外部オリジンは素通しする
  * キャッシュを丸ごと入れ替えたいときは VERSION を上げる。 */
 
-var VERSION = 'v34';
+var VERSION = 'v35';
 var STATIC_CACHE = 'daily-jigsaw-static-' + VERSION;
 var AUDIO_CACHE = 'daily-jigsaw-audio-' + VERSION;
 var KNOWN_CACHES = [STATIC_CACHE, AUDIO_CACHE];
@@ -18,6 +18,7 @@ var PRECACHE_URLS = [
   './',
   'index.html',
   'app.js',
+  'mp.js',
   'style.css',
   'manifest.webmanifest',
   'data/images.json',
@@ -99,7 +100,7 @@ self.addEventListener('fetch', function (event) {
 
   /* コードとスタイルは NetworkFirst: HTML だけ新しくて app.js が古い、という
    * 版の混在 (新UIのボタンが無反応になる等) を防ぐ。失敗時はキャッシュへ */
-  if (url.pathname.endsWith('/app.js') || url.pathname.endsWith('/style.css')) {
+  if (url.pathname.endsWith('/app.js') || url.pathname.endsWith('/mp.js') || url.pathname.endsWith('/style.css')) {
     event.respondWith(
       fetch(request)
         .then(function (response) {

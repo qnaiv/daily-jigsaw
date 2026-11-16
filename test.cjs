@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v34'") !== -1, 'sw: VERSION は v34');
+  ok(swSB.indexOf("VERSION = 'v35'") !== -1, 'sw: VERSION は v35');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1504,5 +1504,96 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   });
   ok(badGames === 0 && checked === 18, '初期散布: 全ピースを掴んで即ドロップしても1つも合体しない (' + checked + ' ゲーム検証)');
 }
+/* マルチプレイ収束テスト (MULTIPLAYER_DESIGN §7 step 0 / T1):
+ * 同じ drop イベント列を独立した2状態へ適用すると全ステップで canonical
+ * ハッシュが一致し、途中 snapshot (全塊の deep copy) から再開しても
+ * 同じ最終状態に収束する */
+{
+  const n = 6, pieces = 36;
+  function cloneCs(cs) {
+    return cs.map(function (c) { return { pieces: c.pieces.slice(), surface: c.surface, gx: c.gx, gy: c.gy }; });
+  }
+  function applyDrop(clusters, ev) {
+    const idx = clusters.findIndex(function (c) { return L.clusterAnchorId(c) === ev.anchor; });
+    const cl = clusters[idx];
+    const others = clusters.filter(function (_, i) { return i !== idx; });
+    return L.absorbMerges(others, { pieces: cl.pieces.slice(), surface: cl.surface, gx: ev.gx, gy: ev.gy }, n).clusters;
+  }
+  // 決定的なイベント列: ピース id 順に、そのピースを含む塊を正解位置へ落とす
+  const events = [];
+  {
+    let gen = L.initialScatter('2026-11-11', pieces);
+    for (let id = 0; id < pieces; id++) {
+      const cl = gen.find(function (c) { return c.pieces.indexOf(id) >= 0; });
+      const ah = L.pieceHome(L.clusterAnchorId(cl), n);
+      const ev = { anchor: L.clusterAnchorId(cl), gx: ah.col, gy: ah.row };
+      events.push(ev);
+      gen = applyDrop(gen, ev);
+    }
+  }
+  let a = L.initialScatter('2026-11-11', pieces);
+  let b = cloneCs(L.initialScatter('2026-11-11', pieces));
+  let stepMismatch = 0;
+  events.forEach(function (ev) {
+    a = applyDrop(a, ev);
+    b = applyDrop(b, ev);
+    if (L.canonicalStateHash(a) !== L.canonicalStateHash(b)) stepMismatch++;
+  });
+  ok(stepMismatch === 0 && events.length === pieces, '収束: 同じイベント列を2状態へ適用すると全ステップで canonical ハッシュが一致');
+  ok(L.isComplete(a, n) && L.isComplete(b, n), '収束: イベント列の適用で両状態とも完成する');
+  // snapshot 等価性: K 個適用した時点の全塊 deep copy から残りを適用する
+  const K = 13;
+  let c = L.initialScatter('2026-11-11', pieces);
+  for (let i = 0; i < K; i++) c = applyDrop(c, events[i]);
+  let d = cloneCs(c); // snapshot
+  for (let i = K; i < events.length; i++) d = applyDrop(d, events[i]);
+  ok(L.canonicalStateHash(d) === L.canonicalStateHash(a), '収束: 途中 snapshot から再開しても最終ハッシュが一致');
+  // canonical ハッシュ自体の性質
+  const base = L.initialScatter('2026-11-11', pieces);
+  ok(L.canonicalStateHash(cloneCs(base).reverse()) === L.canonicalStateHash(base), 'canonical: 塊の配列順が違ってもハッシュは同じ');
+  const qi = base.findIndex(function (cl) { return Math.round((cl.gx + 1e-7) * 1e6) === Math.round(cl.gx * 1e6); });
+  const nudged = cloneCs(base);
+  if (qi >= 0) nudged[qi].gx += 1e-7; // 量子 (1e-6 セル) 未満の座標差
+  ok(qi >= 0 && L.canonicalStateHash(nudged) === L.canonicalStateHash(base), 'canonical: 1e-7 の座標差は量子化で吸収される');
+  const moved = cloneCs(base);
+  moved[0].gx += 0.01;
+  ok(L.canonicalStateHash(moved) !== L.canonicalStateHash(base), 'canonical: 0.01 の座標差ではハッシュが変わる');
+}
+
+/* マルチプレイ (協力) UI 統合の配線 (MULTIPLAYER_DESIGN v3) */
+{
+  const fsM = require('fs'), pathM = require('path');
+  const appM = fsM.readFileSync(pathM.join(__dirname, 'app.js'), 'utf8');
+  const htmlM = fsM.readFileSync(pathM.join(__dirname, 'index.html'), 'utf8');
+  const swM = fsM.readFileSync(pathM.join(__dirname, 'sw.js'), 'utf8');
+  const cssM = fsM.readFileSync(pathM.join(__dirname, 'style.css'), 'utf8');
+  ok(htmlM.indexOf('<script src="mp.js"></script>') !== -1 &&
+     htmlM.indexOf('<script src="mp.js"></script>') < htmlM.indexOf('<script src="app.js"></script>'),
+     'MP配線: mp.js が app.js より前に読み込まれる');
+  ok(htmlM.indexOf('id="mpBtn"') !== -1 && htmlM.indexOf('id="mpModal"') !== -1 &&
+     htmlM.indexOf('id="mpLobbyView"') !== -1 && htmlM.indexOf('id="mpRoomCode"') !== -1 &&
+     htmlM.indexOf('id="mpVerifyCode"') !== -1 && htmlM.indexOf('id="mpRoster"') !== -1 &&
+     htmlM.indexOf('id="mpBadge"') !== -1 && htmlM.indexOf('id="mpPinBtn"') !== -1 &&
+     htmlM.indexOf('id="resultContrib"') !== -1,
+     'MP配線: スタート導線・ロビー・バッジ・ピンボタン・貢献度表示の要素がある');
+  ok(swM.indexOf("'mp.js'") !== -1 && swM.indexOf("endsWith('/mp.js')") !== -1,
+     'MP配線: sw.js が mp.js をプリキャッシュし NetworkFirst 対象に含む');
+  ok(appM.indexOf('var MP_LOGIC_VERSION = 1;') !== -1 &&
+     appM.indexOf('hashState: function (clusters) { return canonicalStateHash(clusters); }') !== -1 &&
+     appM.indexOf("t: 'grab-req'") !== -1 && appM.indexOf("t: 'drop'") !== -1 && appM.indexOf("t: 'sort'") !== -1,
+     'MP配線: hooks が canonicalStateHash を使い、grab-req/drop/sort を送る');
+  ok(appM.indexOf('if (mpInRoom()) { mpSettleDrag(); return; }') !== -1 &&
+     appM.indexOf('if (mpInRoom()) return; // 協力プレイはソロの進行中セーブと分離する') !== -1,
+     'MP配線: settleDrag は協力時に seq 経路へ分岐し、persistProgress は協力中に無動作');
+  ok(appM.indexOf('mpGuestClear') !== -1 && appM.indexOf('rec.coop = true;') !== -1 &&
+     appM.indexOf('function mpFillResultExtras(') !== -1,
+     'MP配線: クリア記録はホストのみ coop 付きで保存し、ゲストは書かない');
+  ok(appM.indexOf('function mpLoadPuzzle(') !== -1 && appM.indexOf('mp.session.setReady()') !== -1 &&
+     appM.indexOf('function mpDoApplySnapshot(') !== -1 && appM.indexOf('function mpDrawOverlays(') !== -1,
+     'MP配線: お題ロード + ready バリア、snapshot 適用、相手表示の重ね描きがある');
+  ok(cssM.indexOf('#mpBadge') !== -1 && cssM.indexOf('.mp-pin-btn') !== -1 && cssM.indexOf('.mp-roster') !== -1,
+     'MP配線: style.css にバッジ・ピンボタン・名簿のスタイルがある');
+}
+
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

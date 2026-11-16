@@ -70,6 +70,11 @@
         <span class="nav-text"><span class="nav-label">壁をかざる</span><span class="nav-sub" id="wallItemsInfo">壁の小物 0 / 50</span></span>
         <span class="nav-arrow">→</span>
       </button>
+      <button id="mpBtn" class="nav-btn" type="button">
+        <span class="nav-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.5" cy="9" r="2.6"/><circle cx="16" cy="9" r="2.6"/><path d="M3.5 19c.6-3 2.6-4.5 5-4.5s4.4 1.5 5 4.5"/><path d="M13.5 14.7c2 .3 3.4 1.7 4 4.3"/></svg></span>
+        <span class="nav-text"><span class="nav-label">みんなで あそぶ</span><span class="nav-sub">協力プレイ（2〜4人）</span></span>
+        <span class="nav-arrow">→</span>
+      </button>
       <button id="rewardBtn" class="nav-btn notice" type="button" hidden><svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><ellipse cx="9" cy="6" rx="2.8" ry="1.8" transform="rotate(-28 9 6)"/><ellipse cx="15" cy="6" rx="2.8" ry="1.8" transform="rotate(28 15 6)"/><rect x="3.8" y="8.6" width="16.4" height="3.4" rx="0.8"/><path d="M5.5 12h13v7.2a1.1 1.1 0 0 1-1.1 1.1H6.6a1.1 1.1 0 0 1-1.1-1.1z"/><path d="M12 9.2v11.1"/><circle cx="12" cy="8.15" r="1.05"/></svg><span>ごほうびが届いています →</span></button>
       <button id="unlockBtn" class="nav-btn notice" type="button" hidden><svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 16.5l4.5-4 3.5 3 3-2.5 6 5.5"/><circle cx="9" cy="9" r="1.4"/></svg><span id="unlockBtnLabel">新しいフレームが使えるようになりました →</span></button>
     </nav>
@@ -116,6 +121,9 @@
       <button id="zoomInBtn" class="zoom-btn" type="button" aria-label="拡大">＋</button>
       <button id="fitViewBtn" class="zoom-btn zoom-fit" type="button">全体</button>
     </div>
+    <div id="mpBadge" hidden><span class="mp-badge-dot"></span><span id="mpBadgeText">協力プレイ</span></div>
+    <button id="mpPinBtn" class="fab mp-pin-btn" type="button" hidden aria-label="合図ピンを送る"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-10.4A6.5 6.5 0 0 1 12 4a6.5 6.5 0 0 1 6.5 6.6C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10.6" r="2.3"/></svg></button>
+    <div id="mpWaitVeil" hidden><p id="mpWaitText">みんなの準備を待っています…</p></div>
     <canvas id="minimap" width="264" height="236" aria-hidden="true"></canvas>
     <div id="bgmToast" aria-hidden="true"></div>
     <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" type="button" aria-label="閉じる">×</button></div>
@@ -296,11 +304,17 @@
     <p id="resultBadge" class="cert-badge" hidden>完成図を見ずにクリア</p>
     <p id="resultUpperBadge" class="cert-badge cert-badge-upper" hidden>上級クリア</p>
     <div id="resultRewardItems" class="cert-rewards" hidden></div>
+    <div id="resultContrib" class="cert-contrib" hidden></div>
+    <p id="resultCoopNote" class="cert-coop-note" hidden></p>
     <div class="cert-actions">
       <button id="resultWallBtn" class="btn cert-primary" type="button">壁をかざる</button>
       <div class="cert-sub-actions">
         <button id="resultShareBtn" class="btn cert-secondary" type="button">結果を共有</button>
         <button id="resultCollectionBtn" class="btn cert-secondary" type="button">コレクションを見る</button>
+      </div>
+      <div id="resultMpActions" class="cert-sub-actions" hidden>
+        <button id="resultNextBtn" class="btn cert-secondary" type="button">つぎのステージへ</button>
+        <button id="resultLeaveBtn" class="btn cert-secondary" type="button">部屋を出る</button>
       </div>
       <button id="resultCloseBtn" class="btn btn-underline cert-close" type="button">閉じる</button>
     </div>
@@ -409,10 +423,104 @@
   </div>
 </div>
 
+<!-- 協力プレイ (マルチ): 部屋の作成/入室シートとロビーを兼ねるモーダル。
+     接続の実体は mp.js (window.JigsawMP)、画面とゲームへの接続は app.js の MP 節 -->
+<div id="mpModal" class="modal" hidden>
+  <div class="modal-backdrop" data-mp-close></div>
+  <div class="modal-body mp-body">
+    <h2>みんなで あそぶ</h2>
+    <button class="settings-close-x" type="button" data-mp-close aria-label="閉じる">✕</button>
+
+    <!-- 入口: 部屋を作る / コードで入る / 手動コード -->
+    <div id="mpHomeView">
+      <div class="settings-list">
+        <button id="mpCreateBtn" class="btn settings-item cert-primary" type="button">部屋をつくる</button>
+        <div class="settings-credits">
+          <span class="settings-section-label">コードで入る</span>
+          <div class="mp-join-row">
+            <input id="mpJoinCode" class="mp-code-input" type="text" placeholder="部屋コード（6文字）" autocomplete="off" autocapitalize="characters" spellcheck="false">
+            <button id="mpJoinBtn" class="btn" type="button">入る</button>
+          </div>
+        </div>
+        <button id="mpManualBtn" class="fresh-link" type="button">手動コードでつなぐ（2人専用）</button>
+        <p id="mpHomeError" class="mp-error" hidden></p>
+        <p class="mp-note">部屋コードを知っている人だけが入れます。クリアの記録とごほうびはホストのものになります。</p>
+      </div>
+    </div>
+
+    <!-- 手動コード (仲介B): SDP をテキストコードで2往復する -->
+    <div id="mpManualView" hidden>
+      <div class="settings-list">
+        <div class="settings-credits">
+          <span class="settings-section-label">ホストになる</span>
+          <button id="mpManualHostBtn" class="btn settings-item" type="button">接続コードを作る</button>
+          <textarea id="mpManualOfferCode" class="mp-code-area" rows="3" readonly placeholder="ここに接続コードが出ます" hidden></textarea>
+          <textarea id="mpManualAnswerInput" class="mp-code-area" rows="3" placeholder="相手の回答コードを貼り付け" hidden></textarea>
+          <button id="mpManualAcceptBtn" class="btn settings-item" type="button" hidden>回答コードを読み込む</button>
+        </div>
+        <div class="settings-credits">
+          <span class="settings-section-label">ゲストになる</span>
+          <textarea id="mpManualOfferInput" class="mp-code-area" rows="3" placeholder="ホストの接続コードを貼り付け"></textarea>
+          <button id="mpManualGuestBtn" class="btn settings-item" type="button">回答コードを作る</button>
+          <textarea id="mpManualAnswerCode" class="mp-code-area" rows="3" readonly placeholder="ここに回答コードが出ます" hidden></textarea>
+        </div>
+        <p id="mpManualStatus" class="mp-status"></p>
+        <button id="mpManualBackBtn" class="btn btn-underline" type="button">もどる</button>
+      </div>
+    </div>
+
+    <!-- ロビー: 接続待ちと開始の待機場所 -->
+    <div id="mpLobbyView" hidden>
+      <div class="settings-list">
+        <div class="mp-code-block">
+          <span class="settings-section-label">部屋コード</span>
+          <p id="mpRoomCode" class="mp-room-code mono">------</p>
+          <div class="result-actions">
+            <button id="mpCopyCodeBtn" class="btn" type="button">コードをコピー</button>
+            <button id="mpShareCodeBtn" class="btn" type="button">招待を共有</button>
+          </div>
+          <p id="mpVerifyRow" class="mp-verify" hidden>照合コード <span id="mpVerifyCode" class="mono"></span>（相手と同じ数字か口頭で確認）</p>
+        </div>
+        <p id="mpLobbyStatus" class="mp-status">接続しています…</p>
+        <div class="mp-lobby-main">
+          <div id="mpLobbyImgWrap" class="mp-lobby-imgwrap" hidden>
+            <span id="mpLobbyImgPh" class="mp-img-ph">読み込み中…</span>
+            <img id="mpLobbyImg" class="mp-lobby-img" alt="お題の絵" hidden>
+          </div>
+          <div class="mp-lobby-side">
+            <p id="mpLobbyPuzzle" class="mp-puzzle-line"></p>
+            <div id="mpHostStage" class="settings-credits" hidden>
+              <span class="settings-section-label">ステージ</span>
+              <select id="mpStageSel" class="mp-stage-sel"></select>
+            </div>
+            <p id="mpGuestWait" class="mp-note" hidden>ホストがはじめるのを待っています</p>
+          </div>
+        </div>
+        <div id="mpHostControls" hidden>
+          <div class="settings-credits">
+            <span class="settings-section-label">ピース数</span>
+            <div id="mpDiffSeg" class="diff-chips" role="group" aria-label="協力プレイの難易度"></div>
+          </div>
+        </div>
+        <div class="settings-credits">
+          <span class="settings-section-label">参加者</span>
+          <ul id="mpRoster" class="mp-roster"></ul>
+        </div>
+        <div id="mpStartBlock" hidden>
+          <p id="mpStartHint" class="mp-note">相手の参加を待っています</p>
+          <button id="mpStartBtn" class="btn settings-item cert-primary" type="button" disabled>はじめる</button>
+        </div>
+        <button id="mpLeaveBtn" class="btn btn-underline danger-link" type="button">部屋を出る</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="appToast" role="status" aria-live="polite"></div>
 <div id="fadeVeil"></div>
 <div id="confettiWrap" hidden><canvas id="confetti"></canvas></div>
 
+<script src="mp.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

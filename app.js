@@ -418,6 +418,19 @@ function piecePositions(clusters, n) {
   });
   return pos;
 }
+/* マルチプレイ用 canonical 状態ハッシュ (MULTIPLAYER_DESIGN §3.4):
+ * 塊を anchor (最小ピース id) 昇順に並べ、[anchor, round(gx*1e6), round(gy*1e6),
+ * ピース数] を連結した文字列を hashSeed でハッシュする。座標を 1e-6 セルに
+ * 量子化するのでエンジン間の 1ulp 差では化けず、配列の並び順にも依存しない */
+function canonicalStateHash(clusters) {
+  var rows = clusters.map(function (cl) {
+    return [clusterAnchorId(cl), Math.round(cl.gx * 1e6), Math.round(cl.gy * 1e6), cl.pieces.length];
+  });
+  rows.sort(function (a, b) { return a[0] - b[0]; });
+  var s = '';
+  for (var i = 0; i < rows.length; i++) s += rows[i][0] + ',' + rows[i][1] + ',' + rows[i][2] + ',' + rows[i][3] + ';';
+  return hashSeed(s);
+}
 function snapToGrid(v) { return Math.round(v); }
 /* ドラッグ中の塊 drag (gx, gy は浮動小数) が、他の塊のどれかと本来の隣接関係で
  * 合体できる位置に近いかを調べる。合体できれば { other, gx, gy } (吸着先) を返す。 */
@@ -436,10 +449,14 @@ function findRelativeSnap(drag, others, n) {
       if (dragSet.has(nid) || !otherPos.has(nid)) return;
       var q = otherPos.get(nid);
       var needX = q.gx - d[0] - offX, needY = q.gy - d[1] - offY;
-      var dist = Math.hypot(drag.gx - needX, drag.gy - needY);
-      if (dist <= SNAP_DIST && (!best || dist < best.dist)) {
+      /* 距離は二乗で比べる (C2, MULTIPLAYER_DESIGN §3.8): Math.hypot は
+       * エンジン間で 1ulp ずれうるため、基本演算だけの二乗距離で閾値判定と
+       * 最小候補の選択を行う (二乗は非負範囲で単調なので順序は保存される) */
+      var dx = drag.gx - needX, dy = drag.gy - needY;
+      var distSq = dx * dx + dy * dy;
+      if (distSq <= SNAP_DIST * SNAP_DIST && (!best || distSq < best.distSq)) {
         var other = others.find(function (o) { return o.pieces.indexOf(nid) >= 0; });
-        best = { other: other, gx: needX, gy: needY, dist: dist };
+        best = { other: other, gx: needX, gy: needY, distSq: distSq };
       }
     });
   });
@@ -461,7 +478,7 @@ function absorbMerges(others, moving, n, opts) {
   function tryOnce(exactOnly) {
     var snap = findRelativeSnap(cur, pool, n);
     if (!snap) return false;
-    if (exactOnly && snap.dist > 1e-9) return false;
+    if (exactOnly && snap.distSq > 1e-18) return false; // 距離 1e-9 の二乗 (C2)
     var trial = { pieces: cur.pieces, surface: cur.surface, gx: snap.gx, gy: snap.gy };
     var posOther = piecePositions([snap.other], n);
     var posTrial = piecePositions([trial], n);
@@ -653,7 +670,7 @@ function initialScatter(dateStr, pieces) {
       if (!((Math.abs(dc) === 1 && dr === 0) || (Math.abs(dr) === 1 && dc === 0))) continue;
       if (Math.round(q.x) - rx === dc && Math.round(q.y) - ry === dr) return true;
       var ex = (q.x - x) - dc, ey = (q.y - y) - dr;
-      if (Math.hypot(ex, ey) <= SNAP_DIST) return true;
+      if (ex * ex + ey * ey <= SNAP_DIST * SNAP_DIST) return true; // 二乗距離で比較 (C2)
     }
     return false;
   }
@@ -1828,6 +1845,7 @@ var PureLogic = {
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
+  canonicalStateHash: canonicalStateHash,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
   absorbMerges: absorbMerges, clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
@@ -2062,6 +2080,11 @@ function syncOpModeButtons() {
   });
 }
 function setCarryMode(on) {
+  if (on && mpInRoom()) { // 協力中は持ち運びモード無効 (MULTIPLAYER_DESIGN §1)
+    showToast('協力プレイ中は持ち運びモードは使えません');
+    syncOpModeButtons();
+    return;
+  }
   carryMode = !!on;
   store.carryMode = carryMode;
   saveStore();
@@ -2667,6 +2690,7 @@ function newGameState(pool) {
   };
 }
 function persistProgress() {
+  if (mpInRoom()) return; // 協力プレイはソロの進行中セーブと分離する (MULTIPLAYER_DESIGN §5)
   normalizeClustersInDesk(); // 保存は必ず机の中の配置だけにする (机の有限化の最終担保)
   var prog = progressFor(playDate, difficulty);
   prog.clusters = state.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: c.surface, gx: c.gx, gy: c.gy }; });
@@ -3244,6 +3268,7 @@ function draw() {
     sctx.lineWidth = 1.5;
     sctx.strokeRect(rx, ry, rw, rh);
   }
+  mpDrawOverlays(); // 協力プレイの重ね描き (相手カーソル/保持枠/ゴースト/ピン)。ソロでは無動作
 }
 /* ---------- ミニマップ (机でカメラを動かしている間だけ表示) ----------
  * 散らばり領域全体の縮小図に、机上のピースを点で、現在のビューポートを
@@ -3616,6 +3641,7 @@ function runSortSingles(singles) {
   };
   requestAnimationFrame(sortAnimStep);
   showToast(groups.length + '色の山に分けたよ');
+  if (mpInRoom()) mpSendSortEvent(items); // 協力: 最終位置 + 全塊の並び順をイベント化 (§3.3/M5)
 }
 function sortAnimStep(now) {
   if (!sortAnim) return;
@@ -3689,6 +3715,8 @@ function stagePos(ev) {
 stage.addEventListener('pointerdown', function (ev) {
   if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
   if (sortAnim) return; // お助けのアニメーション中は操作を受けない
+  if (mpInRoom() && !mp.begun) return; // 協力: ready バリア (全員揃うまで入力無効、M10)
+  if (mpInRoom() && mp.pinMode) { mpFirePin(stagePos(ev)); return; } // 協力: 合図ピン (ピンボタン経由)
   stage.setPointerCapture(ev.pointerId);
   var p = stagePos(ev);
   if (!pointers.has(ev.pointerId) && pointers.size >= 2) resetGestureState();
@@ -3727,22 +3755,26 @@ stage.addEventListener('pointerdown', function (ev) {
     return;
   }
   var hit = state.cleared ? null : hitCluster(p.x, p.y);
+  if (hit && mpInRoom() && mpLeaseBlocked(hit.cluster)) hit = null; // 協力: 他人のリース中の塊は掴めない (§3.5)
   if (hit) {
     var w = screenToWorld(p.x, p.y);
     var inSelection = selection.has(hit.cluster);
     // 選択外のピースを掴んだら、その時点で選択を解除して通常ドラッグにする
     if (!inSelection) clearSelection();
-    // 掴んだ塊を最前面へ
-    state.clusters.splice(state.clusters.indexOf(hit.cluster), 1);
-    state.clusters.push(hit.cluster);
+    // 掴んだ塊を最前面へ (協力中は並び順を動かさない: 全端末の z-order を一致させるため)
+    if (!mpInRoom()) {
+      state.clusters.splice(state.clusters.indexOf(hit.cluster), 1);
+      state.clusters.push(hit.cluster);
+    }
     drag = {
       cluster: hit.cluster,
       grabDX: w.x / CELL - hit.cluster.gx, grabDY: w.y / CELL - hit.cluster.gy,
       moved: false, group: null,
       sx: p.x, sy: p.y, lastX: p.x, lastY: p.y, movedFar: false
     };
-    if (inSelection && selection.size > 1) {
+    if (inSelection && selection.size > 1 && !mpInRoom()) {
       // 範囲選択のグループドラッグ: 選択全塊の相対オフセットを掴んだ塊基準で保持する
+      // (協力中は複数塊の移動は無効で、掴んだ塊だけの単一移動になる。§1/M4)
       drag.group = Array.from(selection).map(function (c) {
         return { cluster: c, offX: c.gx - hit.cluster.gx, offY: c.gy - hit.cluster.gy };
       });
@@ -3880,6 +3912,7 @@ stage.addEventListener('contextmenu', function (ev) { ev.preventDefault(); }); /
 
 /* ドラッグの確定処理 (離したとき & ピンチへ切り替えるとき共通) */
 function settleDrag() {
+  if (mpInRoom()) { mpSettleDrag(); return; } // 協力中は seq 確定経路へ (確定はイベント適用時)
   var cl = drag.cluster;
   var group = drag.group;
   var wasMoved = drag.moved;
@@ -4026,7 +4059,17 @@ function onClear() {
     clearedAt: new Date().toISOString(),
     author: state.author || null
   };
-  if (prev) store.records[store.records.indexOf(prev)] = rec; else store.records.push(rec);
+  /* 協力プレイ (§5): 記録はホストだけが通常ルールで保存し、coop 情報を付ける。
+   * ゲストは記録・報酬・コレクション解放を一切書かない */
+  var mpGuestClear = mpInRoom() && !mpIsHost();
+  if (mpInRoom() && mpIsHost()) {
+    rec.coop = true;
+    rec.players = Math.max(2, mp.peers.length || 2);
+    rec.contributions = mpContribRecord();
+  }
+  if (!mpGuestClear) {
+    if (prev) store.records[store.records.indexOf(prev)] = rec; else store.records.push(rec);
+  }
   persistProgress();
   runConfetti();
   // 記録証 (C案): 額装した完成盤面 + 記録2行 + 「完成図を見ずにクリア」バッジ
@@ -4044,7 +4087,7 @@ function onClear() {
     boardHost.appendChild(cv);
   });
   // クリア報酬: ステージ初クリアでランダム抽選 1 点 (+ フレーム解放判定)
-  var grants = processRewardsOnClear(isFirstStageClear);
+  var grants = mpGuestClear ? [] : processRewardsOnClear(isFirstStageClear);
   if (grants.length) {
     $('resultRewardItems').innerHTML = grants.map(function (id) {
       var it = collectibleById(id);
@@ -4061,6 +4104,7 @@ function onClear() {
   }
   $('resultModal').hidden = false;
   navPush('result');
+  mpFillResultExtras(mpGuestClear); // 協力プレイ時の貢献度と注記 (ソロでは隠したまま)
 }
 /* ---------- クリア結果の共有 (文字 / 画像) ---------- */
 function flashShareBtn(text) {
@@ -6214,6 +6258,7 @@ function goToStartScreen() {
   withScreenFade(goToStartScreenNow);
 }
 function goToStartScreenNow() {
+  if (mpInRoom()) { mpLeaveRoom(); return; } // 協力中はまず部屋を出てからスタート画面へ (§5)
   carry = null; // 画面を離れたら運び中は解除する (配置はせず、その場の座標のまま)
   if (state) persistProgress();
   bgmEnterTitle(); // 一度流れ始めた BGM はトップでも止めない (id 19 改訂: 中身は no-op)
@@ -6292,6 +6337,7 @@ function navCloseLayer(name) {
     else goToStartScreen();
   }
   else if (name === 'wall') hideWall();
+  else if (name === 'mp') mpCloseModalFromNav();
   else if (name === 'framePicker') closeFramePicker();
   else if (name === 'paperPicker') closePaperPicker();
   else if (name === 'play') goToStartScreen();
@@ -6762,11 +6808,13 @@ function timerRunning() {
   return !!(state && state.started && !state.paused && !state.cleared);
 }
 function pauseTimer() {
+  if (mpInRoom()) return; // 協力中は共有タイマーを止めない (MULTIPLAYER_DESIGN §3.9)
   if (!timerRunning()) return;
   state.elapsedBase = currentElapsed();
   state.paused = true;
 }
 function resumeTimer() {
+  if (mpInRoom()) return; // 協力中は共有タイマーを止めない (pauseTimer と対)
   if (!state || !state.paused || state.cleared) return;
   state.paused = false;
   state.timerStart = Date.now();
@@ -6962,6 +7010,7 @@ function closeCredits() { $('creditsModal').hidden = true; }
 
 /* ---------- やりなおす (進行を消して未開始の箱に戻る) ---------- */
 function restartPuzzle() {
+  if (mpInRoom()) { showToast('協力プレイ中は「やりなおす」は使えません'); return; }
   withScreenFade(function () {
     navGoHome(); // どの画面からでも未開封の箱 (スタート画面) に戻る遷移
     if (store.progress[playDate]) delete store.progress[playDate][difficulty];
@@ -7491,6 +7540,1015 @@ function renderStartScreen() {
   updateWallPreview();
 }
 
+/* ================= 協力プレイ (マルチ) =================
+ * 設計: MULTIPLAYER_DESIGN.md v3。通信・同期エンジンは mp.js
+ * (window.JigsawMP) が担い、ここは画面とゲーム本体への接続 (hooks 実装)。
+ * ソロのコードパスには触らず、部屋にいる間だけ分岐する薄い層に徹する:
+ * - 自分の drop / sort は即時適用せず、ホストの seq 確定イベントで適用する
+ * - persistProgress は部屋中ずっと無動作 (ソロの進行中セーブと分離、§5)
+ * - 記録と報酬はホストだけ (onClear 内の分岐、§5) */
+var MP_LOGIC_VERSION = 1; // scatter / merge / sort の振る舞いが変わるたびに上げる (§3.7)
+var MP_COLORS = ['#d9532b', '#2470c9', '#2f9e5f', '#8b46c7'];
+var MP_COLOR_NAMES = ['あか', 'あお', 'みどり', 'むらさき'];
+var mp = {
+  session: null, role: null, code: null, manual: false,
+  begun: false, started: false, loading: false,
+  stage: null, pieces: null, startedAt: 0,
+  lobbyStage: null, lobbyPieces: null, lobbyInfo: null, lobbyStatus: '',
+  peers: [], verifyCode: null,
+  myLeases: {},          // anchorId -> epoch (自分に付与されたリース)
+  grabHome: {},          // anchorId -> {gx, gy} (掴む前の位置。却下時の復帰用)
+  pendingGrabAnchor: null, lastDropAnchor: null,
+  pendingDrop: null,     // epoch 未確定のまま離した drop {cluster, x, y}
+  pendingRelease: {},    // anchorId -> true (epoch 未確定のまま離した tap)
+  contrib: {},           // playerId -> その人の drop で接続したピース数 (§3.9)
+  completeSent: false, clearShown: false,
+  cursors: {},           // playerId -> {x, y, holding, at} (セル座標)
+  movesEph: {},          // playerId -> {cluster, x, y, at} (ドラッグ中ゴースト)
+  pins: [],              // {x, y, color, until}
+  pinMode: false,
+  queuedEvents: [],      // 画像ロード中に届いた確定イベント [ev, meta]
+  pendingSnap: null, lastSnapSeq: 0,
+  prevDifficulty: null
+};
+function mpInRoom() { return !!mp.session; }
+function mpIsHost() { return mp.role === 'host'; }
+function mpMyId() {
+  if (!mp.session) return null;
+  return mp.session.playerId || (mp.role === 'host' ? 'host' : null);
+}
+function mpClusterByAnchor(anchorId) {
+  if (!state) return null;
+  for (var i = 0; i < state.clusters.length; i++)
+    if (clusterAnchorId(state.clusters[i]) === anchorId) return state.clusters[i];
+  return null;
+}
+function mpColorOf(playerId) {
+  var list = mp.peers || [];
+  for (var i = 0; i < list.length; i++) if (list[i].playerId === playerId) return list[i].color;
+  if (playerId === 'host') return 0;
+  var m = /^g(\d+)$/.exec(playerId || '');
+  return m ? Number(m[1]) : 1;
+}
+function mpPlayerName(playerId, peer) {
+  var isHost = peer ? !!peer.isHost : playerId === 'host';
+  if (isHost) return 'ホスト';
+  var c = peer ? peer.color : mpColorOf(playerId);
+  return 'ゲスト（' + (MP_COLOR_NAMES[c] || '') + '）';
+}
+function mpPeerList() {
+  if (mp.peers && mp.peers.length) return mp.peers;
+  if (mp.manual && mp.session) { // 手動方式は onPeers が来ないので固定2人で合成する
+    return [
+      { playerId: 'host', color: 0, isHost: true, connected: true },
+      { playerId: 'g1', color: 1, isHost: false, connected: true }
+    ];
+  }
+  if (mp.session) {
+    var me = mpMyId();
+    return [{ playerId: me, color: mpIsHost() ? 0 : 1, isHost: mpIsHost(), connected: true }];
+  }
+  return [];
+}
+var mpPoolFpCache = null;
+function mpPoolFingerprint() {
+  if (mpPoolFpCache) return mpPoolFpCache;
+  var pool = state && state.pool;
+  if (!pool) return '0';
+  var entries = poolEntries(pool);
+  var keys = entries.map(function (e) { return poolEntryKey(e); }).join(',');
+  mpPoolFpCache = entries.length + ':' + hashSeed(keys);
+  return mpPoolFpCache;
+}
+
+/* ---------- hooks (mp.js エンジンとの契約) ---------- */
+var mpHooksObj = {
+  getClusters: function () {
+    if (!state) return [];
+    return state.clusters.map(function (c) {
+      return { anchorId: clusterAnchorId(c), pieces: c.pieces.slice(), gx: c.gx, gy: c.gy };
+    });
+  },
+  clusterExists: function (anchorId) { return !!mpClusterByAnchor(anchorId); },
+  applyEvent: function (ev, meta) { mpApplyEvent(ev, meta); },
+  getSnapshot: function () {
+    return {
+      clusters: mpHooksObj.getClusters(),
+      stage: mp.stage, pieces: mp.pieces, startedAt: mp.startedAt,
+      elapsedSec: state ? currentElapsed() : 0,
+      moves: state ? state.moves : 0,
+      contrib: mp.contrib,
+      cleared: !!(state && state.cleared)
+    };
+  },
+  applySnapshot: function (snap) { mpApplySnapshot(snap); },
+  hashState: function (clusters) { return canonicalStateHash(clusters); },
+  deskBounds: function () {
+    if (!state) return { x0: -1e6, y0: -1e6, x1: 1e6, y1: 1e6 };
+    var r = deskRect(); // PureLogic の deskBounds は {x0, y0, w, h} なので x1/y1 へ変換する
+    return { x0: r.x0, y0: r.y0, x1: r.x0 + r.w, y1: r.y0 + r.h };
+  },
+  logicVersion: MP_LOGIC_VERSION,
+  poolFingerprint: function () { return mpPoolFingerprint(); }
+  /* allPieceIds は mpSyncPieceIdsHook が付け外しする (下記) */
+};
+/* snapshot のピース集合検証 (エンジン側) は「部屋のお題のピース数」が
+ * 分かっている時だけ意味がある。途中参加のゲストは最初の snapshot を
+ * 受けるまでピース数を知らないので、その間だけ検証フックを外す
+ * (最初の1回だけ未検証で受け、以降は検証ありに戻る) */
+function mpSyncPieceIdsHook() {
+  if (mp.pieces) {
+    mpHooksObj.allPieceIds = function () {
+      var ids = [];
+      for (var i = 0; i < mp.pieces; i++) ids.push(i);
+      return ids;
+    };
+  } else {
+    delete mpHooksObj.allPieceIds;
+  }
+}
+
+/* ---------- callbacks (mp.js セッションからの通知) ---------- */
+function mpCallbacks() {
+  return {
+    onStatus: mpOnStatus,
+    onPeers: function (peers) {
+      mp.peers = peers;
+      mpRenderRoster();
+      mpRenderHostControls();
+      mpUpdateBadge();
+      mpBroadcastLobbyInfo();
+    },
+    onVerifyCode: function (code) { mp.verifyCode = code; mpRenderLobbyBits(); },
+    onReject: mpOnReject,
+    onEvent: function (ev, meta) {
+      if (ev.t === 'snapshot-applied') {
+        mp.lastSnapSeq = meta.seq || mp.lastSnapSeq;
+        mpFlushQueue();
+      }
+    },
+    onEphemeral: mpOnEphemeral,
+    onError: function () { showToast('接続で問題が起きました'); },
+    onPeerLost: function () {
+      showToast('相手との接続が切れました');
+      mpRenderRoster(); mpUpdateBadge();
+    }
+  };
+}
+function mpOnStatus(status, info) {
+  if (info && info.code) mp.code = info.code;
+  if (status === 'signaling') mpSetLobbyStatus('接続しています…');
+  else if (status === 'waiting') mpSetLobbyStatus('部屋ができました。相手の参加を待っています');
+  else if (status === 'connecting') mpSetLobbyStatus('相手と接続しています…');
+  else if (status === 'open') {
+    mpSetLobbyStatus('準備ができました');
+    if (mp.manual) mpShowLobby();
+    mpRenderRoster(); mpRenderHostControls(); mpUpdateBadge();
+  } else if (status === 'failed') {
+    var reason = info && info.reason;
+    var msg = reason === 'version'
+      ? 'ゲームのバージョンが違うため参加できませんでした。ページを再読み込みしてから試してください'
+      : '直結できませんでした。同じ Wi-Fi につなぐか、回線を変えて試してください';
+    mpSetLobbyStatus(msg);
+    showToast(msg);
+  } else if (status === 'room-ended') {
+    showToast('ホストが部屋を閉じました');
+    mpLeaveRoom();
+    return;
+  }
+  mpRenderLobbyBits();
+}
+function mpOnReject(rej) {
+  if (!rej) return;
+  if (rej.evType === 'grab-req') {
+    var anchor = mp.pendingGrabAnchor;
+    mp.pendingGrabAnchor = null;
+    if (anchor != null) {
+      if (drag && clusterAnchorId(drag.cluster) === anchor) {
+        var home = mp.grabHome[anchor];
+        if (home) { drag.cluster.gx = home.gx; drag.cluster.gy = home.gy; }
+        drag = null; stopEdgeScroll();
+      }
+      if (mp.pendingDrop && mp.pendingDrop.cluster === anchor) {
+        mp.pendingDrop = null;
+        var cl = mpClusterByAnchor(anchor), h2 = mp.grabHome[anchor];
+        if (cl && h2) { cl.gx = h2.gx; cl.gy = h2.gy; }
+      }
+      delete mp.pendingRelease[anchor];
+      draw();
+    }
+    if (rej.reason === 'leased') showToast('そのピースは相手が持っています');
+  } else if (rej.evType === 'drop') {
+    var a2 = mp.lastDropAnchor;
+    mp.lastDropAnchor = null;
+    if (a2 != null) {
+      var c2 = mpClusterByAnchor(a2), hh = mp.grabHome[a2];
+      if (c2 && hh) { c2.gx = hh.gx; c2.gy = hh.gy; draw(); }
+    }
+    showToast('置けませんでした');
+  } else if (rej.evType === 'sort') {
+    showToast('並べ替えを反映できませんでした');
+    if (mp.session && mp.session.engine) mp.session.engine.requestSnapshot();
+  }
+}
+function mpOnEphemeral(kind, data, from) {
+  if (kind === 'cursor' && data) {
+    mp.cursors[from] = { x: data.x, y: data.y, holding: data.holding, at: Date.now() };
+    if (state && state.phase === 'play' && !uiHome) requestDraw();
+  } else if (kind === 'move' && data) {
+    mp.movesEph[from] = { cluster: data.cluster, x: data.x, y: data.y, at: Date.now() };
+    if (state && state.phase === 'play' && !uiHome) requestDraw();
+  } else if (kind === 'ping' && data) {
+    mp.pins.push({ x: data.x, y: data.y, color: MP_COLORS[mpColorOf(from)] || '#999', until: Date.now() + 2000 });
+    if (state && state.phase === 'play' && !uiHome) draw();
+  } else if (kind === 'lobby' && data) {
+    if (!mpIsHost()) { mp.lobbyInfo = data; mpRenderLobbyPuzzle(); }
+  }
+}
+
+/* ---------- セッションの開始/終了 ---------- */
+function mpStartSession(session, role, opts) {
+  mp.session = session;
+  mp.role = role;
+  mp.manual = !!(opts && opts.manual);
+  mp.code = session.code || mp.code;
+  mp.peers = [];
+  mp.verifyCode = null;
+  mp.contrib = {};
+  mp.myLeases = {};
+  mp.begun = false; mp.started = false; mp.clearShown = false; mp.completeSent = false;
+  if (!mp.manual) mpShowLobby();
+}
+function mpResetState() {
+  mp.session = null; mp.role = null; mp.code = null; mp.manual = false;
+  mp.begun = false; mp.started = false; mp.loading = false;
+  mp.peers = []; mp.verifyCode = null; mp.contrib = {}; mp.myLeases = {};
+  mp.pendingDrop = null; mp.pendingRelease = {}; mp.pendingSnap = null; mp.queuedEvents = [];
+  mp.cursors = {}; mp.movesEph = {}; mp.pins = []; mp.pinMode = false;
+  mp.stage = null; mp.pieces = null; mp.lobbyInfo = null;
+  mp.clearShown = false; mp.completeSent = false; mp.pendingGrabAnchor = null; mp.lastDropAnchor = null;
+  mpSyncPieceIdsHook();
+  $('mpPinBtn').classList.remove('active');
+}
+function mpLeaveRoom() {
+  var pool = state && state.pool;
+  if (mp.session) { try { mp.session.leave(); } catch (e) { /* ignore */ } }
+  mpResetState();
+  $('mpModal').hidden = true;
+  $('mpBadge').hidden = true;
+  $('mpPinBtn').hidden = true;
+  $('mpWaitVeil').hidden = true;
+  if (pool) {
+    navGoHome();
+    uiHome = true; uiCollection = false;
+    if (mp.prevDifficulty != null) { difficulty = mp.prevDifficulty; mp.prevDifficulty = null; }
+    startGame(pool);
+    applyVisibility();
+  }
+}
+function mpCloseModalFromNav() {
+  $('mpModal').hidden = true;
+  if (mp.session && !mp.started) mpLeaveRoom(); // ロビー段階で閉じたら部屋も出る
+}
+
+/* ---------- 入口シート / ロビー ---------- */
+function mpShowHome() {
+  mpHideHomeError();
+  if (state && state.pool) {
+    if (mp.lobbyStage == null) mp.lobbyStage = nextStage(store.records, state.pool);
+    if (mp.lobbyPieces == null) mp.lobbyPieces = difficulty;
+  }
+  $('mpHomeView').hidden = false;
+  $('mpManualView').hidden = true;
+  $('mpLobbyView').hidden = true;
+}
+function mpHomeError(msg) {
+  var el = $('mpHomeError');
+  el.textContent = msg;
+  el.hidden = false;
+}
+function mpHideHomeError() { $('mpHomeError').hidden = true; }
+function mpShowLobby() {
+  $('mpHomeView').hidden = true;
+  $('mpManualView').hidden = true;
+  $('mpLobbyView').hidden = false;
+  mpRenderLobby();
+}
+function mpRenderLobby() {
+  $('mpRoomCode').textContent = mp.manual ? '手動' : (mp.code || '------');
+  $('mpCopyCodeBtn').disabled = !mp.code;
+  $('mpShareCodeBtn').disabled = !mp.code;
+  if (mp.lobbyStatus) $('mpLobbyStatus').textContent = mp.lobbyStatus;
+  mpRenderLobbyBits();
+  mpRenderRoster();
+  mpRenderHostControls();
+  mpRenderLobbyPuzzle();
+}
+function mpRenderLobbyBits() {
+  $('mpVerifyCode').textContent = mp.verifyCode || '';
+  $('mpVerifyRow').hidden = !mp.verifyCode; // 照合コードは最初のゲストがつながるまで出さない
+}
+function mpSetLobbyStatus(t) {
+  mp.lobbyStatus = t;
+  if (!$('mpLobbyView').hidden) $('mpLobbyStatus').textContent = t;
+}
+function mpRenderRoster() {
+  var ul = $('mpRoster');
+  if (!ul || $('mpLobbyView').hidden) return;
+  ul.innerHTML = '';
+  mpPeerList().forEach(function (p) {
+    var li = document.createElement('li');
+    var dot = document.createElement('span');
+    dot.className = 'mp-dot';
+    dot.style.background = MP_COLORS[p.color] || '#999';
+    var name = document.createElement('span');
+    name.textContent = mpPlayerName(p.playerId, p);
+    var st = document.createElement('span');
+    st.className = 'mp-peer-state';
+    st.textContent = p.playerId === mpMyId() ? 'あなた'
+      : !p.connected ? '待機中'
+      : mp.started ? '準備完了' : '接続中';
+    li.appendChild(dot); li.appendChild(name); li.appendChild(st);
+    ul.appendChild(li);
+  });
+}
+function mpRenderHostControls() {
+  if ($('mpLobbyView').hidden) return;
+  var isHost = mpIsHost();
+  $('mpHostControls').hidden = !isHost;
+  $('mpHostStage').hidden = !isHost;
+  $('mpStartBlock').hidden = !isHost;
+  $('mpGuestWait').hidden = isHost;
+  if (!isHost || !state || !state.pool) return;
+  var sel = $('mpStageSel');
+  var cur = nextStage(store.records, state.pool);
+  var seen = {}, clearedStages = [];
+  store.records.forEach(function (r) {
+    var s = recordStage(r, state.pool);
+    if (!seen[s]) { seen[s] = 1; clearedStages.push(s); }
+  });
+  clearedStages.sort(function (a, b) { return a - b; });
+  sel.innerHTML = '';
+  var opt = document.createElement('option');
+  opt.value = cur;
+  opt.textContent = 'ステージ ' + cur + '（現在のステージ）';
+  sel.appendChild(opt);
+  clearedStages.forEach(function (s) {
+    if (s === cur) return;
+    var o = document.createElement('option');
+    o.value = s;
+    o.textContent = 'ステージ ' + s + '（再戦）';
+    sel.appendChild(o);
+  });
+  if (mp.lobbyStage == null) mp.lobbyStage = cur;
+  sel.value = String(mp.lobbyStage);
+  if (sel.value !== String(mp.lobbyStage)) { mp.lobbyStage = cur; sel.value = String(cur); }
+  var seg = $('mpDiffSeg');
+  seg.innerHTML = '';
+  DIFFICULTIES.forEach(function (d) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'diff-chip' + (d === mp.lobbyPieces ? ' active' : '');
+    var num = document.createElement('span');
+    num.className = 'diff-num';
+    num.textContent = d + 'ピース';
+    b.appendChild(num);
+    b.addEventListener('click', function () {
+      mp.lobbyPieces = d;
+      mpRenderHostControls();
+      mpRenderLobbyPuzzle();
+      mpBroadcastLobbyInfo();
+    });
+    seg.appendChild(b);
+  });
+  var anyGuest = mpPeerList().some(function (p) { return !p.isHost && p.connected; });
+  $('mpStartBtn').disabled = !anyGuest;
+  $('mpStartHint').hidden = anyGuest; // 押せない理由はボタンの直上に (ゲストが入ったら消える)
+}
+function mpRenderLobbyPuzzle() {
+  if ($('mpLobbyView').hidden) return;
+  var stage = mpIsHost() ? mp.lobbyStage : (mp.lobbyInfo ? mp.lobbyInfo.stage : null);
+  var pieces = mpIsHost() ? mp.lobbyPieces : (mp.lobbyInfo ? mp.lobbyInfo.pieces : null);
+  var img = $('mpLobbyImg'), line = $('mpLobbyPuzzle');
+  var wrap = $('mpLobbyImgWrap'), ph = $('mpLobbyImgPh');
+  line.hidden = mpIsHost(); // ホスト側はステージ選択とピース数チップと重複するので出さない
+  if (!stage || !pieces || !state || !state.pool) {
+    wrap.hidden = true;
+    line.textContent = mpIsHost() ? '' : 'お題はホストが選んでいます';
+    return;
+  }
+  var entry = stageEntry(stage, state.pool);
+  var url = entryPhotoUrl(entry, 400);
+  if (url) {
+    wrap.hidden = false;
+    if (img.dataset.url !== url) { // 新しいお題: 読み込み中プレースホルダから始める
+      img.dataset.url = url;
+      img.hidden = true;
+      ph.textContent = '読み込み中…';
+      ph.hidden = false;
+      img.src = url;
+    }
+  } else { wrap.hidden = true; }
+  line.textContent = 'ステージ ' + stage + ' ・ ' + pieces + 'ピース';
+}
+function mpBroadcastLobbyInfo() {
+  if (!mpIsHost() || !mp.session) return;
+  mp.session.sendEphemeral('lobby', { stage: mp.lobbyStage, pieces: mp.lobbyPieces });
+}
+function mpCreateRoom() {
+  if (!window.JigsawMP) { mpHomeError('マルチプレイを読み込めませんでした'); return; }
+  mpHideHomeError();
+  mpStartSession(window.JigsawMP.createRoom(mpHooksObj, mpCallbacks(), {}), 'host');
+}
+function mpJoinRoom() {
+  if (!window.JigsawMP) { mpHomeError('マルチプレイを読み込めませんでした'); return; }
+  var code = $('mpJoinCode').value.trim();
+  if (!code) { mpHomeError('部屋コードを入力してください'); return; }
+  mpHideHomeError();
+  mpStartSession(window.JigsawMP.joinRoom(code, mpHooksObj, mpCallbacks(), {}), 'guest');
+}
+/* 手動コード (仲介B、2人専用) */
+function mpManualHostStart() {
+  if (mp.session || !window.JigsawMP) return;
+  var s = window.JigsawMP.manualHost(mpHooksObj, mpCallbacks(), {});
+  mpStartSession(s, 'host', { manual: true });
+  $('mpManualStatus').textContent = '接続コードを作っています…';
+  s.getOfferCode().then(function (code) {
+    $('mpManualOfferCode').hidden = false;
+    $('mpManualOfferCode').value = code;
+    $('mpManualAnswerInput').hidden = false;
+    $('mpManualAcceptBtn').hidden = false;
+    $('mpManualStatus').textContent = '接続コードを相手に送り、返ってきた回答コードを貼ってください';
+  }).catch(function () { $('mpManualStatus').textContent = '接続コードを作れませんでした'; });
+}
+function mpManualAccept() {
+  var s = mp.session;
+  if (!s || !s.acceptAnswer) return;
+  var code = $('mpManualAnswerInput').value.trim();
+  if (!code) return;
+  s.acceptAnswer(code).then(function () {
+    $('mpManualStatus').textContent = '接続しています…';
+  }).catch(function () { $('mpManualStatus').textContent = '回答コードを読めませんでした'; });
+}
+function mpManualGuestStart() {
+  if (mp.session || !window.JigsawMP) return;
+  var code = $('mpManualOfferInput').value.trim();
+  if (!code) { $('mpManualStatus').textContent = 'ホストの接続コードを貼ってください'; return; }
+  var s = window.JigsawMP.manualGuest(mpHooksObj, mpCallbacks(), {});
+  mpStartSession(s, 'guest', { manual: true });
+  $('mpManualStatus').textContent = '回答コードを作っています…';
+  s.acceptOffer(code).then(function (answer) {
+    $('mpManualAnswerCode').hidden = false;
+    $('mpManualAnswerCode').value = answer;
+    $('mpManualStatus').textContent = '回答コードをホストに送ってください。つながるとロビーに移ります';
+  }).catch(function () {
+    $('mpManualStatus').textContent = 'コードを読めませんでした。貼り間違いがないか確認してください';
+    if (mp.session) { try { mp.session.leave(); } catch (e) { /* ignore */ } }
+    mpResetState();
+  });
+}
+
+/* ---------- お題の読み込みと ready バリア ---------- */
+function mpLoadPuzzle(stage, pieces) {
+  mp.loading = true;
+  mpSyncPieceIdsHook();
+  if (mp.prevDifficulty == null) mp.prevDifficulty = difficulty;
+  difficulty = pieces;
+  playStage = stage;
+  playDate = stageDate(stage);
+  replayStage = null;
+  var pool = state.pool;
+  var entry = stageEntry(stage, pool);
+  state = {
+    pool: pool, stage: stage, entry: entry,
+    imageKey: poolEntryKey(entry),
+    imageId: entry && entry.type === 'picsum' ? entry.id : null,
+    author: null, authorUrl: null,
+    n: Math.round(Math.sqrt(pieces)),
+    edges: generateEdges(playDate, pieces),
+    phase: 'play', gameStarted: true, opening: false,
+    clusters: initialScatter(playDate, pieces),
+    elapsedBase: 0, moves: 0, previewViewed: false, previewCount: 0,
+    mergeFlash: null, cleared: false,
+    started: false, paused: false, timerStart: 0,
+    views: { desk: null },
+    bitmaps: new Map(), bitmapFailures: new Map(),
+    srcCanvas: null, boardPx: 0, resumed: false, usedFallback: false
+  };
+  selection.clear();
+  cancelPressAndRect();
+  if (carryMode) setCarryMode(false); // 協力中は持ち運び無効 (§1)
+  $('mpModal').hidden = true;
+  if (navTop() === 'mp') navSilentPop('mp');
+  $('resultModal').hidden = true;
+  if (navTop() === 'result') navSilentPop('result');
+  uiHome = false; uiCollection = false;
+  navPush('play');
+  applyVisibility();
+  $('loadingOverlay').style.display = 'flex';
+  $('mpWaitVeil').hidden = false;
+  $('mpWaitText').textContent = 'みんなの準備を待っています…';
+  mpUpdateBadge();
+  loadSourceImage().then(function (res) {
+    if (!mpInRoom() || !state) return; // 途中で部屋を出ていたら破棄する
+    state.usedFallback = res.fallback;
+    var boardPx = imageSizeFor(difficulty);
+    var cv = document.createElement('canvas');
+    cv.width = boardPx; cv.height = boardPx;
+    var sw = res.img.width || res.img.naturalWidth, sh = res.img.height || res.img.naturalHeight;
+    var side = Math.min(sw, sh);
+    cv.getContext('2d').drawImage(res.img, (sw - side) / 2, (sh - side) / 2, side, side, 0, 0, boardPx, boardPx);
+    state.srcCanvas = cv;
+    state.boardPx = boardPx;
+    state.bitmaps.clear();
+    state.bitmapFailures.clear();
+    $('fallbackNote').hidden = !res.fallback;
+    $('loadingOverlay').style.display = 'none';
+    fitViews();
+    updateSurfaceUI();
+    updateProgressUI();
+    draw();
+    bgmTryPlay();
+    mp.loading = false;
+    if (mp.session) mp.session.setReady();
+    if (mp.pendingSnap) {
+      var snap = mp.pendingSnap;
+      mp.pendingSnap = null;
+      mpDoApplySnapshot(snap);
+    }
+    mpFlushQueue();
+  });
+  fetchCredit();
+}
+function mpOnBegin() {
+  mp.begun = true;
+  $('mpWaitVeil').hidden = true;
+  if (state && !state.cleared) {
+    state.elapsedBase = Math.max(0, (Date.now() - (mp.startedAt || Date.now())) / 1000);
+    state.started = true;
+    state.paused = false;
+    state.timerStart = Date.now();
+  }
+  mpUpdateBadge();
+  draw();
+}
+
+/* ---------- 確定イベントの適用 (hooks.applyEvent) ---------- */
+function mpApplyEvent(ev, meta) {
+  if (mp.loading && ev.t !== 'start' && ev.t !== 'next') {
+    mp.queuedEvents.push([ev, meta]);
+    return;
+  }
+  mpApplyEventNow(ev, meta);
+}
+function mpFlushQueue() {
+  if (!mp.queuedEvents.length) return;
+  var q = mp.queuedEvents;
+  mp.queuedEvents = [];
+  q.forEach(function (pair) {
+    if (pair[1] && typeof pair[1].seq === 'number' && pair[1].seq <= mp.lastSnapSeq) return; // snapshot に含まれる分は捨てる
+    mpApplyEventNow(pair[0], pair[1]);
+  });
+}
+function mpApplyEventNow(ev, meta) {
+  switch (ev.t) {
+    case 'start': case 'next': mpOnStartEvent(ev); break;
+    case 'begin': mpOnBegin(); break;
+    case 'grab': mpOnGrab(ev); break;
+    case 'release': case 'lease-expire': mpOnRelease(ev); break;
+    case 'drop': mpOnDrop(ev); break;
+    case 'sort': mpOnSort(ev); break;
+    case 'complete': mpOnComplete(); break;
+  }
+}
+function mpOnStartEvent(ev) {
+  mp.stage = ev.stage;
+  mp.pieces = ev.pieces;
+  mp.startedAt = ev.startedAt || Date.now();
+  mp.started = true;
+  mp.begun = false;
+  mp.completeSent = false;
+  mp.clearShown = false;
+  mp.contrib = {};
+  mp.myLeases = {};
+  mp.pendingDrop = null;
+  mp.pendingRelease = {};
+  mp.cursors = {};
+  mp.movesEph = {};
+  mp.pins = [];
+  mpLoadPuzzle(ev.stage, ev.pieces);
+}
+function mpOnGrab(ev) {
+  if (ev.from === mpMyId()) {
+    mp.myLeases[ev.cluster] = ev.epoch;
+    if (mp.pendingDrop && mp.pendingDrop.cluster === ev.cluster) {
+      var pd = mp.pendingDrop;
+      mp.pendingDrop = null;
+      mp.lastDropAnchor = pd.cluster;
+      mp.session.sendEvent({ t: 'drop', cluster: pd.cluster, x: pd.x, y: pd.y, epoch: ev.epoch });
+    } else if (mp.pendingRelease[ev.cluster]) {
+      delete mp.pendingRelease[ev.cluster];
+      mp.session.sendEvent({ t: 'release', cluster: ev.cluster, epoch: ev.epoch });
+    }
+  }
+  draw();
+}
+function mpOnRelease(ev) {
+  var mine = ev.from === mpMyId() || ev.by === mpMyId();
+  if (mine) {
+    delete mp.myLeases[ev.cluster];
+    if (ev.t === 'lease-expire' && drag && clusterAnchorId(drag.cluster) === ev.cluster) {
+      var home = mp.grabHome[ev.cluster];
+      if (home) { drag.cluster.gx = home.gx; drag.cluster.gy = home.gy; }
+      drag = null;
+      stopEdgeScroll();
+      showToast('長く持ちすぎたのでピースを置きました');
+    }
+  }
+  draw();
+}
+function mpLeaseBlocked(cl) {
+  if (!mp.session || !mp.session.engine) return false;
+  var lease = mp.session.engine.getLease(clusterAnchorId(cl));
+  return !!lease && lease.holder !== mpMyId();
+}
+function mpOnDrop(ev) {
+  var cl = mpClusterByAnchor(ev.cluster);
+  if (!cl) throw new Error('mp: drop 先の塊がありません');
+  var before = cl.pieces.length;
+  var engine = mp.session && mp.session.engine;
+  var others = state.clusters.filter(function (c) {
+    if (c === cl) return false;
+    // リース中の塊は合体先に含めない (§3.5)。全端末で同じ others になる
+    return !(engine && engine.getLease(clusterAnchorId(c)));
+  });
+  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: ev.x, gy: ev.y }, state.n);
+  state.clusters = res.clusters;
+  state.moves++;
+  if (res.merged) {
+    mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + (res.cluster.pieces.length - before);
+    startMergeFlash(res.cluster.pieces);
+    seMerge();
+  }
+  seDrop();
+  pruneSelection();
+  updateProgressUI();
+  draw();
+  mpCheckComplete();
+}
+function mpOnSort(ev) {
+  (ev.moves || []).forEach(function (m) {
+    var cl = mpClusterByAnchor(m.cluster);
+    if (cl) { cl.gx = m.x; cl.gy = m.y; }
+  });
+  if (Array.isArray(ev.order) && ev.order.length === state.clusters.length) {
+    var byAnchor = {};
+    state.clusters.forEach(function (c) { byAnchor[clusterAnchorId(c)] = c; });
+    var ordered = ev.order.map(function (a) { return byAnchor[a]; }).filter(Boolean);
+    if (ordered.length === state.clusters.length) state.clusters = ordered;
+  }
+  updateProgressUI();
+  draw();
+}
+function mpCheckComplete() {
+  if (!state || state.cleared || mp.completeSent || !mp.session) return;
+  if (isComplete(state.clusters, state.n)) {
+    mp.completeSent = true;
+    mp.session.sendEvent({ t: 'complete' });
+  }
+}
+function mpOnComplete() {
+  if (!state || state.cleared || mp.clearShown) return;
+  mp.clearShown = true;
+  onClear();
+}
+
+/* ---------- snapshot (途中参加・復帰・不一致の回復) ---------- */
+function mpApplySnapshot(snap) {
+  if (!snap) return;
+  var needLoad = !mp.started || mp.loading || !state || !state.srcCanvas ||
+    mp.stage !== snap.stage || mp.pieces !== snap.pieces;
+  if (needLoad) {
+    mp.pendingSnap = snap;
+    if (snap.stage && snap.pieces) {
+      mp.stage = snap.stage;
+      mp.pieces = snap.pieces;
+      mp.startedAt = snap.startedAt || mp.startedAt || Date.now();
+      mp.started = true;
+      mpLoadPuzzle(snap.stage, snap.pieces);
+    }
+    return;
+  }
+  mpDoApplySnapshot(snap);
+}
+function mpDoApplySnapshot(snap) {
+  if (!state) return;
+  state.clusters = (snap.clusters || []).map(function (c) {
+    return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy };
+  });
+  if (typeof snap.elapsedSec === 'number') {
+    state.elapsedBase = snap.elapsedSec;
+    state.started = true;
+    state.paused = false;
+    state.timerStart = Date.now();
+  }
+  if (typeof snap.moves === 'number') state.moves = snap.moves;
+  if (snap.contrib) mp.contrib = snap.contrib;
+  mp.begun = true; // 進行中の部屋への合流なので ready バリアは通過済み扱い
+  $('mpWaitVeil').hidden = true;
+  selection.clear();
+  updateProgressUI();
+  draw();
+  if (snap.cleared && !mp.clearShown) {
+    state.cleared = true;
+    mp.clearShown = true;
+    onClear();
+  }
+}
+
+/* ---------- 自分の操作の送信 ---------- */
+/* settleDrag の協力分岐: 見た目はローカルで追随済み。確定は seq イベントで */
+function mpSettleDrag() {
+  if (!drag) return;
+  var cl = drag.cluster;
+  var wasMoved = drag.moved;
+  var anchor = clusterAnchorId(cl);
+  drag = null;
+  stopEdgeScroll();
+  if (!wasMoved) { mpReleaseMyLease(anchor); draw(); return; }
+  var epoch = mp.myLeases[anchor];
+  if (epoch != null) {
+    mp.lastDropAnchor = anchor;
+    mp.session.sendEvent({ t: 'drop', cluster: anchor, x: cl.gx, y: cl.gy, epoch: epoch });
+  } else {
+    mp.pendingDrop = { cluster: anchor, x: cl.gx, y: cl.gy };
+  }
+  draw();
+}
+function mpReleaseMyLease(anchor) {
+  var epoch = mp.myLeases[anchor];
+  if (epoch != null) {
+    mp.session.sendEvent({ t: 'release', cluster: anchor, epoch: epoch });
+  } else {
+    mp.pendingRelease[anchor] = true;
+  }
+}
+function mpSendSortEvent(items) {
+  if (!mp.session) return;
+  var moves = items.map(function (it) {
+    return { cluster: clusterAnchorId(it.cluster), x: it.toX, y: it.toY };
+  });
+  var order = state.clusters.map(function (c) { return clusterAnchorId(c); });
+  mp.session.sendEvent({ t: 'sort', moves: moves, order: order });
+}
+/* 掴んだ瞬間に grab 要求を送る (本体の pointerdown の後に動く自前リスナ) */
+stage.addEventListener('pointerdown', function () {
+  if (!mpInRoom() || !mp.begun) return;
+  if (drag && drag.cluster && !drag.mpGrabbed) {
+    drag.mpGrabbed = true;
+    var anchor = clusterAnchorId(drag.cluster);
+    mp.grabHome[anchor] = { gx: drag.cluster.gx, gy: drag.cluster.gy };
+    mp.pendingGrabAnchor = anchor;
+    mp.session.sendEvent({ t: 'grab-req', cluster: anchor });
+  }
+});
+/* カーソルとドラッグ中位置の ephemeral 送信 (間引きあり) */
+var mpLastCursorSent = 0, mpLastMoveSent = 0;
+stage.addEventListener('pointermove', function (ev) {
+  if (!mpInRoom() || !mp.begun || !state || state.phase !== 'play' || uiHome) return;
+  var now = Date.now();
+  if (now - mpLastCursorSent >= 120) {
+    mpLastCursorSent = now;
+    var p = stagePos(ev);
+    var w = screenToWorld(p.x, p.y);
+    mp.session.sendEphemeral('cursor', {
+      x: w.x / CELL, y: w.y / CELL,
+      holding: drag ? clusterAnchorId(drag.cluster) : null
+    });
+  }
+  if (drag && drag.moved && now - mpLastMoveSent >= 60) {
+    mpLastMoveSent = now;
+    mp.session.sendEphemeral('move', {
+      cluster: clusterAnchorId(drag.cluster), x: drag.cluster.gx, y: drag.cluster.gy
+    });
+  }
+});
+
+/* ---------- 合図ピン ---------- */
+function mpFirePin(p) {
+  mp.pinMode = false;
+  $('mpPinBtn').classList.remove('active');
+  if (!mp.session) return;
+  var w = screenToWorld(p.x, p.y);
+  var data = { x: w.x / CELL, y: w.y / CELL };
+  mp.session.sendEphemeral('ping', data);
+  mp.pins.push({
+    x: data.x, y: data.y,
+    color: MP_COLORS[mpColorOf(mpMyId())] || '#c9a227',
+    until: Date.now() + 2000
+  });
+  draw();
+}
+
+/* ---------- 描画の重ね合わせ (draw() の末尾から呼ばれる) ---------- */
+function mpDrawOverlays() {
+  if (!mpInRoom() || !state || !state.srcCanvas || !state.views.desk) return;
+  var v = view();
+  var n = state.n;
+  var now = Date.now();
+  var engine = mp.session.engine;
+  // 他人のリース中の塊: 相手色の枠
+  if (engine) {
+    engine.getLeases().forEach(function (L) {
+      if (L.holder === mpMyId()) return;
+      var cl = mpClusterByAnchor(L.cluster);
+      if (!cl) return;
+      var col = MP_COLORS[mpColorOf(L.holder)] || '#999';
+      var anchor = pieceHome(clusterAnchorId(cl), n);
+      cl.pieces.forEach(function (id) {
+        var home = pieceHome(id, n);
+        var wx = (cl.gx + (home.col - anchor.col)) * CELL, wy = (cl.gy + (home.row - anchor.row)) * CELL;
+        strokePiece(id, wx, wy, col, 3, hexToRgba(col, 0.14));
+      });
+    });
+  }
+  // 相手がドラッグ中のゴースト (move ephemeral の位置に半透明で)
+  var wTl = screenToWorld(0, 0), wBr = screenToWorld(stageW, stageH);
+  Object.keys(mp.movesEph).forEach(function (pid) {
+    var m = mp.movesEph[pid];
+    if (now - m.at > 1500) return;
+    var cl = mpClusterByAnchor(m.cluster);
+    if (!cl) return;
+    sctx.save();
+    sctx.globalAlpha = 0.45;
+    drawClusterOn(sctx, v, { pieces: cl.pieces, surface: 'desk', gx: m.x, gy: m.y }, wTl, wBr);
+    sctx.restore();
+  });
+  // 合図ピン (2秒で消える輪)
+  if (mp.pins.length) {
+    mp.pins = mp.pins.filter(function (pn) { return pn.until > now; });
+    mp.pins.forEach(function (pn) {
+      var remain = (pn.until - now) / 2000;
+      var sx = pn.x * CELL * v.scale + v.tx, sy = pn.y * CELL * v.scale + v.ty;
+      sctx.save();
+      sctx.globalAlpha = Math.max(0, remain);
+      sctx.strokeStyle = pn.color;
+      sctx.lineWidth = 3;
+      sctx.beginPath();
+      sctx.arc(sx, sy, 12 + (1 - remain) * 20, 0, Math.PI * 2);
+      sctx.stroke();
+      sctx.beginPath();
+      sctx.arc(sx, sy, 3.5, 0, Math.PI * 2);
+      sctx.fillStyle = pn.color;
+      sctx.fill();
+      sctx.restore();
+    });
+    if (mp.pins.length) requestDraw();
+  }
+  // 相手カーソル (相手色の丸)
+  Object.keys(mp.cursors).forEach(function (pid) {
+    var c = mp.cursors[pid];
+    if (now - c.at > 4000) return;
+    var col = MP_COLORS[mpColorOf(pid)] || '#999';
+    var sx = c.x * CELL * v.scale + v.tx, sy = c.y * CELL * v.scale + v.ty;
+    sctx.save();
+    sctx.beginPath();
+    sctx.arc(sx, sy, c.holding != null ? 10 : 8, 0, Math.PI * 2);
+    sctx.fillStyle = col;
+    sctx.fill();
+    sctx.lineWidth = 2;
+    sctx.strokeStyle = '#fff';
+    sctx.stroke();
+    sctx.restore();
+  });
+}
+
+/* ---------- 接続バッジ ---------- */
+function mpUpdateBadge() {
+  var badge = $('mpBadge');
+  if (!mpInRoom() || uiHome || !state || state.phase !== 'play') {
+    badge.hidden = true;
+    $('mpPinBtn').hidden = true;
+    return;
+  }
+  var list = mpPeerList();
+  var connected = list.filter(function (p) { return p.connected; }).length;
+  $('mpBadgeText').textContent = '協力プレイ ・ ' + Math.max(connected, list.length, 1) + '人' + (mp.begun ? '' : ' ・ 準備中');
+  badge.classList.toggle('off', !mp.begun);
+  badge.hidden = false;
+  $('mpPinBtn').hidden = !mp.begun;
+}
+
+/* ---------- クリア画面の協力表示 (onClear から呼ばれる) ---------- */
+function mpContribPlayers() {
+  return mpPeerList().map(function (p) {
+    return { id: p.playerId, color: p.color, name: mpPlayerName(p.playerId, p) };
+  });
+}
+function mpContribRecord() {
+  var out = {};
+  mpContribPlayers().forEach(function (p) { out[p.id] = mp.contrib[p.id] || 0; });
+  return out;
+}
+function mpFillResultExtras(guestClear) {
+  var box = $('resultContrib'), note = $('resultCoopNote'), acts = $('resultMpActions');
+  if (!mpInRoom()) { box.hidden = true; note.hidden = true; acts.hidden = true; return; }
+  var html = '<p class="cert-contrib-title">みんなの貢献</p><ul class="mp-roster">';
+  mpContribPlayers().forEach(function (p) {
+    html += '<li><span class="mp-dot" style="background:' + (MP_COLORS[p.color] || '#999') + '"></span><span>' +
+      escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
+      '<span class="mp-peer-state">' + (mp.contrib[p.id] || 0) + ' ピース接続</span></li>';
+  });
+  html += '</ul>';
+  box.innerHTML = html;
+  box.hidden = false;
+  note.hidden = false;
+  note.textContent = guestClear
+    ? '協力プレイ：このクリアはホストの記録になります。あなたの記録・ごほうびはありません'
+    : '協力プレイ：このクリアはあなたの記録になります';
+  acts.hidden = false;
+  $('resultNextBtn').hidden = !mpIsHost();
+  $('resultLeaveBtn').textContent = mpIsHost() ? '部屋を解散する' : '部屋を出る';
+}
+
+/* ---------- 配線 (この節の評価時に登録する。本体 wireControls とは独立) ---------- */
+$('mpBtn').addEventListener('click', function () {
+  if (!window.JigsawMP) { showToast('マルチプレイを読み込めませんでした'); return; }
+  mpShowHome();
+  $('mpModal').hidden = false;
+  navPush('mp');
+});
+document.querySelectorAll('[data-mp-close]').forEach(function (el) {
+  el.addEventListener('click', function () { navBack(); });
+});
+$('mpCreateBtn').addEventListener('click', mpCreateRoom);
+$('mpJoinBtn').addEventListener('click', mpJoinRoom);
+$('mpJoinCode').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') mpJoinRoom(); });
+$('mpManualBtn').addEventListener('click', function () {
+  $('mpHomeView').hidden = true;
+  $('mpLobbyView').hidden = true;
+  $('mpManualView').hidden = false;
+});
+$('mpManualBackBtn').addEventListener('click', function () {
+  if (mp.session) return; // 接続を始めた後はロビー/退出フローに任せる
+  $('mpManualView').hidden = true;
+  $('mpHomeView').hidden = false;
+});
+$('mpManualHostBtn').addEventListener('click', mpManualHostStart);
+$('mpManualGuestBtn').addEventListener('click', mpManualGuestStart);
+$('mpManualAcceptBtn').addEventListener('click', mpManualAccept);
+$('mpLeaveBtn').addEventListener('click', function () { navBack(); });
+$('mpCopyCodeBtn').addEventListener('click', function () {
+  if (!mp.code) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(mp.code).then(function () { showToast('部屋コードをコピーしました'); },
+      function () { showToast('部屋コード: ' + mp.code); });
+  } else showToast('部屋コード: ' + mp.code);
+});
+$('mpShareCodeBtn').addEventListener('click', function () {
+  if (!mp.code) return;
+  var text = 'まいにちジグソーで一緒に遊ぼう！ 部屋コード: ' + mp.code + ' https://daily-jigsaw.pages.dev';
+  if (navigator.share) {
+    navigator.share({ text: text }).catch(function () { /* キャンセルは無視 */ });
+  } else if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { showToast('招待文をコピーしました'); });
+  } else showToast(text);
+});
+$('mpStageSel').addEventListener('change', function () {
+  mp.lobbyStage = Number($('mpStageSel').value);
+  mpRenderLobbyPuzzle();
+  mpBroadcastLobbyInfo();
+});
+$('mpStartBtn').addEventListener('click', function () {
+  if (!mpIsHost() || !mp.session) return;
+  mp.session.hostStart({ stage: mp.lobbyStage, pieces: mp.lobbyPieces, startedAt: Date.now() });
+});
+$('mpLobbyImg').addEventListener('load', function () {
+  $('mpLobbyImg').hidden = false;
+  $('mpLobbyImgPh').hidden = true;
+});
+$('mpLobbyImg').addEventListener('error', function () {
+  $('mpLobbyImg').hidden = true;
+  var ph = $('mpLobbyImgPh');
+  ph.textContent = 'お題の画像を読み込めませんでした';
+  ph.hidden = false;
+});
+$('mpPinBtn').addEventListener('click', function () {
+  if (!mpInRoom() || !mp.begun) return;
+  mp.pinMode = !mp.pinMode;
+  $('mpPinBtn').classList.toggle('active', mp.pinMode);
+  if (mp.pinMode) showToast('机をタップして合図を送ります');
+});
+$('resultNextBtn').addEventListener('click', function () {
+  if (!mpIsHost() || !mp.session || !state || !state.pool) return;
+  var ns = nextStage(store.records, state.pool);
+  mp.session.hostNext({ stage: ns, pieces: difficulty, startedAt: Date.now() });
+});
+$('resultLeaveBtn').addEventListener('click', function () {
+  $('resultModal').hidden = true;
+  mpLeaveRoom();
+});
+
 /* ---------- ゲーム開始 ---------- */
 function startGame(pool) {
   carry = null;
@@ -7534,6 +8592,83 @@ function startGame(pool) {
     draw();
   });
   fetchCredit();
+}
+
+/* ---------- デバッグハンドル (E2E 検証専用) ----------
+ * URL に ?debug=1 がある時だけ window.__jigsawDebug を公開する。
+ * 通常起動では一切有効にならない。公開するのは状態の読み取りと
+ * 座標換算だけで、状態を変更する手段は含めない (操作は実イベントで行う)。 */
+if (/[?&]debug=1(&|$)/.test(location.search)) {
+  window.__jigsawDebug = {
+    get state() { return state; },
+    get store() { return store; },
+    get mp() { return mp; },
+    hash: function () { return state ? canonicalStateHash(state.clusters) : null; },
+    clusterCount: function () { return state ? state.clusters.length : 0; },
+    viewScale: function () { return state ? view().scale : 0; },
+    /* 指定ピース中心のクライアント座標 (実マウス操作の起点用) */
+    pieceClientPos: function (id) {
+      if (!state) return null;
+      var pos = piecePositions(state.clusters, state.n).get(id);
+      if (!pos) return null;
+      var s = worldToScreen((pos.gx + 0.5) * CELL, (pos.gy + 0.5) * CELL);
+      var r = stage.getBoundingClientRect();
+      return { x: r.left + s.x, y: r.top + s.y };
+    },
+    clusterPos: function (anchor) {
+      if (!state) return null;
+      var cl = mpClusterByAnchor(anchor);
+      return cl ? { gx: cl.gx, gy: cl.gy } : null;
+    },
+    /* いま成立するマージを1つ探す。掴むピースのクライアント座標と
+     * ドラッグ量 (px) を返す。成立判定は本物の absorbMerges で行い、
+     * 掴むピースは実際に hitCluster でその塊が取れることを確認する。
+     * 単品の塊を動かす候補と短いドラッグを優先する */
+    findMove: function () {
+      if (!state || state.phase !== 'play' || state.cleared) return null;
+      var n = state.n, clusters = state.clusters;
+      var pos = piecePositions(clusters, n);
+      var byPiece = {};
+      clusters.forEach(function (c) { c.pieces.forEach(function (id) { byPiece[id] = c; }); });
+      var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      var v = view();
+      var r = stage.getBoundingClientRect();
+      var best = null;
+      clusters.forEach(function (A) {
+        var anchorA = pieceHome(clusterAnchorId(A), n);
+        A.pieces.forEach(function (p) {
+          var hp = pieceHome(p, n);
+          dirs.forEach(function (dd) {
+            var qid = (hp.row + dd[1]) * n + (hp.col + dd[0]);
+            if (hp.col + dd[0] < 0 || hp.col + dd[0] >= n || hp.row + dd[1] < 0 || hp.row + dd[1] >= n) return;
+            var B = byPiece[qid];
+            if (!B || B === A) return;
+            var qp = pos.get(qid), pp = pos.get(p);
+            var tgx = qp.gx - dd[0] - (hp.col - anchorA.col);
+            var tgy = qp.gy - dd[1] - (hp.row - anchorA.row);
+            var others = clusters.filter(function (c) { return c !== A; });
+            var res = absorbMerges(others, { pieces: A.pieces.slice(), surface: A.surface, gx: tgx, gy: tgy }, n);
+            if (!res.merged) return;
+            var sp = worldToScreen((pp.gx + 0.5) * CELL, (pp.gy + 0.5) * CELL);
+            var hit = hitCluster(sp.x, sp.y);
+            if (!hit || hit.cluster !== A) return;
+            var dx = (tgx - A.gx) * CELL * v.scale, dy = (tgy - A.gy) * CELL * v.scale;
+            var score = (A.pieces.length === 1 ? 0 : 100000) + Math.abs(dx) + Math.abs(dy);
+            if (!best || score < best.score) {
+              best = {
+                score: score, pieceId: p, anchor: clusterAnchorId(A),
+                from: { x: r.left + sp.x, y: r.top + sp.y },
+                dx: dx, dy: dy, target: { gx: tgx, gy: tgy },
+                expectClusters: res.clusters.length
+              };
+            }
+          });
+        });
+      });
+      if (best) delete best.score;
+      return best;
+    }
+  };
 }
 
 /* ---------- 初期化 ---------- */
