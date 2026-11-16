@@ -498,6 +498,23 @@ function absorbMerges(others, moving, n, opts) {
   return { clusters: pool.concat([cur]), cluster: cur, merged: merged };
 }
 
+/* 協力プレイの drop 適用: 塊 cl を (x, y) へ確定させる。
+ * 合体先から外す塊 (isLeased が真 = 誰かがリース中) は others に入れず
+ * 合体判定から除外するが、absorbMerges の返り値は others + moving しか
+ * 含まないため、そのまま全状態へ代入すると除外した塊が盤面から消えて
+ * しまう。除外した塊は元の相対順のまま末尾へ戻す (全端末が同じ前状態と
+ * 同じリース判定から同じ並びを再構成できる)。MULTIPLAYER_DESIGN §3.5 */
+function applyClusterDrop(clusters, cl, x, y, n, isLeased) {
+  var excluded = [], others = [];
+  clusters.forEach(function (c) {
+    if (c === cl) return;
+    if (isLeased && isLeased(c)) excluded.push(c);
+    else others.push(c);
+  });
+  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: x, gy: y }, n);
+  return { clusters: res.clusters.concat(excluded), cluster: res.cluster, merged: res.merged };
+}
+
 /* 範囲選択: 矩形 (セル座標・正規化済み {x0,y0,x1,y1}、x0<x1, y0<y1 前提) と
  * 交差するピースを持つ塊を返す。ピースの矩形は [gx, gx+1] × [gy, gy+1] で、
  * 辺だけが接する場合は交差とみなさない。 */
@@ -1847,7 +1864,8 @@ var PureLogic = {
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
   canonicalStateHash: canonicalStateHash,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
-  absorbMerges: absorbMerges, clustersInRect: clustersInRect, shiftClusters: shiftClusters,
+  absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop,
+  clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
   clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
   normalizeClustersToRect: normalizeClustersToRect, clampClustersTranslation: clampClustersTranslation,
@@ -7559,7 +7577,7 @@ var mp = {
   myLeases: {},          // anchorId -> epoch (自分に付与されたリース)
   grabHome: {},          // anchorId -> {gx, gy} (掴む前の位置。却下時の復帰用)
   pendingGrabAnchor: null, lastDropAnchor: null,
-  pendingDrop: null,     // epoch 未確定のまま離した drop {cluster, x, y}
+  pendingDrops: {},      // epoch 未確定のまま離した drop {anchorId -> {x, y}} (複数溜まっても上書きしない)
   pendingRelease: {},    // anchorId -> true (epoch 未確定のまま離した tap)
   contrib: {},           // playerId -> その人の drop で接続したピース数 (§3.9)
   completeSent: false, clearShown: false,
@@ -7729,8 +7747,8 @@ function mpOnReject(rej) {
         if (home) { drag.cluster.gx = home.gx; drag.cluster.gy = home.gy; }
         drag = null; stopEdgeScroll();
       }
-      if (mp.pendingDrop && mp.pendingDrop.cluster === anchor) {
-        mp.pendingDrop = null;
+      if (mp.pendingDrops[anchor]) {
+        delete mp.pendingDrops[anchor];
         var cl = mpClusterByAnchor(anchor), h2 = mp.grabHome[anchor];
         if (cl && h2) { cl.gx = h2.gx; cl.gy = h2.gy; }
       }
@@ -7783,7 +7801,7 @@ function mpResetState() {
   mp.session = null; mp.role = null; mp.code = null; mp.manual = false;
   mp.begun = false; mp.started = false; mp.loading = false;
   mp.peers = []; mp.verifyCode = null; mp.contrib = {}; mp.myLeases = {};
-  mp.pendingDrop = null; mp.pendingRelease = {}; mp.pendingSnap = null; mp.queuedEvents = [];
+  mp.pendingDrops = {}; mp.pendingRelease = {}; mp.pendingSnap = null; mp.queuedEvents = [];
   mp.cursors = {}; mp.movesEph = {}; mp.pins = []; mp.pinMode = false;
   mp.stage = null; mp.pieces = null; mp.lobbyInfo = null;
   mp.clearShown = false; mp.completeSent = false; mp.pendingGrabAnchor = null; mp.lastDropAnchor = null;
@@ -8131,7 +8149,7 @@ function mpOnStartEvent(ev) {
   mp.clearShown = false;
   mp.contrib = {};
   mp.myLeases = {};
-  mp.pendingDrop = null;
+  mp.pendingDrops = {};
   mp.pendingRelease = {};
   mp.cursors = {};
   mp.movesEph = {};
@@ -8141,11 +8159,11 @@ function mpOnStartEvent(ev) {
 function mpOnGrab(ev) {
   if (ev.from === mpMyId()) {
     mp.myLeases[ev.cluster] = ev.epoch;
-    if (mp.pendingDrop && mp.pendingDrop.cluster === ev.cluster) {
-      var pd = mp.pendingDrop;
-      mp.pendingDrop = null;
-      mp.lastDropAnchor = pd.cluster;
-      mp.session.sendEvent({ t: 'drop', cluster: pd.cluster, x: pd.x, y: pd.y, epoch: ev.epoch });
+    var pd = mp.pendingDrops[ev.cluster];
+    if (pd) {
+      delete mp.pendingDrops[ev.cluster];
+      mp.lastDropAnchor = ev.cluster;
+      mp.session.sendEvent({ t: 'drop', cluster: ev.cluster, x: pd.x, y: pd.y, epoch: ev.epoch });
     } else if (mp.pendingRelease[ev.cluster]) {
       delete mp.pendingRelease[ev.cluster];
       mp.session.sendEvent({ t: 'release', cluster: ev.cluster, epoch: ev.epoch });
@@ -8177,12 +8195,11 @@ function mpOnDrop(ev) {
   if (!cl) throw new Error('mp: drop 先の塊がありません');
   var before = cl.pieces.length;
   var engine = mp.session && mp.session.engine;
-  var others = state.clusters.filter(function (c) {
-    if (c === cl) return false;
-    // リース中の塊は合体先に含めない (§3.5)。全端末で同じ others になる
-    return !(engine && engine.getLease(clusterAnchorId(c)));
+  // リース中の塊は合体先に含めない (§3.5)。除外した塊は盤面に残すこと
+  // (applyClusterDrop が戻し忘れを防ぐ。全端末で同じ判定・同じ並びになる)
+  var res = applyClusterDrop(state.clusters, cl, ev.x, ev.y, state.n, function (c) {
+    return !!(engine && engine.getLease(clusterAnchorId(c)));
   });
-  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: ev.x, gy: ev.y }, state.n);
   state.clusters = res.clusters;
   state.moves++;
   if (res.merged) {
@@ -8281,7 +8298,7 @@ function mpSettleDrag() {
     mp.lastDropAnchor = anchor;
     mp.session.sendEvent({ t: 'drop', cluster: anchor, x: cl.gx, y: cl.gy, epoch: epoch });
   } else {
-    mp.pendingDrop = { cluster: anchor, x: cl.gx, y: cl.gy };
+    mp.pendingDrops[anchor] = { x: cl.gx, y: cl.gy };
   }
   draw();
 }

@@ -370,6 +370,7 @@ function createEngine(opts) {
     if (typeof hooks.applyEvent === 'function')
       hooks.applyEvent(out, { seq: seq, from: fromId });
     lastSeq = seq;
+    if (fromId === selfId && players[fromId]) players[fromId].lastSeen = now();
     leaseMirrorApply(out);
     if (STATE_CHANGING[out.t]) {
       var s = stateHash();
@@ -636,6 +637,11 @@ function createEngine(opts) {
       var t = now(), expired = [];
       for (var c in leases) {
         var holder = leases[c].holder;
+        // 自分 (ホスト) のリースは失効させない: ホストの lastSeen は
+        // hostReceive / noteActivity の対象がゲストだけのため誰も更新せず、
+        // 部屋を作って leaseTimeout 経つと自分の掴みが即失効してしまう。
+        // tick が回っていること自体がホストの生存証明になる
+        if (holder === selfId) continue;
         var p = players[holder];
         if (!p || t - (p.lastSeen || 0) > leaseTimeout) expired.push(c);
       }
