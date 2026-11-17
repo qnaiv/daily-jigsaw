@@ -520,8 +520,12 @@ function createEngine(opts) {
             ev.placed > racePieces[fromId] - 1) return 'bad-event';
         return null;
       case 'finish':
-        // レースモードの完成申告。勝者は seq 順に最初に適用された
-        // finish で確定する (適用側の責務)
+        // レースモードの完走申告。順位は seq 順に適用された順で決まり、
+        // レースは最初の finish では終わらない (集計は適用側の責務)。
+        // elapsedSec は本人の申告タイム (表示用) なので形だけ検証する
+        if (ev.elapsedSec !== undefined &&
+            (typeof ev.elapsedSec !== 'number' || !isFinite(ev.elapsedSec) || ev.elapsedSec < 0))
+          return 'bad-event';
         return null;
       case 'complete':
         return null;

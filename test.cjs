@@ -1498,7 +1498,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v46'") !== -1, 'sw: VERSION は v46');
+  ok(swSB.indexOf("VERSION = 'v48'") !== -1, 'sw: VERSION は v48');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1598,7 +1598,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: スタート導線・ロビー・バッジ・ピンボタン・貢献度表示の要素がある');
   ok(swM.indexOf("'mp.js'") !== -1 && swM.indexOf("endsWith('/mp.js')") !== -1,
      'MP配線: sw.js が mp.js をプリキャッシュし NetworkFirst 対象に含む');
-  ok(appM.indexOf('var MP_LOGIC_VERSION = 4;') !== -1 &&
+  ok(appM.indexOf('var MP_LOGIC_VERSION = 5;') !== -1 &&
      appM.indexOf('hashState: function (clusters) { return canonicalStateHash(clusters); }') !== -1 &&
      appM.indexOf("t: 'grab-req'") !== -1 && appM.indexOf("t: 'drop'") !== -1 && appM.indexOf("t: 'sort'") !== -1,
      'MP配線: hooks が canonicalStateHash を使い、grab-req/drop/sort を送る');
@@ -1670,15 +1670,15 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appX.indexOf('mp.lobbyStage = ev.stage;') !== -1,
      'MPモード配線: 「つぎのステージへ」は即開始せずロビーへ戻り、ステージだけ引き継ぐ (ピース数は選び直す)');
   ok(appX.indexOf("if (mpInRoom() && mp.mode === 'race') { mpRaceAfterBoard(); return; }") !== -1 &&
-     appX.indexOf("mp.session.sendEvent({ t: 'finish' });") !== -1 &&
+     appX.indexOf("mp.session.sendEvent({ t: 'finish', elapsedSec: currentElapsed() });") !== -1 &&
      appX.indexOf('racePlacedCount(mp.pieces, state.clusters.length)') !== -1,
-     'MPモード配線: レースはローカル確定のたびに進捗を数え、完成で finish を送る');
-  ok(appX.indexOf("if (mpInRoom() && mp.mode === 'race' && (mp.finishSent || mp.raceWinner)) return;") !== -1 &&
+     'MPモード配線: レースはローカル確定のたびに進捗を数え、完成で本人の経過時間を載せた finish を送る');
+  ok(appX.indexOf("if (mpInRoom() && mp.mode === 'race' && mp.finishSent) return;") !== -1 &&
      appX.indexOf("mp.mode === 'turn' && mpTurnPlayerId() !== mpMyId()") !== -1,
-     'MPモード配線: レース終了後とターン制の非手番はクライアント側でも入力を止める');
+     'MPモード配線: レースは自分の完走後だけ入力を止め (他人の完走では止まらない)、ターン制の非手番もクライアント側で止める');
   ok(appX.indexOf("rec.race = true;") !== -1 && appX.indexOf('function mpRaceShowResult() {') !== -1 &&
-     appX.indexOf("mp.raceProgress[p.id] || 0) + '/' + mpPiecesOf(p.id)") !== -1,
-     'MPモード配線: レース記録は勝者 (ホスト/ゲスト共通) のみ race 付きで書き、敗者は結果だけ見て結果は全員分を分数形式で出す (分母は各人の実効ピース数)');
+     appX.indexOf('raceStandings(mp.turnOrder, mp.raceFinish, mp.leftPlayers, mp.raceProgress)') !== -1,
+     'MPモード配線: レース記録は完走した全員が race 付きで書き、結果は順位表 (順位+タイム/分数/リタイア) で出す');
   ok(cssX.indexOf('#mpTurnBar') !== -1 && cssX.indexOf('#mpRaceBar') !== -1 && cssX.indexOf('#mpModeSeg') !== -1,
      'MPモード配線: style.css に手番バー・レース進捗バー・モード選択のスタイルがある');
 }
@@ -1727,9 +1727,10 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appI.indexOf('あなたの記録・ごほうびはありません') === -1 &&
      appI.indexOf('このクリアはホストの記録になります') === -1,
      'MP改善#7: 結果画面の注記は「全員に記録が付く」文言に替わり、旧・ホストのみ文言は残っていない');
-  ok(appI.indexOf('レース：あなたの勝利です。このクリアはあなたの記録になります') !== -1 &&
+  ok(appI.indexOf('位でクリア！ このクリアはあなたの記録になります') !== -1 &&
+     appI.indexOf('あなたの記録は付きません') === -1 &&
      appI.indexOf('ステージ記録は付きません（記録はホストが勝った時だけ付きます）') === -1,
-     'MP改善#7: レース勝者の注記はホスト/ゲスト共通で「あなたの記録になります」');
+     'MP改善#7: レースの注記は完走者全員が「あなたの記録になります」になり、旧・勝者のみ文言は残っていない');
   // ロビー復帰導線: mpBtn はセッションが生きていればロビーを開く
   ok(appI.indexOf('if (mp.session) mpShowLobby();') !== -1,
      'MP改善#1: スタート画面のボタンはセッションが生きていれば入口でなくロビーを開く');
@@ -1795,6 +1796,57 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appP.indexOf("if (pointerType === 'mouse') return hitCluster(sx, sy);") !== -1 &&
      appP.indexOf('grabHitCluster(p.x, p.y, ev.pointerType)') !== -1,
      'MP改善#3改訂2: 吸着はタッチ/ペンの掴み判定だけに乗り、マウスは精密判定のまま');
+}
+
+/* 端マージン (プレイ画面を一回り小さく + 設定でオンオフ):
+ * iPhone Safari の端スワイプ (ブラウザバック) 対策。マージン自体は
+ * CSS の #stageWrap.edge-margin が担い、切替時の視点保持は PureLogic の
+ * viewAfterResizeKeepingCenter で担保する */
+{
+  const fsE = require('fs'), pathE = require('path');
+  const appE = fsE.readFileSync(pathE.join(__dirname, 'app.js'), 'utf8');
+  const htmlE = fsE.readFileSync(pathE.join(__dirname, 'index.html'), 'utf8');
+  const cssE = fsE.readFileSync(pathE.join(__dirname, 'style.css'), 'utf8');
+  // 純関数: 表示中心のワールド座標と絶対スケールが保たれ、fit だけ新しい値になる
+  const vE = { scale: 0.2, fit: 0.2, tx: 10, ty: 20 };
+  const rE = L.viewAfterResizeKeepingCenter(vE, 390, 844, 346, 800, 0.18);
+  const cOldE = { x: (390 / 2 - vE.tx) / vE.scale, y: (844 / 2 - vE.ty) / vE.scale };
+  const cNewE = { x: (346 / 2 - rE.tx) / rE.scale, y: (800 / 2 - rE.ty) / rE.scale };
+  ok(Math.abs(cNewE.x - cOldE.x) < 1e-9 && Math.abs(cNewE.y - cOldE.y) < 1e-9 &&
+     rE.scale === 0.2 && rE.fit === 0.18,
+     '端マージン: viewAfterResizeKeepingCenter は表示中心のワールド座標と絶対スケールを保持し、fit だけ差し替える');
+  // 逆方向 (マージンあり→なし) でも中心が保たれ、往復で元の視点に戻る
+  const rE2 = L.viewAfterResizeKeepingCenter(rE, 346, 800, 390, 844, 0.2);
+  ok(Math.abs(rE2.tx - vE.tx) < 1e-9 && Math.abs(rE2.ty - vE.ty) < 1e-9,
+     '端マージン: マージンのオフ→オンの往復で視点がもとの tx/ty に戻る');
+  // 不正な newFit は元の fit を維持する
+  ok(L.viewAfterResizeKeepingCenter(vE, 390, 844, 346, 800, 0).fit === 0.2 &&
+     L.viewAfterResizeKeepingCenter(vE, 390, 844, 346, 800, NaN).fit === 0.2,
+     '端マージン: newFit が 0/NaN のときは元の fit を維持する');
+  // 設定の保存と既定値: 旧セーブにキーが無ければオン
+  ok(appE.indexOf('var edgeMargin = store.edgeMargin !== false;') !== -1 &&
+     appE.indexOf('function setEdgeMargin(on)') !== -1 &&
+     appE.indexOf('store.edgeMargin = edgeMargin;') !== -1,
+     '端マージン: 設定は store.edgeMargin に保存され、未保存ならオンが既定');
+  // 切替時はクラス付け外し + resizeStage の後で視点を保持する (fit は新しい実寸で再計算)
+  ok(appE.indexOf('viewAfterResizeKeepingCenter(v, oldW, oldH, stageW, stageH, fitView().fit)') !== -1 &&
+     appE.indexOf("classList.toggle('edge-margin', edgeMargin)") !== -1,
+     '端マージン: 切替は edge-margin クラスの付け外し + resizeStage + 中心・スケール保持で視点をジャンプさせない');
+  ok(appE.indexOf("document.querySelectorAll('[data-edgemargin]')") !== -1 &&
+     appE.indexOf('syncEdgeMarginButtons();') !== -1 && appE.indexOf('applyEdgeMargin();') !== -1,
+     '端マージン: ボタンが setEdgeMargin に配線され、起動時に保存済み設定が盤面へ反映される');
+  ok(htmlE.indexOf('data-edgemargin="on"') !== -1 && htmlE.indexOf('data-edgemargin="off"') !== -1 &&
+     htmlE.indexOf('端に余白あり') !== -1 && htmlE.indexOf('端に余白なし') !== -1,
+     '端マージン: 設定「あそびかた」に余白あり/なしの切替ボタンがある');
+  // CSS: 承認済みモックの数値 (左右22 / 上20 / 下24 / 角丸16)
+  ok(cssE.indexOf('#stageWrap.edge-margin') !== -1 &&
+     cssE.indexOf('inset: 20px 22px 24px;') !== -1 &&
+     cssE.indexOf('border-radius: 16px;') !== -1,
+     '端マージン: #stageWrap.edge-margin は左右22・上20・下24px の inset と角丸16px を持つ');
+  // 入力・エッジスクロール・コーチマークは rect 基準なので inset してもずれない
+  ok(appE.indexOf('var r = stage.getBoundingClientRect();') !== -1 &&
+     appE.indexOf('var r = el.getBoundingClientRect();') !== -1,
+     '端マージン: ポインタ座標とコーチマーク位置は getBoundingClientRect 基準で、マージンに自動追随する');
 }
 
 /* マルチプレイ改善 #6: 協力/ターン制での範囲選択・一括移動 */
@@ -1969,8 +2021,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(mpP.indexOf("msg.t === 'profile'") !== -1 && mpP.indexOf('profiles: profiles') !== -1 &&
      mpP.indexOf('resolveProfileColors') !== -1 && mpP.indexOf('var MP_LOGIC_VERSION') === -1,
      'MP改善#4: mp.js は profile を名簿で保持し welcome に同梱、色を調停する');
-  ok(appP.indexOf('var MP_LOGIC_VERSION = 4;') !== -1,
-     'MP改善#4: profile は追加型でバージョンを上げなかった (ハンデの piecesMap で 4 に上げた)');
+  ok(appP.indexOf('var MP_LOGIC_VERSION = 5;') !== -1,
+     'MP改善#4: profile は追加型でバージョンを上げなかった (その後ハンデで 4、レース完走方式で 5 に上げた)');
   ok(cssP.indexOf('.mp-avatar') !== -1 && cssP.indexOf('.mp-prof-icons') !== -1 &&
      cssP.indexOf('#mpTurnDot.has-icon') !== -1,
      'MP改善#4: style.css にアバターと編集シートのスタイルがある');
@@ -2089,6 +2141,74 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'ハンデ配線: mp.js は {t:\'handicap\'} を横取りし welcome に同梱する');
   ok(mpH.indexOf('ev.placed > racePieces[fromId] - 1') !== -1,
      'ハンデ配線: progress の上限検証は送信者自身の実効ピース数基準');
+}
+
+/* レース完走方式 (2026-11-17 改訂): 最初の完走で終わらず、全員完走で
+ * 最終結果。順位 = finish の seq 順、表示タイム = 本人の申告 elapsedSec。
+ * 完走した全員が記録とごほうびをもらう */
+{
+  const fsR = require('fs');
+  const appR = fsR.readFileSync(__dirname + '/app.js', 'utf8');
+  const mpR = fsR.readFileSync(__dirname + '/mp.js', 'utf8');
+  const htmlR = fsR.readFileSync(__dirname + '/index.html', 'utf8');
+
+  // 申告タイムの検証
+  ok(L.sanitizeRaceElapsed(83.9) === 83 && L.sanitizeRaceElapsed(0) === 0 &&
+     L.sanitizeRaceElapsed(-1) === null && L.sanitizeRaceElapsed(NaN) === null &&
+     L.sanitizeRaceElapsed('83') === null && L.sanitizeRaceElapsed(7 * 24 * 3600) === null,
+     'レース完走: 申告タイムは 0 以上 7 日未満の有限数だけ通し整数秒に切り捨てる');
+  // 終了判定: 全員完走で初めて true (最初の完走では終わらない)
+  var rids = ['host', 'g1', 'g2'];
+  var rfin = { g2: { rank: 1, elapsedSec: 50 } };
+  ok(L.raceAllFinished(rids, rfin, {}) === false,
+     'レース完走: 最初の1人が完走してもレースは終わらない');
+  rfin.host = { rank: 2, elapsedSec: 70 };
+  ok(L.raceAllFinished(rids, rfin, {}) === false,
+     'レース完走: まだ対戦中の人がいれば終わらない');
+  rfin.g1 = { rank: 3, elapsedSec: 65 };
+  ok(L.raceAllFinished(rids, rfin, {}) === true,
+     'レース完走: 全員完走で終了する');
+  // 退出者はリタイアとして待機集合から外れる (記録なし)
+  ok(L.raceAllFinished(rids, { g2: { rank: 1, elapsedSec: 50 }, host: { rank: 2, elapsedSec: 70 } }, { g1: true }) === true,
+     'レース完走: 退出者は待たずに終了できる (リタイア)');
+  ok(L.raceAllFinished(rids, {}, { g1: true, g2: true }) === false &&
+     L.raceAllFinished([], {}, {}) === false,
+     'レース完走: 完走者ゼロ (全員退出) や参加者なしでは成立しない');
+  // 順位表: 完走者は順位順、対戦中は進捗が多い順、リタイアは最後
+  var rrows = L.raceStandings(rids,
+    { g1: { rank: 2, elapsedSec: 65 }, g2: { rank: 1, elapsedSec: 50 } },
+    {}, { host: 9, g1: 15, g2: 15 });
+  ok(rrows.map(function (r) { return r.id; }).join(',') === 'g2,g1,host' &&
+     rrows[0].rank === 1 && rrows[0].elapsedSec === 50 &&
+     rrows[2].finished === false && rrows[2].placed === 9,
+     'レース完走: 順位表は完走者を順位 + タイムで並べ、対戦中は後ろに置く');
+  var rrows2 = L.raceStandings(rids, { host: { rank: 1, elapsedSec: 40 } }, { g2: true }, { g1: 3 });
+  ok(rrows2.map(function (r) { return r.id; }).join(',') === 'host,g1,g2' &&
+     rrows2[2].left === true && rrows2[1].left === false,
+     'レース完走: 順位表でリタイアは最後に回る');
+  // 配線: finish の集計 (全員分・順位つき) と終了確定
+  ok(appR.indexOf('mp.raceFinish[id] = { rank: rank, elapsedSec: sanitizeRaceElapsed(ev.elapsedSec) };') !== -1 &&
+     appR.indexOf('if (!id || mp.raceFinish[id]) return;') !== -1 &&
+     appR.indexOf('if (id === mpMyId()) {') !== -1,
+     'レース完走配線: finish は全員分を順位付きで集計し、二重申告は数えず、自分の確定で onClear へ進む');
+  ok(appR.indexOf('function mpCheckRaceDone() {') !== -1 &&
+     appR.indexOf('raceAllFinished(mp.turnOrder, mp.raceFinish, mp.leftPlayers)') !== -1 &&
+     appR.indexOf("showToast('レースが終了しました。最終結果は接続バッジから見られます');") !== -1,
+     'レース完走配線: 全員完走で最終結果に確定し、結果画面を閉じている完走者にはトーストで知らせる');
+  ok(appR.indexOf("$('resultNextBtn').hidden = !mpIsHost() || !mp.raceDone;") !== -1,
+     'レース完走配線: 「つぎのステージへ」は全員完走が確定するまで出ない');
+  ok(appR.indexOf('raceFinish: mp.raceFinish, raceDone: mp.raceDone,') !== -1 &&
+     appR.indexOf('if (id === mpMyId() && !myBoardDone) return;') !== -1,
+     'レース完走配線: snapshot は完走集計を持ち、再入室者は自分だけ完走済みにしない (他人の順位・タイムは復元する)');
+  ok(appR.indexOf("if (mp.mode === 'race' && mp.raceDone) {") !== -1 &&
+     appR.indexOf('リタイア') !== -1,
+     'レース完走配線: レース終了後は接続バッジから最終結果を見直せ、退出者はリタイア表示になる');
+  ok(mpR.indexOf('ev.elapsedSec !== undefined') !== -1,
+     'レース完走配線: エンジンは finish の elapsedSec の形を検証する');
+  ok(htmlR.indexOf('レースは勝者のみ') === -1 && htmlR.indexOf('レースもクリアした全員に付きます') !== -1 &&
+     appR.indexOf("mp.session.sendEvent({ t: 'finish' });") === -1 &&
+     appR.indexOf('あなたの記録は付きません') === -1,
+     'レース完走配線: 旧・勝者のみ仕様の文言と finish 送信は残っていない');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

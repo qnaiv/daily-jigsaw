@@ -484,6 +484,17 @@ button { font: inherit; cursor: pointer; }
 #playView { position: fixed; inset: 0; }
 #playView[hidden] { display: none; }
 #stageWrap { position: absolute; inset: 0; overflow: hidden; background: var(--desk-fallback); }
+/* 端マージン (設定「あそびかた」でオンオフ、既定オン): プレイ画面を
+ * 四方 (左右22 / 上20 / 下24px) 内側へ縮め、iPhone Safari の端スワイプ
+ * (ブラウザバック) がピースの掴み始めに干渉しないようにする。外側には
+ * body の紙色 (--screen-bg) が見え、盤面は角丸+薄い影で「紙の上に
+ * 一回り小さい盤面が載っている」見た目になる (モック承認済み)。
+ * HUD 等は #stageWrap の子なので一緒に内側へ移動する */
+#stageWrap.edge-margin {
+  inset: 20px 22px 24px;
+  border-radius: 16px;
+  box-shadow: 0 3px 16px var(--shadow), 0 12px 32px var(--shadow-soft);
+}
 #stage { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
 
 /* 範囲選択モードに入ったことを示すチップ (長押し成立〜矩形を離すまで) */

@@ -698,20 +698,26 @@ console.log('[11] ターン制モード');
   eq(g1.hooks.hashState(g1.hooks.getClusters()), host.hooks.hashState(host.hooks.getClusters()), 'ターン: 最終状態のハッシュが一致');
 }
 
-/* ================= 12. レース (進捗共有と勝者確定) ================= */
+/* ================= 12. レース (進捗共有と全員完走の集計) ================= */
 console.log('[12] レースモード (3人)');
 {
   const L = require('./app.js');
   const TOTAL = 16;
   function makeRaceClient() {
-    const client = { clusters: TOTAL, progress: {}, winner: null, rejects: [] };
+    const client = { clusters: TOTAL, progress: {}, winner: null, finishOrder: [], finishTimes: {}, elapsed: 0, rejects: [] };
     client.hooks = {
       getClusters: () => { const a = []; for (let i = 0; i < client.clusters; i++) a.push({ anchorId: i, pieces: [i], gx: i, gy: 0 }); return a; },
       clusterExists: id => id < client.clusters,
       applyEvent: ev => {
-        // app.js の適用側と同じ: progress は写し、finish は最初の1つだけが勝者
+        // app.js の適用側と同じ: progress は写し、finish は全員分を seq 順に
+        // 集計する (順位 = 集計順、1位 = 最初の完走者)。レースは最初の
+        // finish では終わらない
         if (ev.t === 'progress') client.progress[ev.from] = ev.placed;
-        else if (ev.t === 'finish' && !client.winner) client.winner = ev.from;
+        else if (ev.t === 'finish') {
+          client.finishOrder.push(ev.from);
+          client.finishTimes[ev.from] = ev.elapsedSec;
+          if (!client.winner) client.winner = ev.from;
+        }
       },
       getSnapshot: () => ({ clusters: client.hooks.getClusters() }),
       applySnapshot: () => {},
@@ -720,11 +726,13 @@ console.log('[12] レースモード (3人)');
       deskBounds: () => ({ x0: -100, y0: -100, x1: 100, y1: 100 }),
       logicVersion: 2, poolFingerprint: 't'
     };
-    // 自分の盤面で1回合体させる (app.js mpRaceAfterBoard と同じ報告規則)
+    // 自分の盤面で1回合体させる (app.js mpRaceAfterBoard と同じ報告規則:
+    // finish には本人の経過時間を載せる。モックでは1手 = 7秒で申告)
     client.mergeOnce = () => {
       client.clusters--;
+      client.elapsed += 7;
       client.engine.request({ t: 'progress', placed: L.racePlacedCount(TOTAL, client.clusters) });
-      if (client.clusters === 1) client.engine.request({ t: 'finish' });
+      if (client.clusters === 1) client.engine.request({ t: 'finish', elapsedSec: client.elapsed });
     };
     return client;
   }
@@ -761,23 +769,49 @@ console.log('[12] レースモード (3人)');
   eq(g1.rejects[g1.rejects.length - 1].reason, 'bad-event', 'レース: 負数の進捗は bad-event で却下');
   eq(host.progress.g1, 2, 'レース: 却下された進捗は反映されない');
 
-  // ゲスト2が先に完成 → 勝者はゲスト2で全端末一致
-  for (let i = 0; i < 15; i++) g2.mergeOnce();
-  eq(host.winner, 'g2', 'レース: 最初に完成したゲスト2が勝者 (ホスト側)');
-  eq(g1.winner, 'g2', 'レース: 勝者がゲスト1側でも一致');
-  eq(g2.winner, 'g2', 'レース: 勝者がゲスト2側でも一致');
-  eq(host.progress.g2, TOTAL - 1, 'レース: 勝者のはめた数は 全ピース数 − 1 = 15');
+  const finishEq = label => {
+    eq(JSON.stringify(g1.finishOrder), JSON.stringify(host.finishOrder), label + ': ゲスト1の完走順がホストと一致');
+    eq(JSON.stringify(g2.finishOrder), JSON.stringify(host.finishOrder), label + ': ゲスト2の完走順がホストと一致');
+    eq(JSON.stringify(g1.finishTimes), JSON.stringify(host.finishTimes), label + ': ゲスト1の完走タイム表がホストと一致');
+    eq(JSON.stringify(g2.finishTimes), JSON.stringify(host.finishTimes), label + ': ゲスト2の完走タイム表がホストと一致');
+  };
 
-  // ホストが遅れて完成しても勝者は覆らない (seq 順で一意)
+  // ゲスト2が先に完走 → 1位はゲスト2で全端末一致。レースは終わらない
+  for (let i = 0; i < 15; i++) g2.mergeOnce();
+  eq(host.winner, 'g2', 'レース: 最初に完走したゲスト2が1位 (ホスト側)');
+  eq(g1.winner, 'g2', 'レース: 1位がゲスト1側でも一致');
+  eq(g2.winner, 'g2', 'レース: 1位がゲスト2側でも一致');
+  eq(JSON.stringify(host.finishOrder), JSON.stringify(['g2']), 'レース: 完走集計はまずゲスト2だけ');
+  eq(host.finishTimes.g2, 105, 'レース: 完走タイムは本人の申告 elapsedSec (15手 × 7秒)');
+  eq(host.progress.g2, TOTAL - 1, 'レース: 完走者のはめた数は 全ピース数 − 1 = 15');
+  finishEq('1位確定後');
+
+  // 1位が出た後もレースは続く: 対戦中の人の progress は共有され続ける
+  g1.mergeOnce();
+  eq(host.progress.g1, 3, 'レース: 誰かが完走しても他の人の進捗は共有され続ける (レースは終わらない)');
+
+  // 不正な申告タイム (負数) の finish はホスト検証で却下され、集計に入らない
+  g1.engine.request({ t: 'finish', elapsedSec: -5 });
+  eq(g1.rejects[g1.rejects.length - 1].reason, 'bad-event', 'レース: 負数の申告タイムは bad-event で却下');
+  eq(JSON.stringify(host.finishOrder), JSON.stringify(['g2']), 'レース: 却下された finish は集計に入らない');
+
+  // ホストが遅れて完走しても 2位として集計され、1位は覆らない (seq 順で一意)
   for (let i = 0; i < 14; i++) host.mergeOnce();
-  eq(host.winner, 'g2', 'レース: 遅れた finish では勝者は変わらない (ホスト側)');
-  eq(g1.winner, 'g2', 'レース: 遅れた finish では勝者は変わらない (ゲスト1側)');
-  eq(g2.winner, 'g2', 'レース: 遅れた finish では勝者は変わらない (ゲスト2側)');
+  eq(host.winner, 'g2', 'レース: 遅れた finish では1位は変わらない (ホスト側)');
+  eq(JSON.stringify(host.finishOrder), JSON.stringify(['g2', 'host']),
+    'レース: 最初の finish で終わらず、2人目の完走も全端末に集計される');
+  finishEq('2位確定後');
+
+  // 最後の1人が完走して全員分の順位とタイムがそろう
+  for (let i = 0; i < 12; i++) g1.mergeOnce();
+  eq(JSON.stringify(host.finishOrder), JSON.stringify(['g2', 'host', 'g1']),
+    'レース: 全員完走で順位が確定する (g2 → ホスト → g1)');
+  finishEq('全員完走後');
 
   // 結果集計: 3人全員分が全端末でそろう
   progressEq('最終');
-  eq(JSON.stringify(host.progress), JSON.stringify({ g1: 2, host: 15, g2: 15 }),
-    'レース: 最終進捗は全員分 {ホスト:15, ゲスト1:2, ゲスト2:15}');
+  eq(JSON.stringify(host.progress), JSON.stringify({ g1: 15, host: 15, g2: 15 }),
+    'レース: 最終進捗は全員分 {ホスト:15, ゲスト1:15, ゲスト2:15}');
 }
 
 /* ================= 7. ユーティリティ ================= */

@@ -549,6 +549,57 @@ function racePlacedCount(totalPieces, clusterCount) {
   return totalPieces - clusterCount;
 }
 
+/* レースの完走申告タイム (本人のレース開始からの経過秒数) の検証:
+ * 0 以上 7 日未満の有限数のみ通し、整数秒へ切り捨てる。不正なら null。
+ * 順位は finish が seq された順で決まり、表示タイムはこの申告値を
+ * 使う (端末時計差で順位とタイムが前後しうるのは許容する) */
+function sanitizeRaceElapsed(v) {
+  if (typeof v !== 'number' || !isFinite(v) || v < 0 || v >= 7 * 24 * 3600) return null;
+  return Math.floor(v);
+}
+/* レースの順位表 (PureLogic): 完走者は順位順、対戦中ははめた数が
+ * 多い順、リタイアは最後。finishes は playerId -> { rank, elapsedSec }、
+ * leftPlayers は playerId -> true、progress は playerId -> はめた数。
+ * 戻り値は playerIds と同じ要素数の行 { id, finished, rank, elapsedSec,
+ * left, placed } (表示順に整列済み) */
+function raceStandings(playerIds, finishes, leftPlayers, progress) {
+  var rows = (playerIds || []).map(function (id, idx) {
+    var f = finishes ? finishes[id] : null;
+    return {
+      id: id, idx: idx,
+      finished: !!f,
+      rank: f ? f.rank : null,
+      elapsedSec: f ? f.elapsedSec : null,
+      left: !!(leftPlayers && leftPlayers[id]) && !f,
+      placed: progress ? (progress[id] || 0) : 0
+    };
+  });
+  rows.sort(function (a, b) {
+    var ga = a.finished ? 0 : (a.left ? 2 : 1);
+    var gb = b.finished ? 0 : (b.left ? 2 : 1);
+    if (ga !== gb) return ga - gb;
+    if (a.finished && b.finished) return a.rank - b.rank;
+    if (!a.finished && !b.finished && !a.left && !b.left && a.placed !== b.placed)
+      return b.placed - a.placed;
+    return a.idx - b.idx;
+  });
+  return rows;
+}
+/* レースの終了判定 (PureLogic): 参加者全員が「完走 or 退出」になり、
+ * かつ完走者が 1 人以上いれば終了。退出した人はリタイアとして待機
+ * 集合から外れる (全員退出だけでは成立させない) */
+function raceAllFinished(playerIds, finishes, leftPlayers) {
+  if (!playerIds || !playerIds.length) return false;
+  var anyFinish = false;
+  for (var i = 0; i < playerIds.length; i++) {
+    var id = playerIds[i];
+    if (finishes && finishes[id]) { anyFinish = true; continue; }
+    if (leftPlayers && leftPlayers[id]) continue;
+    return false;
+  }
+  return anyFinish;
+}
+
 /* レースのハンデ (RACE_HANDICAP_DESIGN。ユーザー決定 2026-11-17 で
  * プラス方向のみ): 段階 0..+4 はグリッドの一辺 n への加算で、実効
  * ピース数は (min(n + 段階, 32))²。盤面は正方形グリッド (n = 4..32 の
@@ -706,6 +757,24 @@ function clampClustersTranslation(clusters, n, rect) {
   if (minY < rect.y0) dy = rect.y0 - minY;
   else if (maxY > rect.y0 + rect.h) dy = (rect.y0 + rect.h) - maxY;
   return { dx: dx, dy: dy };
+}
+
+/* ステージ実寸が変わったときのカメラ引き継ぎ (純関数): 表示中心の
+ * ワールド座標と絶対スケールを保ったまま、新しい実寸の中心へ同じ
+ * ワールド点を置く tx/ty を返す。fit だけは新しい実寸での値に差し替える
+ * (ズーム下限と倍率表示の基準なので、古い実寸のままではずれる)。
+ * 中心とスケールが保たれるため、端マージンのオンオフ切替で画面が
+ * ジャンプせず、ピースの見た目の大きさも変わらない。newFit が不正な
+ * 値なら元の fit を維持する */
+function viewAfterResizeKeepingCenter(view, oldW, oldH, newW, newH, newFit) {
+  var cx = (oldW / 2 - view.tx) / view.scale;
+  var cy = (oldH / 2 - view.ty) / view.scale;
+  var fit = (typeof newFit === 'number' && isFinite(newFit) && newFit > 0) ? newFit : view.fit;
+  return {
+    scale: view.scale, fit: fit,
+    tx: newW / 2 - cx * view.scale,
+    ty: newH / 2 - cy * view.scale
+  };
 }
 
 /* 散らばり領域 (セル単位の矩形): 机ワールドの広さそのもの。
@@ -2034,6 +2103,8 @@ var PureLogic = {
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
   absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop,
   racePlacedCount: racePlacedCount, nextTurnIndex: nextTurnIndex,
+  sanitizeRaceElapsed: sanitizeRaceElapsed, raceStandings: raceStandings,
+  raceAllFinished: raceAllFinished,
   HANDICAP_LEVELS: HANDICAP_LEVELS, sanitizeHandicapLevel: sanitizeHandicapLevel,
   normalizeHandicap: normalizeHandicap, handicapPieces: handicapPieces,
   racePiecesMap: racePiecesMap, sanitizePiecesMap: sanitizePiecesMap,
@@ -2042,6 +2113,7 @@ var PureLogic = {
   scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
   clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
   normalizeClustersToRect: normalizeClustersToRect, clampClustersTranslation: clampClustersTranslation,
+  viewAfterResizeKeepingCenter: viewAfterResizeKeepingCenter,
   BOX_PATTERNS: BOX_PATTERNS, boxPatternIndex: boxPatternIndex, boxPatternForDate: boxPatternForDate,
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   elapsedSeconds: elapsedSeconds, sanitizeClearTime: sanitizeClearTime,
@@ -2305,6 +2377,48 @@ function setPanMode(mode) {
   store.panMode = panMode;
   saveStore();
   syncPanModeButtons();
+}
+/* ---------- 端マージン (プレイ画面を一回り小さく) ----------
+ * iPhone Safari では画面端のピースを掴もうとすると端スワイプで
+ * ブラウザバックしてしまうため、プレイ画面 (#stageWrap) を四方
+ * マージン分だけ内側へ縮め、掴み始めが画面端に触れないようにする。
+ * マージン部は body の紙色 (--screen-bg) が見え、盤面側は角丸+薄い影で
+ * 「紙の上に一回り小さい盤面が載っている」見た目になる (モック承認済み、
+ * design-samples/edge-margin/)。幅は style.css の #stageWrap.edge-margin。
+ * 設定はパン方式と同じ流儀で store.edgeMargin に保存する (旧セーブに
+ * キーが無ければオンが既定)。対象はプレイ画面のみで、壁・スタートには
+ * 適用しない。マルチでも各自の端末だけの表示設定として扱う */
+var edgeMargin = store.edgeMargin !== false;
+function applyEdgeMargin() {
+  $('stageWrap').classList.toggle('edge-margin', edgeMargin);
+}
+function syncEdgeMarginButtons() {
+  document.querySelectorAll('[data-edgemargin]').forEach(function (b) {
+    b.classList.toggle('active', (b.getAttribute('data-edgemargin') === 'on') === edgeMargin);
+  });
+}
+function setEdgeMargin(on) {
+  var next = !!on;
+  if (next === edgeMargin) { syncEdgeMarginButtons(); return; }
+  /* 切替はプレイ中のステージ実寸変更そのもの。resizeStage はカメラの
+   * fit を再計算しない (既存挙動) ので、そのままだと端のピースが
+   * 見切れる。切替前の表示中心 (ワールド座標) と絶対スケールを控え、
+   * リサイズ後に viewAfterResizeKeepingCenter で復元してから
+   * clampCamera で机の範囲へ収める — 画面はジャンプしない */
+  var oldW = stageW, oldH = stageH;
+  var v = (state && state.views) ? state.views.desk : null;
+  edgeMargin = next;
+  store.edgeMargin = edgeMargin;
+  saveStore();
+  applyEdgeMargin();
+  resizeStage(); // 新しい実寸で canvas bitmap と stageW/stageH を作り直す
+  if (v && oldW > 0 && oldH > 0 && stageW > 0 && stageH > 0) {
+    state.views.desk = viewAfterResizeKeepingCenter(v, oldW, oldH, stageW, stageH, fitView().fit);
+    clampCamera();
+    updateZoomLabel();
+    draw();
+  }
+  syncEdgeMarginButtons();
 }
 /* ---------- サウンド (BGM / SE) ----------
  * 設定はテーマと同じ流儀で store に保存する (bgmOn / bgmVolume / seOn)。
@@ -3955,7 +4069,7 @@ stage.addEventListener('pointerdown', function (ev) {
   if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
   if (sortAnim) return; // お助けのアニメーション中は操作を受けない
   if (mpInRoom() && !mp.begun) return; // 協力: ready バリア (全員揃うまで入力無効、M10)
-  if (mpInRoom() && mp.mode === 'race' && (mp.finishSent || mp.raceWinner)) return; // レース: 自分が完成済み or 勝者確定後は操作を受けない
+  if (mpInRoom() && mp.mode === 'race' && mp.finishSent) return; // レース: 自分が完走した後は操作を受けない (他の人の完走では止まらない)
   if (mpInRoom() && mp.pinMode) { mpFirePin(stagePos(ev)); return; } // 協力: 合図ピン (ピンボタン経由)
   stage.setPointerCapture(ev.pointerId);
   var p = stagePos(ev);
@@ -4320,8 +4434,8 @@ function onClear() {
     author: state.author || null
   };
   /* 協力プレイ (§5 改訂 2026-11-17): クリア記録は参加者全員が自分の
-   * store に書く (協力/ターン制は全員、レースは勝者のみ — 敗者は
-   * onClear に来ず mpRaceShowResult で記録なしの結果画面になる)。
+   * store に書く。レースも完走した全員が自分の完走の瞬間にここへ来る
+   * (レースは最初の完走では終わらず、全員完走まで続く)。
    * coop 情報は全員の記録に付ける */
   if (mpInRoom()) {
     rec.coop = true;
@@ -7360,6 +7474,11 @@ function wireControls() {
     b.addEventListener('click', function () { setPanMode(b.getAttribute('data-panmode')); });
   });
   syncPanModeButtons();
+  document.querySelectorAll('[data-edgemargin]').forEach(function (b) {
+    b.addEventListener('click', function () { setEdgeMargin(b.getAttribute('data-edgemargin') === 'on'); });
+  });
+  syncEdgeMarginButtons();
+  applyEdgeMargin(); // 起動時点で保存済みの設定を盤面へ反映する (初回の resizeStage がマージン込みの実寸を測る)
   /* サウンド設定: 設定シートとスタート画面の両方に同じ設定のコントロールが
    * あり、変更は即保存 + 即適用、表示は syncAudioControls で両画面を一致
    * させる。クレジット一覧は BGM_TRACKS から生成する (曲名・作者・ライセンス)。 */
@@ -7859,9 +7978,9 @@ function renderStartScreen() {
  * ソロのコードパスには触らず、部屋にいる間だけ分岐する薄い層に徹する:
  * - 自分の drop / sort は即時適用せず、ホストの seq 確定イベントで適用する
  * - persistProgress は部屋中ずっと無動作 (ソロの進行中セーブと分離、§5)
- * - 記録と報酬は参加者全員が自分の store に書く (レースは勝者のみ、§5 改訂)。
- *   確定した記録は onClear がその場で saveStore する (#1) */
-var MP_LOGIC_VERSION = 4; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加。v4: レースのハンデ (start の piecesMap) を追加 — 旧端末が piecesMap を無視すると別条件のレースが静かに成立するため上げる
+ * - 記録と報酬は参加者全員が自分の store に書く (レースも完走した
+ *   全員、§5 改訂)。確定した記録は onClear がその場で saveStore する (#1) */
+var MP_LOGIC_VERSION = 5; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加。v4: レースのハンデ (start の piecesMap) を追加 — 旧端末が piecesMap を無視すると別条件のレースが静かに成立するため上げる。v5: レース完走方式 (finish に elapsedSec を載せ、レースは全員完走まで終わらない) — 旧端末は最初の finish で全員終了してしまうため混在を弾く
 /* プレイヤー識別色のパレット (8色)。先頭4色は従来の参加順割当てと
  * 同じ順序 (互換のため変更しない)。プロフィールで選んだ色がその人の
  * 識別色になり、重複はホストが調停する (MP改善#4) */
@@ -7919,7 +8038,7 @@ var MP_MODE_NAMES = { coop: '協力', turn: 'ターン制', race: 'レース' };
 var MP_MODE_DESCS = {
   coop: 'みんなで同じ盤面を一緒に解きます',
   turn: '順番に1手ずつ。ピースをつなげたら次の人へ',
-  race: '各自の盤面で勝負。最初に完成した人の勝ち'
+  race: '各自の盤面で勝負。クリアした順に順位がつきます'
 };
 var MP_GHOST_INTERP_MS = 120; // 相手ゴーストの補間時間 (ms)。0 で補間なし (即ジャンプ = 旧挙動)。A/B 切替用 (#2)
 var mp = {
@@ -7930,6 +8049,7 @@ var mp = {
   mode: 'coop', lobbyMode: 'coop',
   turnOrder: [], turnIdx: 0, leftPlayers: {}, matchPlayers: [],
   raceProgress: {}, raceWinner: null, finishSent: false,
+  raceFinish: {}, raceDone: false, // レース完走集計: playerId -> { rank, elapsedSec } / 全員完走 (or 残り全員退出) の確定
   lobbyStage: null, lobbyPieces: null, lobbyInfo: null, lobbyStatus: '',
   peers: [], verifyCode: null,
   myLeases: {},          // anchorId -> epoch (自分に付与されたリース)
@@ -8058,6 +8178,7 @@ var mpHooksObj = {
       mode: mp.mode, turnOrder: mp.turnOrder, turnIdx: mp.turnIdx,
       leftPlayers: mp.leftPlayers,
       raceProgress: mp.raceProgress, raceWinner: mp.raceWinner,
+      raceFinish: mp.raceFinish, raceDone: mp.raceDone,
       cleared: !!(state && state.cleared)
     };
   },
@@ -8338,6 +8459,7 @@ function mpResetState() {
   mp.mode = 'coop'; mp.lobbyMode = 'coop';
   mp.turnOrder = []; mp.turnIdx = 0; mp.leftPlayers = {}; mp.matchPlayers = [];
   mp.raceProgress = {}; mp.raceWinner = null; mp.finishSent = false;
+  mp.raceFinish = {}; mp.raceDone = false;
   $('mpTurnBar').hidden = true;
   $('mpRaceBar').hidden = true;
   mp.peers = []; mp.verifyCode = null; mp.contrib = {}; mp.myLeases = {};
@@ -8868,6 +8990,8 @@ function mpOnStartEvent(ev) {
   mp.raceProgress = {};
   mp.turnOrder.forEach(function (id) { mp.raceProgress[id] = 0; });
   mp.raceWinner = null;
+  mp.raceFinish = {};
+  mp.raceDone = false;
   mp.finishSent = false;
   mpLoadPuzzle(ev.stage, mp.pieces); // 自分の実効ピース数で自分の盤面を組む
 }
@@ -8882,6 +9006,8 @@ function mpOnNextEvent(ev) {
   mp.completeSent = false;
   mp.clearShown = false;
   mp.raceWinner = null;
+  mp.raceFinish = {};
+  mp.raceDone = false;
   mp.finishSent = false;
   mp.raceProgress = {};
   mp.turnIdx = 0;
@@ -9094,6 +9220,13 @@ function mpOnPlayerLeft(ev) {
   mp.leftPlayers[ev.player] = true; // 手番の解決時に自動で飛ばされる
   delete mp.remoteGroups[ev.player];
   mpUpdateTurnUI();
+  if (mp.mode === 'race') {
+    // レース: 退出者はリタイアとして待機集合から外す (記録なし)。
+    // 残り全員が完走済みならレース終了を確定する
+    mpRenderRaceBar();
+    mpRefreshRaceResultExtras();
+    mpCheckRaceDone();
+  }
 }
 function mpUpdateTurnUI() {
   var bar = $('mpTurnBar');
@@ -9112,52 +9245,91 @@ function mpUpdateTurnUI() {
 }
 
 /* ---------- レース ---------- */
+/* 対戦名簿 (start の order 由来) から1人を引く */
+function mpMatchPlayer(id) {
+  for (var i = 0; i < mp.matchPlayers.length; i++)
+    if (mp.matchPlayers[i].id === id) return mp.matchPlayers[i];
+  return null;
+}
 /* 自分の盤面が変わった後に呼ぶ: 進捗 (はめたピース数) が変わっていれば
- * progress を、完成していれば finish を seq へ送る。結果表示は
- * finish の確定 (mpOnRaceFinish) を待つので、ローカル完成だけで
- * 記録や結果画面へ進むことはない */
+ * progress を、完成していれば finish (本人の経過時間を申告) を seq へ
+ * 送る。記録と結果表示は finish の確定 (mpOnRaceFinish) を待つので、
+ * ローカル完成だけで記録や結果画面へ進むことはない。レースは最初の
+ * 完走では終わらないので、誰かが完走しても自分の報告は続ける */
 function mpRaceAfterBoard() {
-  if (!mp.session || mp.raceWinner) return;
+  if (!mp.session || mp.finishSent) return;
   var placed = racePlacedCount(mp.pieces, state.clusters.length);
   if (placed !== (mp.raceProgress[mpMyId()] || 0))
     mp.session.sendEvent({ t: 'progress', placed: placed });
-  if (!mp.finishSent && isComplete(state.clusters, state.n)) {
+  if (isComplete(state.clusters, state.n)) {
     mp.finishSent = true;
-    mp.session.sendEvent({ t: 'finish' });
-    showToast('完成！ 結果を待っています…');
+    mp.session.sendEvent({ t: 'finish', elapsedSec: currentElapsed() });
+    showToast('完成！ 他のプレイヤーの完走を待っています…');
   }
 }
 function mpOnRaceProgress(ev) {
   if (typeof ev.placed !== 'number') return;
   mp.raceProgress[ev.from] = ev.placed;
   mpRenderRaceBar();
+  mpRefreshRaceResultExtras(); // 自分が完走待ちで結果画面を開いていれば進捗を反映
 }
-/* 勝者は seq 順に最初に適用された finish で確定する (同時完成の競合は
- * ホストの採番順で一意に決まる)。後の finish は無視する */
+/* 完走の確定: 順位は finish が seq 順に適用された順 (ホストの採番順で
+ * 全端末一致)。レースはここでは終わらず、各自が完走するまで続く。
+ * 自分の finish が確定した瞬間に通常のクリア処理 (記録・ごほうびは
+ * 完走した全員に各自付く) を走らせる */
 function mpOnRaceFinish(ev) {
-  if (mp.raceWinner || mp.mode !== 'race' || mp.clearShown) return;
-  mp.clearShown = true;
-  mp.raceWinner = ev.from;
-  mp.raceProgress[ev.from] = racePlacedCount(mpPiecesOf(ev.from), 1); // 勝者は完成 = 勝者自身の全ピース数 − 1
-  if (drag) { drag = null; stopEdgeScroll(); } // 終了時点で掴んでいた塊は確定させない
+  if (mp.mode !== 'race' || !mp.started) return;
+  var id = ev.from;
+  if (!id || mp.raceFinish[id]) return; // 同じ人の finish は1回だけ数える
+  var rank = Object.keys(mp.raceFinish).length + 1;
+  mp.raceFinish[id] = { rank: rank, elapsedSec: sanitizeRaceElapsed(ev.elapsedSec) };
+  if (!mp.raceWinner) mp.raceWinner = id; // 1位 (snapshot 互換と表示用に保持)
+  mp.raceProgress[id] = racePlacedCount(mpPiecesOf(id), 1); // 完走 = その人自身の全ピース数 − 1
   mpRenderRaceBar();
-  if (ev.from === mpMyId()) {
-    onClear(); // 勝者: 通常のクリア処理 (記録・ごほうびは勝者本人に付く。敗者は記録なし)
+  if (id === mpMyId()) {
+    if (drag) { drag = null; stopEdgeScroll(); } // 自分の完走後は掴んでいた塊を確定させない
+    mp.clearShown = true;
+    onClear(); // 自分の記録 + ごほうび (結果画面に順位と待機状態が出る)
   } else {
-    mpRaceShowResult();
+    mpRefreshRaceResultExtras(); // 自分が待機中なら順位表を更新する
   }
+  mpCheckRaceDone();
+}
+/* レース終了の確定: 接続中の全員が完走 (退出者はリタイアとして除外)
+ * したら最終結果にする。結果画面を開いている人はその場で最終版へ
+ * 差し替え、閉じている完走者にはトーストで知らせる (最終結果は
+ * 接続バッジから見直せる) */
+function mpCheckRaceDone() {
+  if (mp.mode !== 'race' || mp.raceDone || !mp.started) return;
+  if (!raceAllFinished(mp.turnOrder, mp.raceFinish, mp.leftPlayers)) return;
+  mp.raceDone = true;
+  mpRenderRaceBar();
+  if (!$('resultModal').hidden) {
+    mpFillResultExtras(); // 最終順位表 + 「つぎのステージへ」解禁へ差し替え
+  } else if (mp.raceFinish[mpMyId()]) {
+    showToast('レースが終了しました。最終結果は接続バッジから見られます');
+  }
+}
+/* 結果画面を開いている間、順位表だけを最新化する */
+function mpRefreshRaceResultExtras() {
+  if (mp.mode === 'race' && !$('resultModal').hidden) mpFillResultExtras();
 }
 function mpRaceProgressRecord() {
   var out = {};
   mp.matchPlayers.forEach(function (p) { out[p.id] = mp.raceProgress[p.id] || 0; });
   return out;
 }
-/* 負けた側の結果画面: 記録は書かず、勝者と全員の進捗だけを見せる */
+/* レースの順位表だけの結果画面 (表示専用・記録は書かない): レース終了
+ * 後に接続バッジから見直すときと、終了済みレースへの再入室時に使う。
+ * 自分のクリア画面 (記録証) は完走の瞬間に onClear が別途出している */
 function mpRaceShowResult() {
   if (!state) return;
-  $('resultTitle').textContent = '結果';
+  $('resultTitle').textContent = 'レース結果';
   $('resultDateLine').textContent = 'ステージ ' + playStage + ' ・ ' + difficulty + 'ピース';
-  $('resultStatLine').textContent = '勝者は ' + mpPlayerName(mp.raceWinner) + 'さん';
+  var myF = mp.raceFinish[mpMyId()];
+  $('resultStatLine').textContent = myF
+    ? 'あなたは ' + myF.rank + '位 ・ タイム ' + formatTime(myF.elapsedSec || 0)
+    : (mp.raceWinner ? '1位は ' + mpPlayerName(mp.raceWinner) + 'さん' : 'レースは終了しました');
   $('resultBadge').hidden = true;
   $('resultUpperBadge').hidden = true;
   $('resultRewardItems').hidden = true;
@@ -9184,9 +9356,13 @@ function mpRenderRaceBar() {
   if (!show) return;
   var html = '';
   mp.matchPlayers.forEach(function (p) {
+    var f = mp.raceFinish[p.id];
+    var label = f ? (f.rank + '位 ・ ' + formatTime(f.elapsedSec || 0))
+      : mp.leftPlayers[p.id] ? 'リタイア'
+      : ((mp.raceProgress[p.id] || 0) + '/' + mpPiecesOf(p.id));
     html += '<div class="mp-race-row">' + mpAvatarHtml(p.icon, p.color, 22) + '<span class="mp-race-name">' +
       escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
-      '<span class="mp-race-frac">' + (mp.raceProgress[p.id] || 0) + '/' + mpPiecesOf(p.id) + '</span></div>';
+      '<span class="mp-race-frac">' + label + '</span></div>';
   });
   bar.innerHTML = html;
 }
@@ -9253,17 +9429,32 @@ function mpDoApplySnapshot(snap) {
   if (snap.raceProgress) mp.raceProgress = snap.raceProgress;
   if (snap.raceWinner) mp.raceWinner = snap.raceWinner;
   if (mp.mode === 'race') {
-    // レースは各自の盤面が正。ホストの盤面で上書きせず、進捗と勝者だけ
-    // 取り込む (再入室した人の盤面は初期配置からやり直しになる)
+    // レースは各自の盤面が正。ホストの盤面で上書きせず、進捗と完走
+    // 集計だけ取り込む (再入室した人の盤面は初期配置からやり直しになる)
     mp.begun = true;
     $('mpWaitVeil').hidden = true;
-    mpRenderRaceBar();
-    if (mp.raceWinner && !mp.clearShown) {
-      mp.clearShown = true;
-      // 勝者が自分でも、再入室で盤面が初期化されていたら記録は書かず結果だけ見せる
-      if (mp.raceWinner === mpMyId() && isComplete(state.clusters, state.n)) onClear();
-      else mpRaceShowResult();
+    if (snap.raceFinish) {
+      // 既に確定した他人の完走順位・タイムは復元する。自分の盤面が
+      // 初期化されていたら自分は完走済みとして戻らない (再挑戦になる)
+      var myBoardDone = isComplete(state.clusters, state.n);
+      mp.raceFinish = {};
+      Object.keys(snap.raceFinish).forEach(function (id) {
+        if (id === mpMyId() && !myBoardDone) return;
+        mp.raceFinish[id] = snap.raceFinish[id];
+      });
+      if (!myBoardDone) mp.finishSent = false;
+      mp.raceWinner = null;
+      Object.keys(mp.raceFinish).forEach(function (id) {
+        if (mp.raceFinish[id] && mp.raceFinish[id].rank === 1) mp.raceWinner = id;
+      });
     }
+    mpRenderRaceBar();
+    if (mp.raceFinish[mpMyId()] && !mp.clearShown && isComplete(state.clusters, state.n)) {
+      // 自分が完走済みで盤面も完成したままの snapshot (切断を挟まない回復)
+      mp.clearShown = true;
+      onClear();
+    }
+    mpCheckRaceDone();
     return;
   }
   state.clusters = (snap.clusters || []).map(function (c) {
@@ -9568,26 +9759,36 @@ function mpFillResultExtras() {
   var box = $('resultContrib'), note = $('resultCoopNote'), acts = $('resultMpActions');
   if (!mpInRoom()) { box.hidden = true; note.hidden = true; acts.hidden = true; return; }
   if (mp.mode === 'race') {
-    // レース結果: 勝者 + 全員のはめたピース数 (分数形式)
-    var rhtml = '<p class="cert-contrib-title">レース結果</p><ul class="mp-roster">';
-    mp.matchPlayers.forEach(function (p) {
-      var isWinner = p.id === mp.raceWinner;
+    // レース順位表: 完走者は順位 + クリアタイム、対戦中ははめた数の
+    // 分数、退出者はリタイア。レース終了前は「待機中」の見出しで出し、
+    // 終了確定で最終版に差し替わる (mpCheckRaceDone が呼び直す)
+    var myF = mp.raceFinish[mpMyId()];
+    var rhtml = '<p class="cert-contrib-title">' + (mp.raceDone ? 'レース結果' : 'レース順位') + '</p><ul class="mp-roster">';
+    raceStandings(mp.turnOrder, mp.raceFinish, mp.leftPlayers, mp.raceProgress).forEach(function (r) {
+      var p = mpMatchPlayer(r.id);
+      if (!p) return;
+      var label = r.finished ? (r.rank + '位 ・ ' + formatTime(r.elapsedSec || 0))
+        : r.left ? 'リタイア'
+        : (r.placed + '/' + mpPiecesOf(r.id));
       rhtml += '<li>' + mpAvatarHtml(p.icon, p.color, 26) + '<span>' +
-        escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
-        '<span class="mp-peer-state">' + (isWinner ? '勝者 ・ ' : '') +
-        (mp.raceProgress[p.id] || 0) + '/' + mpPiecesOf(p.id) + '</span></li>';
+        escapeHtml(p.name) + (r.id === mpMyId() ? '（あなた）' : '') + '</span>' +
+        '<span class="mp-peer-state">' + label + '</span></li>';
     });
     rhtml += '</ul>';
     box.innerHTML = rhtml;
     box.hidden = false;
     note.hidden = false;
-    if (mp.raceWinner === mpMyId()) {
-      note.textContent = 'レース：あなたの勝利です。このクリアはあなたの記録になります';
+    if (myF) {
+      note.textContent = 'レース：' + myF.rank + '位でクリア！ このクリアはあなたの記録になります' +
+        (mp.raceDone ? '' : '。他のプレイヤーの完走を待っています');
+    } else if (mp.raceDone) {
+      note.textContent = 'レース：クリアした全員に記録とごほうびが付きます';
     } else {
-      note.textContent = 'レース：勝者は ' + mpPlayerName(mp.raceWinner) + 'さん。あなたの記録は付きません';
+      note.textContent = 'レース：クリアした順に順位がつきます。記録とごほうびはクリアした全員に付きます';
     }
     acts.hidden = false;
-    $('resultNextBtn').hidden = !mpIsHost();
+    // 「つぎのステージへ」は全員完走が確定してから押せるようにする
+    $('resultNextBtn').hidden = !mpIsHost() || !mp.raceDone;
     $('resultLeaveBtn').textContent = mpIsHost() ? '部屋を解散する' : '部屋を出る';
     return;
   }
@@ -9621,6 +9822,11 @@ $('mpBtn').addEventListener('click', function () {
  * 開き直せる。結果画面を閉じた後の復帰導線 (#1 真因2) */
 $('mpBadge').addEventListener('click', function () {
   if (!mp.session) return;
+  if (mp.mode === 'race' && mp.raceDone) {
+    // レース終了後は最終結果を見直せる (結果画面を閉じた完走者向け)
+    if ($('resultModal').hidden) mpRaceShowResult();
+    return;
+  }
   if (mp.started && !mp.clearShown) return; // 対戦中は邪魔しない
   mpShowLobby();
   $('mpModal').hidden = false;
