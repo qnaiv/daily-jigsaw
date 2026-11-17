@@ -8066,16 +8066,16 @@ function mpRenderLobbyPuzzle() {
   }
   var entry = stageEntry(stage, state.pool);
   var url = entryPhotoUrl(entry, 400);
-  if (url) {
-    wrap.hidden = false;
-    if (img.dataset.url !== url) { // 新しいお題: 読み込み中プレースホルダから始める
-      img.dataset.url = url;
-      img.hidden = true;
-      ph.textContent = '読み込み中…';
-      ph.hidden = false;
-      img.src = url;
-    }
-  } else { wrap.hidden = true; }
+  // ロビーでは完成図を見せない: お題が決まってもコレクションの未クリア
+  // タイルと同じ「？」で伏せる。画像は裏で読み込むだけに留める
+  wrap.hidden = false;
+  img.hidden = true;
+  ph.textContent = '？';
+  ph.hidden = false;
+  if (url && img.dataset.url !== url) {
+    img.dataset.url = url;
+    img.src = url;
+  }
   line.textContent = 'ステージ ' + stage + ' ・ ' + pieces + 'ピース' +
     (mpIsHost() ? '' : ' ・ ' + (MP_MODE_NAMES[(mp.lobbyInfo && mp.lobbyInfo.mode) || 'coop'] || ''));
 }
@@ -8909,16 +8909,8 @@ $('mpStartBtn').addEventListener('click', function () {
     order: mpPeerList().map(function (p) { return p.playerId; }) // 参加順 (手番・結果表示の並び)
   });
 });
-$('mpLobbyImg').addEventListener('load', function () {
-  $('mpLobbyImg').hidden = false;
-  $('mpLobbyImgPh').hidden = true;
-});
-$('mpLobbyImg').addEventListener('error', function () {
-  $('mpLobbyImg').hidden = true;
-  var ph = $('mpLobbyImgPh');
-  ph.textContent = 'お題の画像を読み込めませんでした';
-  ph.hidden = false;
-});
+/* ロビーのお題画像 (#mpLobbyImg) は裏読み専用: load / error でも表示には
+ * 出さない (ロビーでは「？」で伏せる。mpRenderLobbyPuzzle 参照) */
 $('mpPinBtn').addEventListener('click', function () {
   if (!mpInRoom() || !mp.begun) return;
   mp.pinMode = !mp.pinMode;

@@ -1145,12 +1145,9 @@ button { font: inherit; cursor: pointer; }
 .mp-lobby-imgwrap[hidden] { display: none; }
 #mpLobbyImg { display: block; margin: 0 auto; width: 100%; height: auto; border-radius: 10px; }
 #mpLobbyImg[hidden] { display: none; }
-.mp-img-ph {
-  display: flex; align-items: center; justify-content: center; aspect-ratio: 1;
-  border: 1px dashed var(--line); border-radius: 10px; box-sizing: border-box;
-  font-size: 12px; color: var(--muted); text-align: center; padding: 6px;
-}
-.mp-img-ph[hidden] { display: none; }
+/* ロビーのお題は伏せる: コレクション未クリアタイルと同じ「？」 (.card-locked-mark を流用し、角丸だけロビー側に合わせる) */
+.mp-lobby-ph { border-radius: 10px; }
+.mp-lobby-ph[hidden] { display: none; }
 .mp-puzzle-line { text-align: left; font-size: 13px; font-weight: 700; margin: 2px 0; }
 .mp-puzzle-line[hidden] { display: none; }
 #mpDiffSeg { gap: 4px; }

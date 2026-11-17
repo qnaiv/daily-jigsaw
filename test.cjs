@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v40'") !== -1, 'sw: VERSION は v40');
+  ok(swSB.indexOf("VERSION = 'v41'") !== -1, 'sw: VERSION は v41');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1661,6 +1661,26 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MPモード配線: レース記録はホスト勝利時のみ race 付きで書き、結果は全員分を分数形式で出す');
   ok(cssX.indexOf('#mpTurnBar') !== -1 && cssX.indexOf('#mpRaceBar') !== -1 && cssX.indexOf('#mpModeSeg') !== -1,
      'MPモード配線: style.css に手番バー・レース進捗バー・モード選択のスタイルがある');
+}
+
+/* マルチプレイ: ロビーではお題の完成図を見せない (「？」で伏せる) */
+{
+  const fsL = require('fs'), pathL = require('path');
+  const appL = fsL.readFileSync(pathL.join(__dirname, 'app.js'), 'utf8');
+  const htmlL = fsL.readFileSync(pathL.join(__dirname, 'index.html'), 'utf8');
+  const cssL = fsL.readFileSync(pathL.join(__dirname, 'style.css'), 'utf8');
+  ok(htmlL.indexOf('id="mpLobbyImgPh" class="card-locked-mark mp-lobby-ph">？<') !== -1,
+     'MPロビー: お題の場所にはコレクション未クリアタイルと同じ「？」プレースホルダを出す');
+  ok(appL.indexOf("$('mpLobbyImg').hidden = false") === -1 &&
+     appL.indexOf('お題の画像を読み込めませんでした') === -1,
+     'MPロビー: お題画像を表示に切り替えるコードがない (裏読み専用)');
+  const fnStart = appL.indexOf('function mpRenderLobbyPuzzle() {');
+  const fnBody = appL.slice(fnStart, appL.indexOf('\n}', fnStart));
+  ok(fnBody.indexOf("ph.textContent = '？';") !== -1 && fnBody.indexOf('ph.hidden = false;') !== -1 &&
+     fnBody.indexOf('img.hidden = true;') !== -1 && fnBody.indexOf('img.src = url;') !== -1,
+     'MPロビー: 描画は「？」を出し、画像は隠したまま裏で読み込む');
+  ok(cssL.indexOf('.mp-lobby-ph') !== -1 && cssL.indexOf('.mp-img-ph') === -1,
+     'MPロビー: プレースホルダのスタイルは .mp-lobby-ph に移り、旧 .mp-img-ph は残っていない');
 }
 
 /* レース進捗とターン進行 (PureLogic) */
