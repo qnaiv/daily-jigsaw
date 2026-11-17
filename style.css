@@ -1171,6 +1171,21 @@ button { font: inherit; cursor: pointer; }
 .mp-roster li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 .mp-roster .mp-dot { width: 12px; height: 12px; border-radius: 999px; flex: 0 0 auto; border: 2px solid rgba(255,255,255,.85); box-shadow: 0 0 0 1px rgba(0,0,0,.18); }
 .mp-roster .mp-peer-state { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+/* プロフィール (MP改善#4): アバター丸チップと編集シート */
+.mp-avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; flex: 0 0 auto; border: 2px solid rgba(255,255,255,.85); box-shadow: 0 0 0 1px rgba(0,0,0,.18); box-sizing: border-box; }
+.mp-avatar svg { display: block; }
+.mp-profile-row { display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; }
+.mp-profile-summary { flex: 1; min-width: 0; font-size: 13.5px; }
+.mp-profile-edit { min-height: 36px; padding: 5px 14px; font-size: 13px; flex: 0 0 auto; }
+.mp-lobby-profile { margin: 2px 0 6px; }
+#mpProfName { text-transform: none; letter-spacing: normal; width: 100%; box-sizing: border-box; }
+.mp-prof-icons { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.mp-prof-icon-btn { display: flex; align-items: center; justify-content: center; padding: 6px 0; border: 1px solid var(--line); border-radius: 12px; background: #fffdf6; cursor: pointer; }
+.mp-prof-icon-btn.active { border-color: transparent; box-shadow: 0 0 0 2px var(--brass); }
+.mp-prof-colors { display: flex; gap: 8px; flex-wrap: wrap; }
+.mp-prof-color-btn { width: 34px; height: 34px; border-radius: 999px; border: 2px solid rgba(255,255,255,.85); box-shadow: 0 0 0 1px rgba(0,0,0,.18); cursor: pointer; padding: 0; }
+.mp-prof-color-btn.active { box-shadow: 0 0 0 2px #fffdf6, 0 0 0 4px var(--brass); }
+#mpTurnDot.has-icon { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
 .danger-link { color: #b3402e; }
 /* クリア画面の協力表示 */
 .cert-contrib { width: 100%; margin-top: 8px; }

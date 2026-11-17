@@ -436,6 +436,14 @@
     <!-- 入口: 部屋を作る / コードで入る / 手動コード -->
     <div id="mpHomeView">
       <div class="settings-list">
+        <div class="settings-credits">
+          <span class="settings-section-label">あなたのプロフィール</span>
+          <div class="mp-profile-row">
+            <span id="mpProfileChip"></span>
+            <span id="mpProfileSummary" class="mp-profile-summary">未設定（名前はホスト/ゲスト、色は参加順）</span>
+            <button id="mpProfileEditBtn" class="btn mp-profile-edit" type="button">編集</button>
+          </div>
+        </div>
         <button id="mpCreateBtn" class="btn settings-item cert-primary" type="button">部屋をつくる</button>
         <div class="settings-credits">
           <span class="settings-section-label">コードで入る</span>
@@ -446,7 +454,7 @@
         </div>
         <button id="mpManualBtn" class="fresh-link" type="button">手動コードでつなぐ（2人専用）</button>
         <p id="mpHomeError" class="mp-error" hidden></p>
-        <p class="mp-note">部屋コードを知っている人だけが入れます。クリアの記録とごほうびはホストのものになります。</p>
+        <p class="mp-note">部屋コードを知っている人だけが入れます。クリアの記録とごほうびは参加者全員のものになります（レースは勝者のみ）。</p>
       </div>
     </div>
 
@@ -511,6 +519,11 @@
         </div>
         <div class="settings-credits">
           <span class="settings-section-label">参加者</span>
+          <div class="mp-profile-row mp-lobby-profile">
+            <span id="mpProfileChipLobby"></span>
+            <span id="mpProfileSummaryLobby" class="mp-profile-summary">未設定（名前はホスト/ゲスト、色は参加順）</span>
+            <button id="mpProfileEditBtnLobby" class="btn mp-profile-edit" type="button">編集</button>
+          </div>
           <ul id="mpRoster" class="mp-roster"></ul>
         </div>
         <div id="mpStartBlock" hidden>
@@ -519,6 +532,38 @@
         </div>
         <button id="mpLeaveBtn" class="btn btn-underline danger-link" type="button">部屋を出る</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- プロフィール編集 (MP改善#4): MP モーダルの上に重ねる小シート -->
+<div id="mpProfileModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-body mp-body">
+    <h2>プロフィール</h2>
+    <div class="settings-list">
+      <div class="settings-credits">
+        <span class="settings-section-label">名前（8文字まで）</span>
+        <input id="mpProfName" class="mp-code-input" type="text" placeholder="名前を入力" autocomplete="off">
+      </div>
+      <div class="settings-credits">
+        <span class="settings-section-label">アイコン</span>
+        <div id="mpProfIcons" class="mp-prof-icons"></div>
+      </div>
+      <div class="settings-credits">
+        <span class="settings-section-label">色</span>
+        <div id="mpProfColors" class="mp-prof-colors"></div>
+      </div>
+      <div class="mp-profile-row">
+        <span id="mpProfPreview"></span>
+        <span id="mpProfPreviewName" class="mp-profile-summary"></span>
+      </div>
+      <p class="mp-note">対戦中は、他の人と色が重なると近い色にずれることがあります。</p>
+      <div class="result-actions">
+        <button id="mpProfSaveBtn" class="btn cert-primary" type="button">保存する</button>
+        <button id="mpProfCancelBtn" class="btn" type="button">やめる</button>
+      </div>
+      <button id="mpProfClearBtn" class="btn btn-underline" type="button">プロフィールを消す（未設定に戻す）</button>
     </div>
   </div>
 </div>

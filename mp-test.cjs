@@ -921,6 +921,64 @@ console.log('[9] coalesce');
   eq(sent.length, 3, 'coalesce: dispose 後は保留分が送られない');
 }
 
+/* ================= 10. プロフィール (#4) ================= */
+console.log('[10] プロフィール');
+{
+  // sanitizeProfile: 無害化と切り捨て
+  eq(MP.sanitizeProfile(null), null, 'profile: null は未設定');
+  eq(MP.sanitizeProfile({}), null, 'profile: 空オブジェクトは未設定');
+  eq(MP.sanitizeProfile({ name: '  たろう  ' }).name, 'たろう', 'profile: 名前は前後空白を落とす');
+  eq(MP.sanitizeProfile({ name: 'あいうえおかきくけ' }).name, 'あいうえおかきく', 'profile: 名前は8文字で切る');
+  eq(MP.sanitizeProfile({ name: '   ' }), null, 'profile: 空白だけの名前は未設定扱い');
+  eq(MP.sanitizeProfile({ icon: 'piece' }).icon, 'piece', 'profile: icon は短い id を通す');
+  eq(MP.sanitizeProfile({ icon: 'Bad Icon!' }), null, 'profile: 不正な icon だけなら未設定');
+  eq(MP.sanitizeProfile({ name: 'x', icon: 'Bad Icon!' }).icon, null, 'profile: 不正な icon は落として他の項目は残す');
+  eq(MP.sanitizeProfile({ color: 7 }).color, 7, 'profile: color は 0..7 を通す');
+  eq(MP.sanitizeProfile({ color: 8 }), null, 'profile: color=8 は落として未設定');
+  eq(MP.sanitizeProfile({ color: 2.9 }).color, 2, 'profile: color は整数化する');
+  const full = MP.sanitizeProfile({ name: 'はな', icon: 'star', color: 5 });
+  ok(full && full.name === 'はな' && full.icon === 'star' && full.color === 5, 'profile: 3項目そろった形を保つ');
+
+  // resolveProfileColors: 参加順の調停
+  const players = [
+    { playerId: 'host', color: 0 },
+    { playerId: 'g1', color: 1 },
+    { playerId: 'g2', color: 2 },
+    { playerId: 'g3', color: 3 }
+  ];
+  let eff = MP.resolveProfileColors(players, {});
+  ok(eff.host === 0 && eff.g1 === 1 && eff.g2 === 2 && eff.g3 === 3,
+    'profile調停: プロフィールが無ければ参加順の割当色のまま');
+  eff = MP.resolveProfileColors(players, { g2: { name: null, icon: null, color: 7 } });
+  ok(eff.g2 === 7 && eff.host === 0 && eff.g1 === 1 && eff.g3 === 3,
+    'profile調停: 希望色が空いていればその色になる');
+  eff = MP.resolveProfileColors(players, { g1: { name: null, icon: null, color: 0 } });
+  ok(eff.host === 0 && eff.g1 === 1,
+    'profile調停: 先約 (ホスト) と重なれば最も近い空き色へ寄せる');
+  eff = MP.resolveProfileColors(players, {
+    host: { name: null, icon: null, color: 3 },
+    g1: { name: null, icon: null, color: 3 },
+    g2: { name: null, icon: null, color: 3 }
+  });
+  ok(eff.host === 3 && eff.g1 === 4 && eff.g2 === 2,
+    'profile調停: 3人が同じ色を希望したら参加順に近い空き色へ散る');
+  eff = MP.resolveProfileColors(players, { g3: { name: 'x', icon: 'bell', color: null } });
+  ok(eff.g3 === 3, 'profile調停: 色の希望が無い人は割当色のまま');
+
+  // peerListWithProfiles: onPeers / roster の形
+  const list = MP.peerListWithProfiles(
+    [{ playerId: 'host', color: 0, isHost: true }, { playerId: 'g1', color: 1, isHost: false }],
+    { g1: { name: 'はな', icon: 'star', color: 0 } },
+    p => !p.isHost
+  );
+  ok(list[0].name === null && list[0].icon === null && list[0].connected === false,
+    'profile一覧: 未設定の人は name/icon が null で、接続状態は connectedOf の結果');
+  eq(list[0].color, 0, 'profile一覧: ホストは割当色 0');
+  ok(list[1].name === 'はな' && list[1].icon === 'star' && list[1].color === 1 && list[1].connected === true,
+    'profile一覧: 希望色が先約と重なれば調停され、名前とアイコンが付く');
+  eq(MP.PROFILE_COLOR_COUNT, 8, 'profile: パレットは8色');
+}
+
 MP.encodeManualCode({ v: 1, kind: 'offer', sdp: 'dummy-sdp' }).then(codeStr => {
   ok(/^[gr]\./.test(codeStr), '手動コードに接頭辞が付く');
   return MP.decodeManualCode(codeStr);

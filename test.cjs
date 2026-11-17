@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v42'") !== -1, 'sw: VERSION は v42');
+  ok(swSB.indexOf("VERSION = 'v43'") !== -1, 'sw: VERSION は v43');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1882,6 +1882,64 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.buildInviteUrl('http://localhost:8931', '/index.html', 'XYZ789') ===
      'http://localhost:8931/index.html?room=XYZ789',
      '招待: pathname が /index.html の環境でもそのまま組む');
+}
+
+/* プロフィール (MP改善#4): 正規化 (PureLogic) と保存・共有・表示の配線 */
+{
+  ok(typeof L.normalizeProfile === 'function', 'MP改善#4: normalizeProfile が PureLogic にある');
+  ok(L.normalizeProfile(null) === null && L.normalizeProfile(undefined) === null &&
+     L.normalizeProfile('x') === null && L.normalizeProfile({}) === null,
+     'MP改善#4: 未設定・空は null (現行表示にフォールバック)');
+  const np1 = L.normalizeProfile({ name: '  たろう  ', icon: 'piece', color: 4 });
+  ok(np1 && np1.name === 'たろう' && np1.icon === 'piece' && np1.color === 4,
+     'MP改善#4: 名前・アイコン・色を通し、名前の前後空白を落とす');
+  ok(L.normalizeProfile({ name: 'あいうえおかきくけ' }).name === 'あいうえおかきく',
+     'MP改善#4: 名前は8文字で切る');
+  ok(L.normalizeProfile({ name: '   ' }) === null, 'MP改善#4: 空白だけの名前は未設定扱い');
+  ok(L.normalizeProfile({ icon: 'cat' }) === null && L.normalizeProfile({ icon: 'butterfly' }) === null,
+     'MP改善#4: 確定セット外のアイコン (ねこ/ちょうは除外済み) は落とす');
+  ok(L.PROFILE_ICON_IDS.length === 10 && L.PROFILE_ICON_IDS.indexOf('piece') !== -1 &&
+     L.PROFILE_ICON_IDS.indexOf('bell') !== -1,
+     'MP改善#4: アイコンは確定10点 (パズル〜すず)');
+  ok(L.normalizeProfile({ color: 7 }).color === 7 && L.normalizeProfile({ color: 8 }) === null &&
+     L.normalizeProfile({ color: -1 }) === null && L.normalizeProfile({ color: 2.9 }).color === 2,
+     'MP改善#4: 色は 0..7 の整数だけを通す');
+  const fsP = require('fs'), pathP = require('path');
+  const appP = fsP.readFileSync(pathP.join(__dirname, 'app.js'), 'utf8');
+  const htmlP = fsP.readFileSync(pathP.join(__dirname, 'index.html'), 'utf8');
+  const mpP = fsP.readFileSync(pathP.join(__dirname, 'mp.js'), 'utf8');
+  const cssP = fsP.readFileSync(pathP.join(__dirname, 'style.css'), 'utf8');
+  ok(appP.indexOf("var MP_COLORS = ['#d9532b', '#2470c9', '#2f9e5f', '#8b46c7', '#b07d10', '#c94f7c', '#178a8a', '#8a5a33'];") !== -1 &&
+     appP.indexOf("var MP_COLOR_NAMES = ['あか', 'あお', 'みどり', 'むらさき', 'おうど', 'もも', 'みず', 'ちゃ'];") !== -1,
+     'MP改善#4: パレットは既存4色の順序を保ったまま8色に拡張');
+  ok(appP.indexOf('store.profile = normalizeProfile(store.profile);') !== -1,
+     'MP改善#4: store.profile は読み込み時に正規化される (旧セーブは null)');
+  ok(appP.indexOf('function mpSendMyProfile()') !== -1 &&
+     appP.indexOf('mp.session.setProfile(store.profile)') !== -1 &&
+     appP.indexOf("status === 'open'") !== -1,
+     'MP改善#4: プロフィールはセッションの setProfile で共有し、open で送り直す');
+  ok(appP.indexOf('function mpOpenProfileEditor()') !== -1 &&
+     appP.indexOf('function mpAvatarHtml(') !== -1 &&
+     appP.indexOf('function mpAvatarSvgString(') !== -1,
+     'MP改善#4: 編集シートとアバター描画の関数がある');
+  ok(appP.indexOf("if (pr && pr.name) return pr.name;") !== -1,
+     'MP改善#4: mpPlayerName はプロフィール名を優先する');
+  ok(htmlP.indexOf('id="mpProfileModal"') !== -1 && htmlP.indexOf('id="mpProfName"') !== -1 &&
+     htmlP.indexOf('id="mpProfIcons"') !== -1 && htmlP.indexOf('id="mpProfColors"') !== -1 &&
+     htmlP.indexOf('id="mpProfileEditBtn"') !== -1 && htmlP.indexOf('id="mpProfileEditBtnLobby"') !== -1,
+     'MP改善#4: 入口/ロビーのプロフィール行と編集シートの要素がある');
+  ok(mpP.indexOf("msg.t === 'profile'") !== -1 && mpP.indexOf('profiles: profiles') !== -1 &&
+     mpP.indexOf('resolveProfileColors') !== -1 && mpP.indexOf('var MP_LOGIC_VERSION') === -1,
+     'MP改善#4: mp.js は profile を名簿で保持し welcome に同梱、色を調停する');
+  ok(appP.indexOf('var MP_LOGIC_VERSION = 3;') !== -1,
+     'MP改善#4: profile は追加型なので MP_LOGIC_VERSION は 3 のまま');
+  ok(cssP.indexOf('.mp-avatar') !== -1 && cssP.indexOf('.mp-prof-icons') !== -1 &&
+     cssP.indexOf('#mpTurnDot.has-icon') !== -1,
+     'MP改善#4: style.css にアバターと編集シートのスタイルがある');
+  // アイコン SVG が確定10点ぶん app.js に埋め込まれている (gen_sample.py の ICONS が正)
+  const iconIds = ['piece', 'star', 'flower', 'leaf', 'moon', 'bird', 'fish', 'mushroom', 'acorn', 'bell'];
+  ok(iconIds.every(function (id) { return appP.indexOf("{ id: '" + id + "', name: '") !== -1; }),
+     'MP改善#4: アイコン定義が10点そろっている');
 }
 
 /* 貢献度: くっつける操作の回数 = その drop で消えた塊の数

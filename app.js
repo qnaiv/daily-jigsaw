@@ -1662,6 +1662,28 @@ function normalizeWall(w) {
   out.pendingExpand = false; // 拡張廃止: 未通知の拡張は打ち切る
   return out;
 }
+/* プレイヤープロフィール (MP改善#4): { name, icon, color }。未設定は null。
+ * name は最大8文字 (コードポイント単位)、icon は確定セットの id のみ、
+ * color はパレット (MP_COLORS) の index 0..7。不正な項目は個別に落とし、
+ * 全て落ちたら null (未設定 = 現行表示にフォールバック) */
+var PROFILE_ICON_IDS = ['piece', 'star', 'flower', 'leaf', 'moon', 'bird', 'fish', 'mushroom', 'acorn', 'bell'];
+var PROFILE_NAME_MAX = 8;
+var PROFILE_COLOR_COUNT = 8;
+function normalizeProfile(p) {
+  if (!p || typeof p !== 'object') return null;
+  var name = null, icon = null, color = null;
+  if (typeof p.name === 'string') {
+    var n = Array.from(p.name.trim()).slice(0, PROFILE_NAME_MAX).join('');
+    if (n) name = n;
+  }
+  if (typeof p.icon === 'string' && PROFILE_ICON_IDS.indexOf(p.icon) !== -1) icon = p.icon;
+  if (typeof p.color === 'number' && isFinite(p.color)) {
+    var c = Math.floor(p.color);
+    if (c >= 0 && c < PROFILE_COLOR_COUNT) color = c;
+  }
+  if (name == null && icon == null && color == null) return null;
+  return { name: name, icon: icon, color: color };
+}
 /* 抽選対象に入るか: 未所持で、季節物はその月の間だけ */
 function wallDrawEligible(item, wall, month) {
   if (!item) return false;
@@ -1945,6 +1967,7 @@ var PureLogic = {
   FRAME_SIZE_TIERS: FRAME_SIZE_TIERS, frameSizeTierOf: frameSizeTierOf, clampFrameCenter: clampFrameCenter,
   SAMPLE_BOX_ART: SAMPLE_BOX_ART, sampleBoxArtRect: sampleBoxArtRect, sampleBoxElementRect: sampleBoxElementRect,
   emptyWall: emptyWall, normalizeWall: normalizeWall, nextWallItemUid: nextWallItemUid,
+  PROFILE_ICON_IDS: PROFILE_ICON_IDS, PROFILE_NAME_MAX: PROFILE_NAME_MAX, normalizeProfile: normalizeProfile,
   TOUR_SEGMENTS: TOUR_SEGMENTS, TOUR_STEP_COUNT: TOUR_STEP_COUNT,
   wallDrawEligible: wallDrawEligible, drawWallItem: drawWallItem,
   grantWallItems: grantWallItems, recordWallHistory: recordWallHistory,
@@ -1983,11 +2006,12 @@ function loadStore() {
     var raw = localStorage.getItem(STORE_KEY);
     if (raw) { var s = JSON.parse(raw); if (s && s.progress && s.records) return s; }
   } catch (e) { /* ignore */ }
-  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true, seVolume: 1 };
+  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true, seVolume: 1, profile: null };
 }
 var store = loadStore();
 store.uiTheme = normalizeUiTheme(store.uiTheme); // 旧テーマ値は無効値として既定 'walnut' に落とす
 store.wall = normalizeWall(store.wall); // 壁インテリア (旧データには無いので空で作る。旧 store.rewards は読み捨て)
+store.profile = normalizeProfile(store.profile); // プレイヤープロフィール (MP改善#4。旧データには無いので null)
 /* ラウンド制 (第N回) は廃止 (2026-11-09 ステージ制へ転換)。store.round は旧セーブに残っていても読まない */
 function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
@@ -6406,7 +6430,7 @@ function navJumpTo(name) {
   navStack = ['start', name];
 }
 function navCloseTopConfirm() {
-  var ids = ['resetConfirmModal', 'freshConfirmModal', 'confirmModal', 'shareChoiceModal', 'sortConfirmModal'];
+  var ids = ['resetConfirmModal', 'freshConfirmModal', 'confirmModal', 'shareChoiceModal', 'sortConfirmModal', 'mpProfileModal'];
   var closed = false;
   for (var i = 0; i < ids.length; i++) {
     if (!$(ids[i]).hidden) { $(ids[i]).hidden = true; closed = true; }
@@ -6461,7 +6485,7 @@ window.addEventListener('popstate', function () {
   handlePopstate();
 });
 function navConfirmOpen() {
-  var ids = ['resetConfirmModal', 'freshConfirmModal', 'confirmModal', 'shareChoiceModal', 'sortConfirmModal'];
+  var ids = ['resetConfirmModal', 'freshConfirmModal', 'confirmModal', 'shareChoiceModal', 'sortConfirmModal', 'mpProfileModal'];
   for (var i = 0; i < ids.length; i++) if (!$(ids[i]).hidden) return true;
   return false;
 }
@@ -7668,8 +7692,55 @@ function renderStartScreen() {
  * - 記録と報酬は参加者全員が自分の store に書く (レースは勝者のみ、§5 改訂)。
  *   確定した記録は onClear がその場で saveStore する (#1) */
 var MP_LOGIC_VERSION = 3; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加
-var MP_COLORS = ['#d9532b', '#2470c9', '#2f9e5f', '#8b46c7'];
-var MP_COLOR_NAMES = ['あか', 'あお', 'みどり', 'むらさき'];
+/* プレイヤー識別色のパレット (8色)。先頭4色は従来の参加順割当てと
+ * 同じ順序 (互換のため変更しない)。プロフィールで選んだ色がその人の
+ * 識別色になり、重複はホストが調停する (MP改善#4) */
+var MP_COLORS = ['#d9532b', '#2470c9', '#2f9e5f', '#8b46c7', '#b07d10', '#c94f7c', '#178a8a', '#8a5a33'];
+var MP_COLOR_NAMES = ['あか', 'あお', 'みどり', 'むらさき', 'おうど', 'もも', 'みず', 'ちゃ'];
+/* プロフィールアイコン (確定10点、デザイナーレビュー + ユーザー最終確認
+ * 済み。design-samples/profile-icons/gen_sample.py の ICONS が図案の正)。
+ * viewBox 24 の単色シルエットで、グリフ色は生成りで描く */
+var MP_PROFILE_GLYPH = '#f7f2e7';
+var MP_PROFILE_ICONS = [
+  { id: 'piece', name: 'パズル', svg: '<path d="M10.2 6.9a2.35 2.35 0 1 1 3.6 0H19a1 1 0 0 1 1 1v3.2a2.35 2.35 0 1 0 0 3.6V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7.9a1 1 0 0 1 1-1h5.2Z"/>' },
+  { id: 'star', name: 'ほし', svg: '<path d="M12 3.4l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 16.7l-5.3 2.9 1.1-5.9-4.3-4.1 5.9-.8Z"/>' },
+  { id: 'flower', name: 'はな', svg: '<path fill-rule="evenodd" d="M20.60 12.00 L20.41 12.74 L19.86 13.39 L19.08 13.90 L18.18 14.25 L17.34 14.49 L16.67 14.70 L16.23 14.96 L16.03 15.38 L16.00 16.00 L16.04 16.82 L16.03 17.76 L15.87 18.70 L15.50 19.51 L14.93 20.06 L14.21 20.25 L13.42 20.07 L12.66 19.58 L12.00 18.88 L11.46 18.13 L11.03 17.48 L10.65 17.04 L10.23 16.87 L9.69 16.96 L8.99 17.21 L8.14 17.51 L7.20 17.72 L6.28 17.72 L5.49 17.46 L4.96 16.93 L4.75 16.18 L4.87 15.32 L5.25 14.46 L5.78 13.67 L6.31 13.00 L6.70 12.46 L6.84 12.00 L6.70 11.54 L6.31 11.00 L5.78 10.33 L5.25 9.54 L4.87 8.68 L4.75 7.82 L4.96 7.07 L5.49 6.54 L6.28 6.28 L7.20 6.28 L8.14 6.49 L8.99 6.79 L9.69 7.04 L10.23 7.13 L10.65 6.96 L11.03 6.52 L11.46 5.87 L12.00 5.12 L12.66 4.42 L13.42 3.93 L14.21 3.75 L14.93 3.94 L15.50 4.49 L15.87 5.30 L16.03 6.24 L16.04 7.18 L16.00 8.00 L16.03 8.62 L16.23 9.04 L16.67 9.30 L17.34 9.51 L18.18 9.75 L19.08 10.10 L19.86 10.61 L20.41 11.26 Z M10.30 12.00 a1.70 1.70 0 1 0 3.40 0 a1.70 1.70 0 1 0 -3.40 0 Z"/>' },
+  { id: 'leaf', name: 'はっぱ', svg: '<path d="M19.8 4.2C11.5 4.7 5.3 10.9 4.8 19.2c8.3-.5 14.5-6.7 15-15Z"/><path d="M5.6 18.4c-.5 1.2-1.4 2.1-2.7 2.6.4-1.3 1.1-2.3 2.1-3.1.2.2.4.4.6.5Z"/>' },
+  { id: 'moon', name: 'つき', svg: '<path d="M11.32 3.80 A8.2 8.2 0 1 0 18.34 15.66 A7 7 0 0 1 11.32 3.80 Z"/>' },
+  { id: 'bird', name: 'とり', svg: '<path fill-rule="evenodd" d="M21.60 8.90 L18.40 7.00 C17.70 5.60 16.10 4.90 14.20 5.20 C11.20 5.70 8.60 7.60 7.40 10.00 L2.90 7.70 C2.50 7.40 2.05 7.85 2.35 8.35 L5.60 10.60 L3.30 12.60 C2.85 12.95 3.35 13.50 4.05 13.30 L7.20 12.90 C8.10 15.20 10.70 16.80 13.90 16.60 C16.80 16.40 18.80 14.30 18.95 11.90 C19.00 11.10 18.90 10.95 18.60 10.90 Z M15.45 8.30 a0.95 0.95 0 1 0 1.90 0 a0.95 0.95 0 1 0 -1.90 0 Z M8.90 11.60 C11.40 10.90 13.90 11.70 15.10 13.90 C13.20 12.70 11.10 12.45 9.05 13.10 Z"/>' },
+  { id: 'fish', name: 'さかな', svg: '<path fill-rule="evenodd" d="M2.8 12c2.9-3.8 6.3-5.7 9.8-5.7 2.1 0 4.1.8 5.7 2.2l2.9-2.9v12.8l-2.9-2.9c-1.6 1.4-3.6 2.2-5.7 2.2-3.5 0-6.9-1.9-9.8-5.7Z M6.60 10.60 a1.00 1.00 0 1 0 2.00 0 a1.00 1.00 0 1 0 -2.00 0 Z"/>' },
+  { id: 'mushroom', name: 'きのこ', svg: '<path fill-rule="evenodd" d="M3.8 12.3C3.8 7.4 7.5 3.8 12 3.8s8.2 3.6 8.2 8.5c0 .9-.7 1.5-1.6 1.5H5.4c-.9 0-1.6-.6-1.6-1.5Z M7.85 8.40 a1.15 1.15 0 1 0 2.30 0 a1.15 1.15 0 1 0 -2.30 0 Z M14.00 7.20 a0.90 0.90 0 1 0 1.80 0 a0.90 0.90 0 1 0 -1.80 0 Z"/><path d="M9.7 14.6h4.6l.7 4.9c.1 1-.6 1.7-1.6 1.7h-2.8c-1 0-1.7-.7-1.6-1.7l.7-4.9Z"/>' },
+  { id: 'acorn', name: 'どんぐり', svg: '<path d="M6.2 11.6c-1 0-1.6-.8-1.4-1.7.6-3 3-4.9 6-5.2-.2-1 0-2 .6-2.8.7.4 1.1 1.1 1.2 1.9 3 .3 5.3 2.3 5.9 5.2.2.9-.4 1.7-1.4 1.7H6.2Z"/><path d="M12 21.1c-3.1-2.1-4.9-4.9-4.9-8 0-.5.1-1 .2-1.5h9.4c.1.5.2 1 .2 1.5 0 3.1-1.8 5.9-4.9 8Z"/>' },
+  { id: 'bell', name: 'すず', svg: '<rect x="10.2" y="2.6" width="3.6" height="2.8" rx="1.4"/><path fill-rule="evenodd" d="M4.30 13.20 a7.70 7.70 0 1 0 15.40 0 a7.70 7.70 0 1 0 -15.40 0 Z M4.5 12.1h15v1.15H4.5Z M10.75 16.60 a1.25 1.25 0 1 0 2.50 0 a1.25 1.25 0 1 0 -2.50 0 Z M11.3 16.6h1.4v3.2a.7.7 0 0 1-1.4 0Z"/>' }
+];
+function mpProfileIconDef(iconId) {
+  for (var i = 0; i < MP_PROFILE_ICONS.length; i++)
+    if (MP_PROFILE_ICONS[i].id === iconId) return MP_PROFILE_ICONS[i];
+  return null;
+}
+/* アイコンの svg 文字列 (チップ径の74%で描く、サンプルシートの比率)。
+ * 未知の id (混在する旧/他端末の値) は null を返してドット表示に落とす */
+function mpAvatarSvgString(iconId, chipPx) {
+  var def = mpProfileIconDef(iconId);
+  if (!def) return null;
+  var g = Math.max(8, Math.round(chipPx * 0.74));
+  return '<svg viewBox="0 0 24 24" width="' + g + '" height="' + g + '" fill="' +
+    MP_PROFILE_GLYPH + '" aria-hidden="true">' + def.svg + '</svg>';
+}
+/* リスト系の1人分マーク: アイコンがあれば「背景色+グリフ」の丸チップ、
+ * 無ければ従来の色ドット (未設定時は現行表示と完全に同じにする) */
+function mpAvatarHtml(iconId, colorIdx, chipPx) {
+  var svg = mpAvatarSvgString(iconId, chipPx);
+  if (!svg) return '<span class="mp-dot" style="background:' + (MP_COLORS[colorIdx] || '#999') + '"></span>';
+  return '<span class="mp-avatar" style="background:' + (MP_COLORS[colorIdx] || '#999') +
+    ';width:' + chipPx + 'px;height:' + chipPx + 'px">' + svg + '</span>';
+}
+function mpPeerIcon(playerId) {
+  var list = mp.peers || [];
+  for (var i = 0; i < list.length; i++)
+    if (list[i].playerId === playerId) return list[i].icon || null;
+  return null;
+}
 /* モード: coop = 協力 (共有盤面) / turn = ターン制 (共有盤面) /
  * race = レース (各自の盤面で早い者勝ち)。部屋の間は固定で、
  * start イベントの mode で全端末が一致する */
@@ -7729,6 +7800,15 @@ function mpColorOf(playerId) {
   return m ? Number(m[1]) : 1;
 }
 function mpPlayerName(playerId, peer) {
+  /* プロフィール名があればそれを優先する (MP改善#4)。peer は在室一覧の
+   * 項目 ({ name: プロフィール名|null }) を想定し、無ければ一覧から引く */
+  var pr = peer || null;
+  if (!pr) {
+    var list = mp.peers || [];
+    for (var i = 0; i < list.length; i++)
+      if (list[i].playerId === playerId) { pr = list[i]; break; }
+  }
+  if (pr && pr.name) return pr.name;
   var isHost = peer ? !!peer.isHost : playerId === 'host';
   if (isHost) return 'ホスト';
   var c = peer ? peer.color : mpColorOf(playerId);
@@ -7849,6 +7929,7 @@ function mpOnStatus(status, info) {
   else if (status === 'connecting') mpSetLobbyStatus('相手と接続しています…');
   else if (status === 'open') {
     mpSetLobbyStatus('準備ができました');
+    mpSendMyProfile(); // 接続が開いた時点で自分のプロフィールを送る (再入室時も)
     if (mp.manual) mpShowLobby();
     mpRenderRoster(); mpRenderHostControls(); mpUpdateBadge();
   } else if (status === 'failed') {
@@ -7951,6 +8032,92 @@ function mpOnEphemeral(kind, data, from) {
   }
 }
 
+/* ---------- プロフィール (MP改善#4) ---------- */
+/* 自分のプロフィールを部屋へ共有する。接続が開く前 (ゲストの入室直後)
+ * に呼んでも送信は静かに落ち、'open' のタイミングで送り直される */
+function mpSendMyProfile() {
+  if (mp.session && mp.session.setProfile) mp.session.setProfile(store.profile);
+}
+/* 入口とロビーの自分のプロフィール行 (チップ + 要約文) を描き直す */
+function mpRenderProfileRows() {
+  var p = store.profile;
+  var chipHtml, summary;
+  if (p) {
+    var colIdx = p.color != null ? p.color : null;
+    if (p.icon && colIdx != null) {
+      chipHtml = mpAvatarHtml(p.icon, colIdx, 32);
+    } else if (p.icon) {
+      // 色が未設定なら識別色は参加順で決まるので、チップは中立色にしておく
+      chipHtml = '<span class="mp-avatar" style="background:#a89a7d;width:32px;height:32px">' +
+        (mpAvatarSvgString(p.icon, 32) || '') + '</span>';
+    } else {
+      chipHtml = '<span class="mp-avatar mp-avatar-plain" style="background:' + (colIdx != null ? MP_COLORS[colIdx] : '#a89a7d') + ';width:32px;height:32px"></span>';
+    }
+    var iconDef = p.icon ? mpProfileIconDef(p.icon) : null;
+    summary = (p.name || '（名前なし）') +
+      (iconDef ? ' ・ ' + iconDef.name : '') +
+      (colIdx != null ? ' ・ ' + MP_COLOR_NAMES[colIdx] : '');
+  } else {
+    chipHtml = '<span class="mp-avatar mp-avatar-plain" style="background:#a89a7d;width:32px;height:32px"></span>';
+    summary = '未設定（名前はホスト/ゲスト、色は参加順）';
+  }
+  ['mpProfileChip', 'mpProfileChipLobby'].forEach(function (id) {
+    var el = $(id); if (el) el.innerHTML = chipHtml;
+  });
+  ['mpProfileSummary', 'mpProfileSummaryLobby'].forEach(function (id) {
+    var el = $(id); if (el) el.textContent = summary;
+  });
+}
+var mpProfDraft = null; // 編集中の { name, icon, color }
+function mpOpenProfileEditor() {
+  var p = store.profile;
+  mpProfDraft = {
+    name: p && p.name ? p.name : '',
+    icon: p && p.icon ? p.icon : 'piece',
+    color: p && p.color != null ? p.color : 0
+  };
+  $('mpProfName').value = mpProfDraft.name;
+  mpRenderProfileEditor();
+  $('mpProfileModal').hidden = false;
+}
+function mpRenderProfileEditor() {
+  if (!mpProfDraft) return;
+  var ig = $('mpProfIcons');
+  ig.innerHTML = '';
+  MP_PROFILE_ICONS.forEach(function (ic) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'mp-prof-icon-btn' + (mpProfDraft.icon === ic.id ? ' active' : '');
+    b.setAttribute('aria-label', ic.name);
+    b.innerHTML = mpAvatarHtml(ic.id, mpProfDraft.color, 40);
+    b.addEventListener('click', function () {
+      mpProfDraft.icon = ic.id;
+      mpRenderProfileEditor();
+    });
+    ig.appendChild(b);
+  });
+  var cg = $('mpProfColors');
+  cg.innerHTML = '';
+  MP_COLORS.forEach(function (col, i) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'mp-prof-color-btn' + (mpProfDraft.color === i ? ' active' : '');
+    b.style.background = col;
+    b.setAttribute('aria-label', MP_COLOR_NAMES[i]);
+    b.addEventListener('click', function () {
+      mpProfDraft.color = i;
+      mpRenderProfileEditor();
+    });
+    cg.appendChild(b);
+  });
+  $('mpProfPreview').innerHTML = mpAvatarHtml(mpProfDraft.icon, mpProfDraft.color, 32);
+  $('mpProfPreviewName').textContent = mpProfDraft.name || '（名前なし）';
+}
+function mpCloseProfileEditor() {
+  $('mpProfileModal').hidden = true;
+  mpProfDraft = null;
+}
+
 /* ---------- セッションの開始/終了 ---------- */
 function mpStartSession(session, role, opts) {
   mp.session = session;
@@ -7962,6 +8129,7 @@ function mpStartSession(session, role, opts) {
   mp.contrib = {};
   mp.myLeases = {};
   mp.begun = false; mp.started = false; mp.clearShown = false; mp.completeSent = false;
+  mpSendMyProfile(); // ホストは即登録、ゲストは 'open' で送り直される
   if (!mp.manual) mpShowLobby();
 }
 function mpResetState() {
@@ -8008,6 +8176,7 @@ function mpCloseModalFromNav() {
 /* ---------- 入口シート / ロビー ---------- */
 function mpShowHome() {
   mpHideHomeError();
+  mpRenderProfileRows();
   if (state && state.pool) {
     if (mp.lobbyStage == null) mp.lobbyStage = nextStage(store.records, state.pool);
     if (mp.lobbyPieces == null) mp.lobbyPieces = difficulty;
@@ -8026,6 +8195,7 @@ function mpShowLobby() {
   $('mpHomeView').hidden = true;
   $('mpManualView').hidden = true;
   $('mpLobbyView').hidden = false;
+  mpRenderProfileRows();
   mpRenderLobby();
 }
 function mpRenderLobby() {
@@ -8053,8 +8223,17 @@ function mpRenderRoster() {
   mpPeerList().forEach(function (p) {
     var li = document.createElement('li');
     var dot = document.createElement('span');
-    dot.className = 'mp-dot';
-    dot.style.background = MP_COLORS[p.color] || '#999';
+    var svg = mpAvatarSvgString(p.icon, 26);
+    if (svg) { // プロフィールのアイコンがあれば丸チップで出す (MP改善#4)
+      dot.className = 'mp-avatar';
+      dot.style.background = MP_COLORS[p.color] || '#999';
+      dot.style.width = '26px';
+      dot.style.height = '26px';
+      dot.innerHTML = svg;
+    } else {
+      dot.className = 'mp-dot';
+      dot.style.background = MP_COLORS[p.color] || '#999';
+    }
     var name = document.createElement('span');
     name.textContent = mpPlayerName(p.playerId, p);
     var st = document.createElement('span');
@@ -8385,7 +8564,7 @@ function mpSetMatchFromOrder(order) {
   mp.turnOrder = (order && order.length) ? order.slice()
     : mpPeerList().map(function (p) { return p.playerId; });
   mp.matchPlayers = mp.turnOrder.map(function (id) {
-    return { id: id, color: mpColorOf(id), name: mpPlayerName(id) };
+    return { id: id, color: mpColorOf(id), name: mpPlayerName(id), icon: mpPeerIcon(id) };
   });
 }
 function mpOnStartEvent(ev) {
@@ -8647,7 +8826,11 @@ function mpUpdateTurnUI() {
   bar.hidden = !show;
   if (!show) return;
   var cur = mpTurnPlayerId();
-  $('mpTurnDot').style.background = MP_COLORS[mpColorOf(cur)] || '#999';
+  var turnDot = $('mpTurnDot');
+  turnDot.style.background = MP_COLORS[mpColorOf(cur)] || '#999';
+  var turnSvg = mpAvatarSvgString(mpPeerIcon(cur), 22);
+  turnDot.innerHTML = turnSvg || '';
+  turnDot.classList.toggle('has-icon', !!turnSvg);
   $('mpTurnText').textContent = cur === mpMyId() ? 'あなたの番です' : mpPlayerName(cur) + 'さんの番です';
   bar.classList.toggle('mine', cur === mpMyId());
 }
@@ -8725,8 +8908,7 @@ function mpRenderRaceBar() {
   if (!show) return;
   var html = '';
   mp.matchPlayers.forEach(function (p) {
-    html += '<div class="mp-race-row"><span class="mp-dot" style="background:' +
-      (MP_COLORS[p.color] || '#999') + '"></span><span class="mp-race-name">' +
+    html += '<div class="mp-race-row">' + mpAvatarHtml(p.icon, p.color, 22) + '<span class="mp-race-name">' +
       escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
       '<span class="mp-race-frac">' + (mp.raceProgress[p.id] || 0) + '/' + mp.pieces + '</span></div>';
   });
@@ -9089,7 +9271,7 @@ function mpUpdateBadge() {
 /* ---------- クリア画面の協力表示 (onClear から呼ばれる) ---------- */
 function mpContribPlayers() {
   return mpPeerList().map(function (p) {
-    return { id: p.playerId, color: p.color, name: mpPlayerName(p.playerId, p) };
+    return { id: p.playerId, color: p.color, name: mpPlayerName(p.playerId, p), icon: p.icon || null };
   });
 }
 function mpContribRecord() {
@@ -9105,7 +9287,7 @@ function mpFillResultExtras() {
     var rhtml = '<p class="cert-contrib-title">レース結果</p><ul class="mp-roster">';
     mp.matchPlayers.forEach(function (p) {
       var isWinner = p.id === mp.raceWinner;
-      rhtml += '<li><span class="mp-dot" style="background:' + (MP_COLORS[p.color] || '#999') + '"></span><span>' +
+      rhtml += '<li>' + mpAvatarHtml(p.icon, p.color, 26) + '<span>' +
         escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
         '<span class="mp-peer-state">' + (isWinner ? '勝者 ・ ' : '') +
         (mp.raceProgress[p.id] || 0) + '/' + mp.pieces + '</span></li>';
@@ -9126,7 +9308,7 @@ function mpFillResultExtras() {
   }
   var html = '<p class="cert-contrib-title">みんなの貢献</p><ul class="mp-roster">';
   mpContribPlayers().forEach(function (p) {
-    html += '<li><span class="mp-dot" style="background:' + (MP_COLORS[p.color] || '#999') + '"></span><span>' +
+    html += '<li>' + mpAvatarHtml(p.icon, p.color, 26) + '<span>' +
       escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
       '<span class="mp-peer-state">' + (mp.contrib[p.id] || 0) + ' 回接続</span></li>';
   });
@@ -9169,6 +9351,34 @@ $('mpManualBtn').addEventListener('click', function () {
   $('mpHomeView').hidden = true;
   $('mpLobbyView').hidden = true;
   $('mpManualView').hidden = false;
+});
+/* プロフィール編集 (MP改善#4): 入口とロビーの両方の行から同じシートを開く */
+$('mpProfileEditBtn').addEventListener('click', mpOpenProfileEditor);
+$('mpProfileEditBtnLobby').addEventListener('click', mpOpenProfileEditor);
+$('mpProfName').addEventListener('input', function () {
+  if (!mpProfDraft) return;
+  mpProfDraft.name = $('mpProfName').value;
+  $('mpProfPreviewName').textContent = mpProfDraft.name.trim() || '（名前なし）';
+});
+$('mpProfSaveBtn').addEventListener('click', function () {
+  if (!mpProfDraft) return;
+  mpProfDraft.name = $('mpProfName').value;
+  store.profile = normalizeProfile(mpProfDraft);
+  saveStore();
+  mpCloseProfileEditor();
+  mpRenderProfileRows();
+  mpSendMyProfile(); // 部屋にいる間は即座に共有し直す
+  mpRenderRoster();
+});
+$('mpProfCancelBtn').addEventListener('click', mpCloseProfileEditor);
+$('mpProfClearBtn').addEventListener('click', function () {
+  store.profile = null;
+  saveStore();
+  mpCloseProfileEditor();
+  mpRenderProfileRows();
+  mpSendMyProfile();
+  mpRenderRoster();
+  showToast('プロフィールを未設定に戻しました');
 });
 $('mpManualBackBtn').addEventListener('click', function () {
   if (mp.session) return; // 接続を始めた後はロビー/退出フローに任せる

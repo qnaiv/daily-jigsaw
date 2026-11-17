@@ -59,7 +59,9 @@
  *   onStatus(status, info): 接続状態の遷移
  *     status: 'signaling' | 'waiting' | 'connecting' | 'open' | 'failed'
  *             | 'closed' | 'room-ended'
- *   onPeers(peers): 在室一覧 [{ playerId, color, isHost, connected }]
+ *   onPeers(peers): 在室一覧 [{ playerId, color, isHost, connected, name, icon }]
+ *     color はプロフィールの希望色をホストが調停した最終色 (パレット
+ *     index)。name / icon はプロフィール未設定なら null
  *   onVerifyCode(code): 照合コード (数字4桁文字列)。ロビーで口頭照合する
  *   onReject(rej): 自分のイベントがホストに却下された { reason, evType, mid }
  *   onEvent(ev, meta): seq 確定イベントの通知 (UI 表示用。状態適用は hooks 側)
@@ -75,6 +77,10 @@
  *   hostStart(payload): ホスト専用。start イベントを seq 付きで配信する
  *   hostNext(payload): ホスト専用。next イベントを seq 付きで配信する
  *   setReady(): 画像ロード完了をホストへ通知する (ready バリア)
+ *   setProfile(profile): 自分のプロフィール { name, icon, color } を部屋へ
+ *     共有する (MP改善#4)。ev チャンネルの { t:'profile' } で送る追加型の
+ *     メッセージで、ゲームイベント (seq) には混ぜない。旧クライアントは
+ *     未知の種別として無視するので MP_LOGIC_VERSION は上げない
  *   leave(): 部屋を閉じる / 退出する
  * }
  * ===================================================================== */
@@ -103,6 +109,71 @@ var SNAPREQ_MIN_INTERVAL_MS = 3000;
 var EPH_BUFFERED_LIMIT = 64 * 1024; // ephemeral を送らない bufferedAmount 上限
 var EPH_COALESCE_MS = 33;   // ホスト中継の coalesce 間隔 (宛先別)。0 で無効 (即時中継 = 旧挙動)。A/B 切替用
 var EPH_COALESCE_KINDS = { move: 1, cursor: 1 }; // coalesce 対象 (最新値だけ意味のある種別)
+var PROFILE_COLOR_COUNT = 8; // プロフィールの背景色パレット数 (app.js の MP_COLORS と同数)
+
+/* プロフィール { name, icon, color } の無害化 (MP改善#4)。ワイヤ・保存の
+ * 両経路で使う。name は最大8文字 (コードポイント単位)、icon は短い
+ * 英小文字 id、color はパレット index。どれも不正なら null に落とし、
+ * 全て null ならプロフィール自体を null (未設定) とする */
+function sanitizeProfile(p) {
+  if (!p || typeof p !== 'object') return null;
+  var name = null, icon = null, color = null;
+  if (typeof p.name === 'string') {
+    var n = Array.from(p.name.trim()).slice(0, 8).join('');
+    if (n) name = n;
+  }
+  if (typeof p.icon === 'string' && /^[a-z0-9-]{1,32}$/.test(p.icon)) icon = p.icon;
+  if (typeof p.color === 'number' && isFinite(p.color)) {
+    var c = Math.floor(p.color);
+    if (c >= 0 && c < PROFILE_COLOR_COUNT) color = c;
+  }
+  if (name == null && icon == null && color == null) return null;
+  return { name: name, icon: icon, color: color };
+}
+
+/* プレイヤー識別色の調停 (MP改善#4): 参加順に、プロフィールの希望色を
+ * 優先して割り当てる。希望が埋まっていれば最も近い空き色 (index の距離、
+ * 同距離なら大きい方を先に見る) へ寄せる。プロフィールが無い/色未指定の
+ * 人は参加順の割当色 (assigned) を希望として扱う。players は参加順の
+ * [{ playerId, color }]、profiles は playerId -> sanitize 済み profile。
+ * 戻り値は playerId -> 最終色 index。全クライアントが同じ入力で同じ
+ * 結果になる決定的な純粋関数 (ホストが正だが、手動方式では両端末が
+ * 同じ計算で一致させる) */
+function resolveProfileColors(players, profiles) {
+  var used = {}, out = {};
+  (players || []).forEach(function (pl) {
+    var assigned = (typeof pl.color === 'number' && isFinite(pl.color) &&
+      pl.color >= 0 && pl.color < PROFILE_COLOR_COUNT) ? Math.floor(pl.color) : 0;
+    var prof = profiles ? profiles[pl.playerId] : null;
+    var desired = (prof && typeof prof.color === 'number' &&
+      prof.color >= 0 && prof.color < PROFILE_COLOR_COUNT) ? Math.floor(prof.color) : assigned;
+    var c = desired;
+    if (used[c]) {
+      c = -1;
+      for (var d = 1; d < PROFILE_COLOR_COUNT; d++) {
+        if (desired + d < PROFILE_COLOR_COUNT && !used[desired + d]) { c = desired + d; break; }
+        if (desired - d >= 0 && !used[desired - d]) { c = desired - d; break; }
+      }
+      if (c < 0) c = assigned; // 空きなし (8人超) の最終フォールバック。通常は起きない
+    }
+    used[c] = 1;
+    out[pl.playerId] = c;
+  });
+  return out;
+}
+
+/* onPeers / roster で配る1人分の形に整える (色は調停済みの最終色) */
+function peerListWithProfiles(players, profiles, connectedOf) {
+  var eff = resolveProfileColors(players, profiles);
+  return players.map(function (p) {
+    var prof = profiles ? profiles[p.playerId] : null;
+    return {
+      playerId: p.playerId, color: eff[p.playerId], isHost: !!p.isHost,
+      connected: connectedOf ? !!connectedOf(p) : true,
+      name: prof ? prof.name : null, icon: prof ? prof.icon : null
+    };
+  });
+}
 
 /* ------------------------------------------------------------------ *
  * 小物ユーティリティ
@@ -236,7 +307,9 @@ function fingerprintCode(sdp) {
  *   ホスト→ゲスト確定: { t:'ev', ep, seq, from, ev:{...}, sum? }
  *   ホスト→ゲスト却下: { t:'reject', mid, reason, evType }
  *   ホスト→ゲスト盤面: { t:'snapshot', ep, upto, snap }
- *   ホスト→ゲスト入室: { t:'welcome', playerId, color, ep, started, lastSeq }
+ *   ホスト→ゲスト入室: { t:'welcome', playerId, color, ep, started, lastSeq, profiles }
+ *   プロフィール共有 (セッション層、エンジンは素通り): { t:'profile', name, icon, color }
+ *   ホスト→ゲスト在室: { t:'roster', peers } (peers は調停済み色 + name/icon つき)
  * ================================================================== */
 var HOST_ID = 'host';
 var STATE_CHANGING = { drop: 1, sort: 1, start: 1, 'group-drop': 1 }; // sum を付ける種別
@@ -895,13 +968,14 @@ function createRoom(hooks, callbacks, options) {
   var peers = {};        // guestId -> peer
   var book = {};         // guestId -> { playerId, color, epoch }
   var bookSeq = 0;
+  var profiles = {};     // playerId -> sanitize 済みプロフィール (MP改善#4)
 
   function setStatus(s, info) { if (callbacks.onStatus) callbacks.onStatus(s, info); }
   function notifyPeers() {
     if (!engine) return; // 生成中の addPlayer からの発火 (engine 未代入) は無視
-    var list = engine.getPlayers().map(function (p) {
-      var connected = p.isHost ? true : !!(findPeerByPlayer(p.playerId) || {}).open;
-      return { playerId: p.playerId, color: p.color, isHost: p.isHost, connected: connected };
+    // 色はプロフィールの希望をホストが調停した最終色を配る (識別色の正)
+    var list = peerListWithProfiles(engine.getPlayers(), profiles, function (p) {
+      return p.isHost ? true : !!(findPeerByPlayer(p.playerId) || {}).open;
     });
     if (callbacks.onPeers) callbacks.onPeers(list);
     // ゲストにも在室一覧を配る
@@ -994,6 +1068,14 @@ function createRoom(hooks, callbacks, options) {
     peer.ephCh.onopen = function () { ephOpen = true; maybePeerOpen(peer, evOpen, ephOpen); };
     peer.evCh.onmessage = function (ev) {
       var msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (msg && msg.t === 'profile') {
+        // プロフィールはゲームイベントではないのでエンジンに渡さず、
+        // 名簿 (profiles) に保持して roster で再配信する (MP改善#4)
+        var sp = sanitizeProfile(msg);
+        if (sp) profiles[peer.playerId] = sp; else delete profiles[peer.playerId];
+        notifyPeers();
+        return;
+      }
       engine.receive(peer.playerId, msg);
     };
     peer.ephCh.onmessage = function (ev) {
@@ -1025,7 +1107,8 @@ function createRoom(hooks, callbacks, options) {
     if (peer.timer) { clearTimeout(peer.timer); peer.timer = null; }
     sendEv(peer, {
       t: 'welcome', playerId: peer.playerId, color: peer.color,
-      started: engine.isStarted(), lastSeq: engine.getWatermark(), verify: peer.verify
+      started: engine.isStarted(), lastSeq: engine.getWatermark(), verify: peer.verify,
+      profiles: profiles // 途中参加者にも既知のプロフィール一式を同梱する (MP改善#4)
     });
     if (callbacks.onVerifyCode && peer.verify) callbacks.onVerifyCode(peer.verify);
     notifyPeers();
@@ -1102,6 +1185,11 @@ function createRoom(hooks, callbacks, options) {
       for (var gid in peers)
         if (peers[gid].open) sendEph(peers[gid].ephCh, { kind: kind, data: data, from: HOST_ID });
     },
+    setProfile: function (p) {
+      var sp = sanitizeProfile(p);
+      if (sp) profiles[HOST_ID] = sp; else delete profiles[HOST_ID];
+      notifyPeers(); // roster で全ゲストへ再配信する
+    },
     leave: function () {
       if (closed) return;
       closed = true;
@@ -1125,6 +1213,7 @@ function joinRoom(code, hooks, callbacks, options) {
   var isOpen = false, restartTried = false, rejoinCount = 0;
   var connectTimer = null, restartTimer = null;
   var playerId = null;
+  var welcomeProfiles = {}; // welcome に同梱された既知プロフィール (MP改善#4)
   /* 接続確立までの絶対期限。want の再送やシグナリング再接続 (onReopen) で
    * タイマーを延長し続けると failed が永遠に発火しないため、期限は入室時に
    * 一度だけ決め、armConnectTimer は残り時間しか張らない */
@@ -1206,12 +1295,27 @@ function joinRoom(code, hooks, callbacks, options) {
         playerId = msg.playerId;
         session.playerId = playerId;
         if (callbacks.onVerifyCode && msg.verify) callbacks.onVerifyCode(msg.verify);
-        if (callbacks.onPeers) callbacks.onPeers([
-          { playerId: HOST_ID, color: 0, isHost: true, connected: true },
-          { playerId: playerId, color: msg.color, isHost: false, connected: true }
-        ]);
+        if (msg.profiles && typeof msg.profiles === 'object') welcomeProfiles = msg.profiles;
+        if (callbacks.onPeers) {
+          // roster が届くまでの仮一覧にも、welcome 同梱のプロフィールを反映する
+          var hp = welcomeProfiles[HOST_ID], sp = welcomeProfiles[playerId];
+          callbacks.onPeers([
+            { playerId: HOST_ID, color: 0, isHost: true, connected: true,
+              name: hp ? hp.name : null, icon: hp ? hp.icon : null },
+            { playerId: playerId, color: msg.color, isHost: false, connected: true,
+              name: sp ? sp.name : null, icon: sp ? sp.icon : null }
+          ]);
+        }
       } else if (msg.t === 'roster') {
-        if (callbacks.onPeers) callbacks.onPeers(msg.peers);
+        if (callbacks.onPeers) callbacks.onPeers((msg.peers || []).map(function (p) {
+          // roster 側に無い項目は welcome 同梱分で補う (旧ホストとの混在用)
+          if ((p.name == null || p.icon == null) && welcomeProfiles[p.playerId]) {
+            var wp = welcomeProfiles[p.playerId];
+            return { playerId: p.playerId, color: p.color, isHost: p.isHost, connected: p.connected,
+              name: p.name != null ? p.name : wp.name, icon: p.icon != null ? p.icon : wp.icon };
+          }
+          return p;
+        }));
         return;
       }
       engine.receiveFromHost(msg);
@@ -1275,6 +1379,17 @@ function joinRoom(code, hooks, callbacks, options) {
     role: 'guest', code: code, guestId: guestId, engine: engine,
     hooks: hooks, callbacks: callbacks,
     sendEphemeral: function (kind, data) { sendEph(ephCh, { kind: kind, data: data }); },
+    setProfile: function (p) {
+      // ev チャンネルでホストへ送る (ホストが調停して roster で返してくる)
+      var sp = sanitizeProfile(p);
+      var m = { t: 'profile' };
+      if (sp) {
+        if (sp.name != null) m.name = sp.name;
+        if (sp.icon != null) m.icon = sp.icon;
+        if (sp.color != null) m.color = sp.color;
+      }
+      sendEvRaw(m);
+    },
     leave: function () {
       if (closed) return;
       sig.send({ kind: 'bye', from: guestId, to: 'host' });
@@ -1294,7 +1409,18 @@ function joinRoom(code, hooks, callbacks, options) {
 /* ---------------- 手動コード方式 (仲介B、2人専用) ------------------- */
 function manualBase(role, hooks, callbacks) {
   var pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
-  var state = { pc: pc, evCh: null, ephCh: null, open: false, verify: null };
+  var state = { pc: pc, evCh: null, ephCh: null, open: false, verify: null, profiles: {} };
+  /* 手動方式には roster の仕組みがないので、プロフィールが揃うたびに
+   * 2人分の在室一覧を組み直して onPeers で渡す。色の調停は両端末が
+   * 同じ profiles から resolveProfileColors で決定的に計算して一致させる */
+  state.emitPeers = function () {
+    if (!callbacks.onPeers) return;
+    var players = [
+      { playerId: HOST_ID, color: 0, isHost: true },
+      { playerId: 'g1', color: 1, isHost: false }
+    ];
+    callbacks.onPeers(peerListWithProfiles(players, state.profiles, function () { return state.open; }));
+  };
   var engine = createEngine({
     role: role, hooks: hooks,
     net: role === 'host' ? {
@@ -1331,6 +1457,14 @@ function wireManualChannels(role, ctx, onOpen, callbacks) {
           callbacks.onEphemeral(msg.kind, msg.data, msg.from || (role === 'host' ? 'g1' : HOST_ID));
         return;
       }
+      if (msg && msg.t === 'profile') {
+        // プロフィールはエンジンに渡さず名簿に保持する (MP改善#4)
+        var senderId = role === 'host' ? 'g1' : HOST_ID;
+        var sp = sanitizeProfile(msg);
+        if (sp) state.profiles[senderId] = sp; else delete state.profiles[senderId];
+        state.emitPeers();
+        return;
+      }
       if (role === 'host') engine.receive('g1', msg);
       else engine.receiveFromHost(msg);
     };
@@ -1338,11 +1472,25 @@ function wireManualChannels(role, ctx, onOpen, callbacks) {
       if (state.evCh && state.ephCh &&
           state.evCh.readyState === 'open' && state.ephCh.readyState === 'open' &&
           !state.open) {
-        state.open = true; onOpen();
+        state.open = true; state.emitPeers(); onOpen();
       }
     };
   }
   return attach;
+}
+/* 手動方式の setProfile: 自分の分を名簿に入れ、相手へ { t:'profile' } で
+ * 送り、両端末が同じ名簿から色を調停できるようにする */
+function manualSetProfile(state, myId, p) {
+  var sp = sanitizeProfile(p);
+  if (sp) state.profiles[myId] = sp; else delete state.profiles[myId];
+  var m = { t: 'profile' };
+  if (sp) {
+    if (sp.name != null) m.name = sp.name;
+    if (sp.icon != null) m.icon = sp.icon;
+    if (sp.color != null) m.color = sp.color;
+  }
+  state.sendEv(state, m);
+  state.emitPeers();
 }
 function manualHost(hooks, callbacks, options) {
   callbacks = callbacks || {};
@@ -1366,6 +1514,7 @@ function manualHost(hooks, callbacks, options) {
   var session = makeSessionFacade({
     role: 'host', code: null, engine: engine, hooks: hooks, callbacks: callbacks,
     sendEphemeral: function (kind, data) { sendEph(state.ephCh, { kind: kind, data: data, from: HOST_ID }); },
+    setProfile: function (p) { manualSetProfile(state, HOST_ID, p); },
     leave: function () { try { pc.close(); } catch (e) {} if (callbacks.onStatus) callbacks.onStatus('closed'); }
   });
   session.getOfferCode = function () {
@@ -1396,6 +1545,7 @@ function manualGuest(hooks, callbacks, options) {
   var session = makeSessionFacade({
     role: 'guest', code: null, engine: engine, hooks: hooks, callbacks: callbacks,
     sendEphemeral: function (kind, data) { sendEph(state.ephCh, { kind: kind, data: data }); },
+    setProfile: function (p) { manualSetProfile(state, 'g1', p); },
     leave: function () { try { pc.close(); } catch (e) {} if (callbacks.onStatus) callbacks.onStatus('closed'); }
   });
   session.playerId = 'g1';
@@ -1424,6 +1574,7 @@ function makeSessionFacade(o) {
     engine: o.engine,
     sendEvent: function (ev) { return o.engine.request(ev); },
     sendEphemeral: o.sendEphemeral,
+    setProfile: function (p) { if (o.setProfile) o.setProfile(p); },
     hostStart: function (payload) {
       var ev = { t: 'start' }; for (var k in (payload || {})) ev[k] = payload[k];
       o.engine.hostControl(ev);
@@ -1451,6 +1602,10 @@ var api = {
   decodeManualCode: decodeManualCode,
   fingerprintCode: fingerprintCode,
   HOST_ID: HOST_ID,
+  sanitizeProfile: sanitizeProfile,
+  resolveProfileColors: resolveProfileColors,
+  peerListWithProfiles: peerListWithProfiles,
+  PROFILE_COLOR_COUNT: PROFILE_COLOR_COUNT,
   GROUP_GRAB_MAX: GROUP_GRAB_MAX,
   EPH_COALESCE_MS: EPH_COALESCE_MS,
   createEphCoalescer: createEphCoalescer,
