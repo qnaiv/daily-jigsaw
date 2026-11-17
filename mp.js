@@ -18,6 +18,11 @@
  *   // anchorId の塊が存在するか (検証用)
  *   clusterExists(anchorId): boolean,
  *
+ *   // 任意: grab-req の追加検証 (ホスト側でのみ呼ばれる)。却下理由の
+ *   // 文字列を返すとその理由で却下し、null を返すと通す。
+ *   // ターン制モードの「手番以外は掴めない」に使う。
+ *   validateGrab(fromId, ev): string|null,
+ *
  *   // seq 順に確定したイベントを自端末の状態へ適用する。
  *   // ev は { t:'grab'|'release'|'lease-expire'|'drop'|'sort'|'start'|
  *   //        'begin'|'next'|'complete'|..., from, ... } (種別ごとの追加項目つき)
@@ -320,6 +325,10 @@ function createEngine(opts) {
         if (!clusterExists(ev.cluster)) return 'no-cluster';
         L = leases[ev.cluster];
         if (L && L.holder !== fromId) return 'leased';
+        if (typeof hooks.validateGrab === 'function') {
+          var vr = hooks.validateGrab(fromId, ev);
+          if (vr) return vr;
+        }
         return null;
       case 'drop':
         L = leases[ev.cluster];
@@ -352,6 +361,16 @@ function createEngine(opts) {
       }
       case 'start': case 'next':
         return fromId === HOST_ID ? null : 'forbidden';
+      case 'progress':
+        // レースモードの進捗報告 (はめたピース数)。盤面は各自ローカル
+        // なので共有状態は変えず、値の形だけを見る
+        if (typeof ev.placed !== 'number' || !isFinite(ev.placed) || ev.placed < 0)
+          return 'bad-event';
+        return null;
+      case 'finish':
+        // レースモードの完成申告。勝者は seq 順に最初に適用された
+        // finish で確定する (適用側の責務)
+        return null;
       case 'complete':
         return null;
       default:
@@ -462,6 +481,11 @@ function createEngine(opts) {
       try { sequence(HOST_ID, { t: 'lease-expire', cluster: cluster, epoch: leases[cluster].epoch, by: id }); }
       catch (e) { delete leases[cluster]; }
     });
+    // 対戦中の退出は seq 付きで全端末へ知らせる (ターン制の手番スキップ
+    // などを全端末で同一に導出するため。ロビー段階では送らない)
+    if (started) {
+      try { sequence(HOST_ID, { t: 'player-left', player: id }); } catch (e) { /* ignore */ }
+    }
     delete players[id];
     joinOrder = joinOrder.filter(function (x) { return x !== id; });
     onPeersChange();

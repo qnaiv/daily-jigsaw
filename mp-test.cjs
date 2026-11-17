@@ -556,6 +556,230 @@ console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
   solveWith(false, '大きい方を動かす遊び方');
 }
 
+/* ================= 11. ターン制 (実 PureLogic + 実グルーの手番導出) ================= */
+console.log('[11] ターン制モード');
+{
+  const L = require('./app.js');
+  const PIECES = 16, N = 4, DATE = '2026-11-11';
+  const anchorOf = c => L.clusterAnchorId(c);
+  const ORDER = ['host', 'g1', 'g2'];
+  function makeClient() {
+    const client = { engine: null, state: { clusters: L.initialScatter(DATE, PIECES) }, turnIdx: 0, leftPlayers: {}, rejects: [] };
+    client.resolveIdx = () => {
+      for (let i = 0; i < ORDER.length; i++) {
+        const j = (client.turnIdx + i) % ORDER.length;
+        if (!client.leftPlayers[ORDER[j]]) return j;
+      }
+      return client.turnIdx;
+    };
+    client.turnPlayer = () => ORDER[client.resolveIdx()];
+    client.hooks = {
+      getClusters: () => client.state.clusters.map(c => ({ anchorId: anchorOf(c), pieces: c.pieces.slice(), gx: c.gx, gy: c.gy })),
+      clusterExists: id => client.state.clusters.some(c => anchorOf(c) === id),
+      // app.js の hooks.validateGrab と同じ判定 (ホストのエンジンでのみ呼ばれる)
+      validateGrab: fromId => (client.turnPlayer() !== fromId ? 'not-your-turn' : null),
+      applyEvent: ev => {
+        if (ev.t === 'drop') {
+          const cl = client.state.clusters.find(c => anchorOf(c) === ev.cluster);
+          if (!cl) throw new Error('no cluster');
+          const res = L.applyClusterDrop(client.state.clusters, cl, ev.x, ev.y, N,
+            c => !!client.engine.getLease(anchorOf(c)));
+          client.state.clusters = res.clusters;
+          // app.js mpOnDrop と同じ: 合体した drop でのみ手番が1つ進む
+          if (res.merged) client.turnIdx = L.nextTurnIndex(ORDER, client.leftPlayers, client.resolveIdx());
+        } else if (ev.t === 'player-left') {
+          client.leftPlayers[ev.player] = true;
+        }
+      },
+      getSnapshot: () => ({ clusters: JSON.parse(JSON.stringify(client.hooks.getClusters())) }),
+      applySnapshot: snap => { client.state.clusters = snap.clusters.map(c => ({ pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy })); },
+      allPieceIds: () => Array.from({ length: PIECES }, (_, i) => i),
+      hashState: cs => L.canonicalStateHash(cs),
+      deskBounds: () => ({ x0: -100, y0: -100, x1: 100, y1: 100 }),
+      logicVersion: 2, poolFingerprint: 't'
+    };
+    return client;
+  }
+  const host = makeClient(), g1 = makeClient(), g2 = makeClient();
+  const clients = { host, g1, g2 };
+  function wire(client, role, id) {
+    client.engine = MP.createEngine({
+      role, hooks: client.hooks,
+      net: role === 'host' ? {
+        broadcast: m => { g1.engine.receiveFromHost(JSON.parse(JSON.stringify(m))); g2.engine.receiveFromHost(JSON.parse(JSON.stringify(m))); },
+        sendTo: (pid, m) => clients[pid].engine.receiveFromHost(JSON.parse(JSON.stringify(m)))
+      } : { sendToHost: m => host.engine.receive(id, JSON.parse(JSON.stringify(m))) },
+      onReject: r => client.rejects.push(r)
+    });
+  }
+  wire(host, 'host'); wire(g1, 'guest', 'g1'); wire(g2, 'guest', 'g2');
+  host.engine.addPlayer('g1', 1, 1);
+  host.engine.addPlayer('g2', 2, 1);
+  host.engine.hostControl({ t: 'start', stage: 1, pieces: PIECES, mode: 'turn', order: ORDER });
+
+  function doDrop(engine, mover, x, y) {
+    const anchor = anchorOf(mover);
+    engine.request({ t: 'grab-req', cluster: anchor });
+    const lease = engine.getLease(anchor);
+    if (!lease) throw new Error('grab failed: ' + anchor);
+    engine.request({ t: 'drop', cluster: anchor, epoch: lease.epoch, x, y });
+  }
+  function adjoinCoord(clusters, mover) {
+    const pos = L.piecePositions(clusters, N);
+    for (const p of mover.pieces) {
+      const hp = L.pieceHome(p, N);
+      for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const qc = hp.col + d[0], qr = hp.row + d[1];
+        if (qc < 0 || qr < 0 || qc >= N || qr >= N) continue;
+        const q = qr * N + qc;
+        const B = clusters.find(cc => cc.pieces.includes(q));
+        if (!B || B === mover) continue;
+        const qp = pos.get(q);
+        if (!qp) continue;
+        const anch = L.pieceHome(anchorOf(mover), N);
+        return { x: qp.gx - d[0] - (hp.col - anch.col), y: qp.gy - d[1] - (hp.row - anch.row) };
+      }
+    }
+    return null;
+  }
+  const turnsEq = label => {
+    eq(g1.turnPlayer(), host.turnPlayer(), label + ': ゲスト1の手番導出がホストと一致');
+    eq(g2.turnPlayer(), host.turnPlayer(), label + ': ゲスト2の手番導出がホストと一致');
+  };
+
+  // 初手はホスト。非手番の grab はホスト検証で却下される
+  eq(host.turnPlayer(), 'host', 'ターン: 初手は参加順の先頭 (ホスト)');
+  g1.engine.request({ t: 'grab-req', cluster: anchorOf(g1.state.clusters[0]) });
+  eq(g1.rejects[g1.rejects.length - 1].reason, 'not-your-turn', 'ターン: 非手番 (ゲスト1) の grab が not-your-turn で却下');
+  g2.engine.request({ t: 'grab-req', cluster: anchorOf(g2.state.clusters[0]) });
+  eq(g2.rejects[g2.rejects.length - 1].reason, 'not-your-turn', 'ターン: 非手番 (ゲスト2) の grab も却下');
+
+  // 手番のホストが合体しない drop → 手番は続く
+  const single = host.state.clusters.find(c => c.pieces.length === 1);
+  const countBefore = host.state.clusters.length;
+  doDrop(host.engine, single, single.gx + 5.5, single.gy + 4.5);
+  eq(host.state.clusters.length, countBefore, 'ターン: 遠くへの drop では合体しない');
+  eq(host.turnPlayer(), 'host', 'ターン: 合体しなかった drop では手番は進まない');
+  turnsEq('無合体 drop 後');
+
+  // 手番のホストが合体する drop → 次の人へ
+  let pair = null;
+  for (const c of host.state.clusters) { const r = adjoinCoord(host.state.clusters, c); if (r) { pair = { mover: c, coord: r }; break; } }
+  ok(!!pair, 'ターン: 合体できる手が見つかる');
+  doDrop(host.engine, pair.mover, pair.coord.x, pair.coord.y);
+  eq(host.turnPlayer(), 'g1', 'ターン: 合体した drop で手番がゲスト1へ進む');
+  turnsEq('合体 drop 後');
+  host.engine.request({ t: 'grab-req', cluster: anchorOf(host.state.clusters[0]) });
+  eq(host.rejects[host.rejects.length - 1].reason, 'not-your-turn', 'ターン: 手番を渡したホストの grab は却下される');
+
+  // ゲスト1のチェーン合体 (2塊取り込み) でも手番は1つだけ進む
+  const farSingles = skip => Array.from({ length: PIECES }, (_, i) => i)
+    .filter(i => !skip.includes(i))
+    .map(i => ({ pieces: [i], gx: 12 + (i % 4) * 2, gy: 12 + Math.floor(i / 4) * 2 }));
+  const layout = [
+    { pieces: [0], gx: 0, gy: 0 },
+    { pieces: [2], gx: 2, gy: 0 },
+    { pieces: [1], gx: 12, gy: 12 },
+    ...farSingles([0, 1, 2])
+  ];
+  for (const c of [host, g1, g2]) c.state.clusters = JSON.parse(JSON.stringify(layout)).map(x => ({ pieces: x.pieces, surface: 'desk', gx: x.gx, gy: x.gy }));
+  const midPiece = g1.state.clusters.find(c => c.pieces[0] === 1);
+  const cntBeforeChain = g1.state.clusters.length;
+  doDrop(g1.engine, midPiece, 1, 0);
+  eq(g1.state.clusters.length, cntBeforeChain - 2, 'ターン: チェーンで2塊取り込む');
+  eq(host.turnPlayer(), 'g2', 'ターン: チェーン合体でも手番は1つだけ進む (ゲスト2へ)');
+  turnsEq('チェーン後');
+
+  // 手番プレイヤー (ゲスト2) が退出 → 手番は自動で次 (ホスト) へ
+  host.engine.removePlayer('g2');
+  eq(host.turnPlayer(), 'host', 'ターン: 手番プレイヤーの退出で手番が次へ進む');
+  eq(g1.turnPlayer(), 'host', 'ターン: 退出後の手番導出がゲスト1でも一致');
+  ok(!!g1.leftPlayers.g2 && !!host.leftPlayers.g2, 'ターン: player-left が seq 経由で全端末に届く');
+  eq(g1.hooks.hashState(g1.hooks.getClusters()), host.hooks.hashState(host.hooks.getClusters()), 'ターン: 最終状態のハッシュが一致');
+}
+
+/* ================= 12. レース (進捗共有と勝者確定) ================= */
+console.log('[12] レースモード (3人)');
+{
+  const L = require('./app.js');
+  const TOTAL = 16;
+  function makeRaceClient() {
+    const client = { clusters: TOTAL, progress: {}, winner: null, rejects: [] };
+    client.hooks = {
+      getClusters: () => { const a = []; for (let i = 0; i < client.clusters; i++) a.push({ anchorId: i, pieces: [i], gx: i, gy: 0 }); return a; },
+      clusterExists: id => id < client.clusters,
+      applyEvent: ev => {
+        // app.js の適用側と同じ: progress は写し、finish は最初の1つだけが勝者
+        if (ev.t === 'progress') client.progress[ev.from] = ev.placed;
+        else if (ev.t === 'finish' && !client.winner) client.winner = ev.from;
+      },
+      getSnapshot: () => ({ clusters: client.hooks.getClusters() }),
+      applySnapshot: () => {},
+      allPieceIds: () => Array.from({ length: TOTAL }, (_, i) => i),
+      hashState: () => 0,
+      deskBounds: () => ({ x0: -100, y0: -100, x1: 100, y1: 100 }),
+      logicVersion: 2, poolFingerprint: 't'
+    };
+    // 自分の盤面で1回合体させる (app.js mpRaceAfterBoard と同じ報告規則)
+    client.mergeOnce = () => {
+      client.clusters--;
+      client.engine.request({ t: 'progress', placed: L.racePlacedCount(TOTAL, client.clusters) });
+      if (client.clusters === 1) client.engine.request({ t: 'finish' });
+    };
+    return client;
+  }
+  const host = makeRaceClient(), g1 = makeRaceClient(), g2 = makeRaceClient();
+  const clients = { host, g1, g2 };
+  function wire(client, role, id) {
+    client.engine = MP.createEngine({
+      role, hooks: client.hooks,
+      net: role === 'host' ? {
+        broadcast: m => { g1.engine.receiveFromHost(JSON.parse(JSON.stringify(m))); g2.engine.receiveFromHost(JSON.parse(JSON.stringify(m))); },
+        sendTo: (pid, m) => clients[pid].engine.receiveFromHost(JSON.parse(JSON.stringify(m)))
+      } : { sendToHost: m => host.engine.receive(id, JSON.parse(JSON.stringify(m))) },
+      onReject: r => client.rejects.push(r)
+    });
+  }
+  wire(host, 'host'); wire(g1, 'guest', 'g1'); wire(g2, 'guest', 'g2');
+  host.engine.addPlayer('g1', 1, 1);
+  host.engine.addPlayer('g2', 2, 1);
+  host.engine.hostControl({ t: 'start', stage: 9, pieces: TOTAL, mode: 'race', order: ['host', 'g1', 'g2'] });
+
+  const progressEq = label => {
+    eq(JSON.stringify(g1.progress), JSON.stringify(host.progress), label + ': ゲスト1の進捗表がホストと一致');
+    eq(JSON.stringify(g2.progress), JSON.stringify(host.progress), label + ': ゲスト2の進捗表がホストと一致');
+  };
+
+  g1.mergeOnce(); g1.mergeOnce();
+  eq(host.progress.g1, 2, 'レース: ゲスト1のはめた数が 2 と共有される (16-14)');
+  host.mergeOnce();
+  eq(g2.progress.host, 1, 'レース: ホストのはめた数が 1 と共有される');
+  progressEq('序盤');
+
+  // 不正な進捗 (負数) はホスト検証で却下される
+  g1.engine.request({ t: 'progress', placed: -3 });
+  eq(g1.rejects[g1.rejects.length - 1].reason, 'bad-event', 'レース: 負数の進捗は bad-event で却下');
+  eq(host.progress.g1, 2, 'レース: 却下された進捗は反映されない');
+
+  // ゲスト2が先に完成 → 勝者はゲスト2で全端末一致
+  for (let i = 0; i < 15; i++) g2.mergeOnce();
+  eq(host.winner, 'g2', 'レース: 最初に完成したゲスト2が勝者 (ホスト側)');
+  eq(g1.winner, 'g2', 'レース: 勝者がゲスト1側でも一致');
+  eq(g2.winner, 'g2', 'レース: 勝者がゲスト2側でも一致');
+  eq(host.progress.g2, TOTAL - 1, 'レース: 勝者のはめた数は 全ピース数 − 1 = 15');
+
+  // ホストが遅れて完成しても勝者は覆らない (seq 順で一意)
+  for (let i = 0; i < 14; i++) host.mergeOnce();
+  eq(host.winner, 'g2', 'レース: 遅れた finish では勝者は変わらない (ホスト側)');
+  eq(g1.winner, 'g2', 'レース: 遅れた finish では勝者は変わらない (ゲスト1側)');
+  eq(g2.winner, 'g2', 'レース: 遅れた finish では勝者は変わらない (ゲスト2側)');
+
+  // 結果集計: 3人全員分が全端末でそろう
+  progressEq('最終');
+  eq(JSON.stringify(host.progress), JSON.stringify({ g1: 2, host: 15, g2: 15 }),
+    'レース: 最終進捗は全員分 {ホスト:15, ゲスト1:2, ゲスト2:15}');
+}
+
 /* ================= 7. ユーティリティ ================= */
 console.log('[7] ユーティリティ');
 {

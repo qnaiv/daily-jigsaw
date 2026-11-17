@@ -515,6 +515,24 @@ function applyClusterDrop(clusters, cl, x, y, n, isLeased) {
   return { clusters: res.clusters.concat(excluded), cluster: res.cluster, merged: res.merged };
 }
 
+/* レースモードの進捗: 「はめたピース数」= 全ピース数 − 現在の塊の数。
+ * バラバラの初期状態で 0、完成 (塊1つ) で 全ピース数 − 1 になる */
+function racePlacedCount(totalPieces, clusterCount) {
+  return totalPieces - clusterCount;
+}
+
+/* ターン制: 現在の手番インデックス idx の次 (退出済み leftSet の人は
+ * 飛ばす) のインデックスを返す。全員退出済みなら idx をそのまま返す。
+ * leftSet は playerId をキーにするオブジェクト (真値 = 退出済み) */
+function nextTurnIndex(order, leftSet, idx) {
+  if (!order || !order.length) return idx;
+  for (var i = 1; i <= order.length; i++) {
+    var j = (idx + i) % order.length;
+    if (!leftSet || !leftSet[order[j]]) return j;
+  }
+  return idx;
+}
+
 /* 範囲選択: 矩形 (セル座標・正規化済み {x0,y0,x1,y1}、x0<x1, y0<y1 前提) と
  * 交差するピースを持つ塊を返す。ピースの矩形は [gx, gx+1] × [gy, gy+1] で、
  * 辺だけが接する場合は交差とみなさない。 */
@@ -1894,6 +1912,7 @@ var PureLogic = {
   canonicalStateHash: canonicalStateHash,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
   absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop,
+  racePlacedCount: racePlacedCount, nextTurnIndex: nextTurnIndex,
   clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
   clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
@@ -2128,7 +2147,7 @@ function syncOpModeButtons() {
   });
 }
 function setCarryMode(on) {
-  if (on && mpInRoom()) { // 協力中は持ち運びモード無効 (MULTIPLAYER_DESIGN §1)
+  if (on && mpInRoom() && mp.mode !== 'race') { // 協力/ターン制では持ち運びモード無効 (MULTIPLAYER_DESIGN §1)。レースは各自ローカル盤面なので可
     showToast('協力プレイ中は持ち運びモードは使えません');
     syncOpModeButtons();
     return;
@@ -3689,7 +3708,7 @@ function runSortSingles(singles) {
   };
   requestAnimationFrame(sortAnimStep);
   showToast(groups.length + '色の山に分けたよ');
-  if (mpInRoom()) mpSendSortEvent(items); // 協力: 最終位置 + 全塊の並び順をイベント化 (§3.3/M5)
+  if (mpInRoom() && mp.mode !== 'race') mpSendSortEvent(items); // 協力/ターン制: 最終位置 + 全塊の並び順をイベント化 (§3.3/M5)。レースは各自ローカル盤面なので送らない
 }
 function sortAnimStep(now) {
   if (!sortAnim) return;
@@ -3764,6 +3783,7 @@ stage.addEventListener('pointerdown', function (ev) {
   if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
   if (sortAnim) return; // お助けのアニメーション中は操作を受けない
   if (mpInRoom() && !mp.begun) return; // 協力: ready バリア (全員揃うまで入力無効、M10)
+  if (mpInRoom() && mp.mode === 'race' && (mp.finishSent || mp.raceWinner)) return; // レース: 自分が完成済み or 勝者確定後は操作を受けない
   if (mpInRoom() && mp.pinMode) { mpFirePin(stagePos(ev)); return; } // 協力: 合図ピン (ピンボタン経由)
   stage.setPointerCapture(ev.pointerId);
   var p = stagePos(ev);
@@ -3804,13 +3824,17 @@ stage.addEventListener('pointerdown', function (ev) {
   }
   var hit = state.cleared ? null : hitCluster(p.x, p.y);
   if (hit && mpInRoom() && mpLeaseBlocked(hit.cluster)) hit = null; // 協力: 他人のリース中の塊は掴めない (§3.5)
+  if (hit && mpInRoom() && mp.mode === 'turn' && mpTurnPlayerId() !== mpMyId()) {
+    showToast(mpPlayerName(mpTurnPlayerId()) + 'さんの番です'); // ターン制: 手番のプレイヤーだけが掴める
+    hit = null;
+  }
   if (hit) {
     var w = screenToWorld(p.x, p.y);
     var inSelection = selection.has(hit.cluster);
     // 選択外のピースを掴んだら、その時点で選択を解除して通常ドラッグにする
     if (!inSelection) clearSelection();
-    // 掴んだ塊を最前面へ (協力中は並び順を動かさない: 全端末の z-order を一致させるため)
-    if (!mpInRoom()) {
+    // 掴んだ塊を最前面へ (協力/ターン制では並び順を動かさない: 全端末の z-order を一致させるため)
+    if (!mpInRoom() || mp.mode === 'race') {
       state.clusters.splice(state.clusters.indexOf(hit.cluster), 1);
       state.clusters.push(hit.cluster);
     }
@@ -3820,9 +3844,9 @@ stage.addEventListener('pointerdown', function (ev) {
       moved: false, group: null,
       sx: p.x, sy: p.y, lastX: p.x, lastY: p.y, movedFar: false
     };
-    if (inSelection && selection.size > 1 && !mpInRoom()) {
+    if (inSelection && selection.size > 1 && (!mpInRoom() || mp.mode === 'race')) {
       // 範囲選択のグループドラッグ: 選択全塊の相対オフセットを掴んだ塊基準で保持する
-      // (協力中は複数塊の移動は無効で、掴んだ塊だけの単一移動になる。§1/M4)
+      // (協力/ターン制では複数塊の移動は無効で、掴んだ塊だけの単一移動になる。§1/M4)
       drag.group = Array.from(selection).map(function (c) {
         return { cluster: c, offX: c.gx - hit.cluster.gx, offY: c.gy - hit.cluster.gy };
       });
@@ -3960,7 +3984,7 @@ stage.addEventListener('contextmenu', function (ev) { ev.preventDefault(); }); /
 
 /* ドラッグの確定処理 (離したとき & ピンチへ切り替えるとき共通) */
 function settleDrag() {
-  if (mpInRoom()) { mpSettleDrag(); return; } // 協力中は seq 確定経路へ (確定はイベント適用時)
+  if (mpInRoom() && mp.mode !== 'race') { mpSettleDrag(); return; } // 協力/ターン制は seq 確定経路へ (確定はイベント適用時)。レースは各自ローカル盤面なのでソロ経路で確定させる
   var cl = drag.cluster;
   var group = drag.group;
   var wasMoved = drag.moved;
@@ -4015,6 +4039,7 @@ function afterBoardChange() {
   persistProgress();
   updateProgressUI();
   draw();
+  if (mpInRoom() && mp.mode === 'race') { mpRaceAfterBoard(); return; } // レース: 進捗/完成を seq へ報告し、結果表示は finish の確定を待つ
   if (!state.cleared && isComplete(state.clusters, state.n)) onClear();
 }
 /* 面は机1つだけになったので、切替 UI はズーム表示の更新のみ */
@@ -4113,7 +4138,14 @@ function onClear() {
   if (mpInRoom() && mpIsHost()) {
     rec.coop = true;
     rec.players = Math.max(2, mp.peers.length || 2);
-    rec.contributions = mpContribRecord();
+    if (mp.mode === 'race') {
+      // レースでホストが勝った時だけ通常どおり記録する (contributions には
+      // 各プレイヤーのはめたピース数を入れる)。ゲスト勝利時は誰も書かない
+      rec.race = true;
+      rec.contributions = mpRaceProgressRecord();
+    } else {
+      rec.contributions = mpContribRecord();
+    }
   }
   if (!mpGuestClear) {
     if (prev) store.records[store.records.indexOf(prev)] = rec; else store.records.push(rec);
@@ -4121,6 +4153,7 @@ function onClear() {
   persistProgress();
   runConfetti();
   // 記録証 (C案): 額装した完成盤面 + 記録2行 + 「完成図を見ずにクリア」バッジ
+  $('resultTitle').textContent = 'クリア';
   $('resultDateLine').textContent = 'ステージ ' + playStage + ' ・ ' + difficulty + 'ピース';
   $('resultStatLine').textContent = 'タイム ' + formatTime(elapsed) + ' ・ ' + state.moves + '手';
   $('resultBadge').hidden = state.previewViewed;
@@ -7595,13 +7628,26 @@ function renderStartScreen() {
  * - 自分の drop / sort は即時適用せず、ホストの seq 確定イベントで適用する
  * - persistProgress は部屋中ずっと無動作 (ソロの進行中セーブと分離、§5)
  * - 記録と報酬はホストだけ (onClear 内の分岐、§5) */
-var MP_LOGIC_VERSION = 1; // scatter / merge / sort の振る舞いが変わるたびに上げる (§3.7)
+var MP_LOGIC_VERSION = 2; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)
 var MP_COLORS = ['#d9532b', '#2470c9', '#2f9e5f', '#8b46c7'];
 var MP_COLOR_NAMES = ['あか', 'あお', 'みどり', 'むらさき'];
+/* モード: coop = 協力 (共有盤面) / turn = ターン制 (共有盤面) /
+ * race = レース (各自の盤面で早い者勝ち)。部屋の間は固定で、
+ * start イベントの mode で全端末が一致する */
+var MP_MODES = ['coop', 'turn', 'race'];
+var MP_MODE_NAMES = { coop: '協力', turn: 'ターン制', race: 'レース' };
+var MP_MODE_DESCS = {
+  coop: 'みんなで同じ盤面を一緒に解きます',
+  turn: '順番に1手ずつ。ピースをつなげたら次の人へ',
+  race: '各自の盤面で勝負。最初に完成した人の勝ち'
+};
 var mp = {
   session: null, role: null, code: null, manual: false,
   begun: false, started: false, loading: false,
   stage: null, pieces: null, startedAt: 0,
+  mode: 'coop', lobbyMode: 'coop',
+  turnOrder: [], turnIdx: 0, leftPlayers: {}, matchPlayers: [],
+  raceProgress: {}, raceWinner: null, finishSent: false,
   lobbyStage: null, lobbyPieces: null, lobbyInfo: null, lobbyStatus: '',
   peers: [], verifyCode: null,
   myLeases: {},          // anchorId -> epoch (自分に付与されたリース)
@@ -7678,6 +7724,12 @@ var mpHooksObj = {
     });
   },
   clusterExists: function (anchorId) { return !!mpClusterByAnchor(anchorId); },
+  /* ターン制: 手番以外の grab はホスト検証で落とす。手番はホスト端末が
+   * seq 順に適用してきたイベントから導出した現在値で判定する */
+  validateGrab: function (fromId) {
+    if (mp.mode === 'turn' && mp.started && fromId !== mpTurnPlayerId()) return 'not-your-turn';
+    return null;
+  },
   applyEvent: function (ev, meta) { mpApplyEvent(ev, meta); },
   getSnapshot: function () {
     return {
@@ -7686,6 +7738,9 @@ var mpHooksObj = {
       elapsedSec: state ? currentElapsed() : 0,
       moves: state ? state.moves : 0,
       contrib: mp.contrib,
+      mode: mp.mode, turnOrder: mp.turnOrder, turnIdx: mp.turnIdx,
+      leftPlayers: mp.leftPlayers,
+      raceProgress: mp.raceProgress, raceWinner: mp.raceWinner,
       cleared: !!(state && state.cleared)
     };
   },
@@ -7786,6 +7841,7 @@ function mpOnReject(rej) {
       draw();
     }
     if (rej.reason === 'leased') showToast('そのピースは相手が持っています');
+    else if (rej.reason === 'not-your-turn') showToast('あなたの番ではありません');
   } else if (rej.evType === 'drop') {
     var a2 = mp.lastDropAnchor;
     mp.lastDropAnchor = null;
@@ -7830,6 +7886,11 @@ function mpStartSession(session, role, opts) {
 function mpResetState() {
   mp.session = null; mp.role = null; mp.code = null; mp.manual = false;
   mp.begun = false; mp.started = false; mp.loading = false;
+  mp.mode = 'coop'; mp.lobbyMode = 'coop';
+  mp.turnOrder = []; mp.turnIdx = 0; mp.leftPlayers = {}; mp.matchPlayers = [];
+  mp.raceProgress = {}; mp.raceWinner = null; mp.finishSent = false;
+  $('mpTurnBar').hidden = true;
+  $('mpRaceBar').hidden = true;
   mp.peers = []; mp.verifyCode = null; mp.contrib = {}; mp.myLeases = {};
   mp.pendingDrops = {}; mp.pendingRelease = {}; mp.pendingSnap = null; mp.queuedEvents = [];
   mp.cursors = {}; mp.movesEph = {}; mp.pins = []; mp.pinMode = false;
@@ -7969,6 +8030,24 @@ function mpRenderHostControls() {
     });
     seg.appendChild(b);
   });
+  var mseg = $('mpModeSeg');
+  mseg.innerHTML = '';
+  MP_MODES.forEach(function (m) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'diff-chip' + (m === mp.lobbyMode ? ' active' : '');
+    var num = document.createElement('span');
+    num.className = 'diff-num';
+    num.textContent = MP_MODE_NAMES[m];
+    b.appendChild(num);
+    b.addEventListener('click', function () {
+      mp.lobbyMode = m;
+      mpRenderHostControls();
+      mpBroadcastLobbyInfo();
+    });
+    mseg.appendChild(b);
+  });
+  $('mpModeDesc').textContent = MP_MODE_DESCS[mp.lobbyMode];
   var anyGuest = mpPeerList().some(function (p) { return !p.isHost && p.connected; });
   $('mpStartBtn').disabled = !anyGuest;
   $('mpStartHint').hidden = anyGuest; // 押せない理由はボタンの直上に (ゲストが入ったら消える)
@@ -7997,11 +8076,12 @@ function mpRenderLobbyPuzzle() {
       img.src = url;
     }
   } else { wrap.hidden = true; }
-  line.textContent = 'ステージ ' + stage + ' ・ ' + pieces + 'ピース';
+  line.textContent = 'ステージ ' + stage + ' ・ ' + pieces + 'ピース' +
+    (mpIsHost() ? '' : ' ・ ' + (MP_MODE_NAMES[(mp.lobbyInfo && mp.lobbyInfo.mode) || 'coop'] || ''));
 }
 function mpBroadcastLobbyInfo() {
   if (!mpIsHost() || !mp.session) return;
-  mp.session.sendEphemeral('lobby', { stage: mp.lobbyStage, pieces: mp.lobbyPieces });
+  mp.session.sendEphemeral('lobby', { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode });
 }
 function mpCreateRoom() {
   if (!window.JigsawMP) { mpHomeError('マルチプレイを読み込めませんでした'); return; }
@@ -8113,7 +8193,7 @@ function mpLoadPuzzle(stage, pieces) {
   };
   selection.clear();
   cancelPressAndRect();
-  if (carryMode) setCarryMode(false); // 協力中は持ち運び無効 (§1)
+  if (carryMode && mp.mode !== 'race') setCarryMode(false); // 協力/ターン制は持ち運び無効 (§1)。レースは各自ローカル盤面なのでソロ同様に可
   $('mpModal').hidden = true;
   if (navTop() === 'mp') navSilentPop('mp');
   $('resultModal').hidden = true;
@@ -8166,6 +8246,8 @@ function mpOnBegin() {
     state.timerStart = Date.now();
   }
   mpUpdateBadge();
+  mpUpdateTurnUI();
+  mpRenderRaceBar();
   draw();
 }
 
@@ -8188,18 +8270,32 @@ function mpFlushQueue() {
 }
 function mpApplyEventNow(ev, meta) {
   switch (ev.t) {
-    case 'start': case 'next': mpOnStartEvent(ev); break;
+    case 'start': mpOnStartEvent(ev); break;
+    case 'next': mpOnNextEvent(ev); break;
     case 'begin': mpOnBegin(); break;
     case 'grab': mpOnGrab(ev); break;
     case 'release': case 'lease-expire': mpOnRelease(ev); break;
     case 'drop': mpOnDrop(ev); break;
     case 'sort': mpOnSort(ev); break;
     case 'complete': mpOnComplete(); break;
+    case 'player-left': mpOnPlayerLeft(ev); break;
+    case 'progress': mpOnRaceProgress(ev); break;
+    case 'finish': mpOnRaceFinish(ev); break;
   }
+}
+/* start の order (参加順) から対戦の名簿を組み直す。手番の並び・
+ * レースの進捗/結果表示はこの名簿を正とし、途中退出後も行は消えない */
+function mpSetMatchFromOrder(order) {
+  mp.turnOrder = (order && order.length) ? order.slice()
+    : mpPeerList().map(function (p) { return p.playerId; });
+  mp.matchPlayers = mp.turnOrder.map(function (id) {
+    return { id: id, color: mpColorOf(id), name: mpPlayerName(id) };
+  });
 }
 function mpOnStartEvent(ev) {
   mp.stage = ev.stage;
   mp.pieces = ev.pieces;
+  mp.mode = ev.mode || 'coop';
   mp.startedAt = ev.startedAt || Date.now();
   mp.started = true;
   mp.begun = false;
@@ -8212,7 +8308,39 @@ function mpOnStartEvent(ev) {
   mp.cursors = {};
   mp.movesEph = {};
   mp.pins = [];
+  mpSetMatchFromOrder(ev.order);
+  mp.turnIdx = 0;
+  mp.leftPlayers = {};
+  mp.raceProgress = {};
+  mp.turnOrder.forEach(function (id) { mp.raceProgress[id] = 0; });
+  mp.raceWinner = null;
+  mp.finishSent = false;
   mpLoadPuzzle(ev.stage, ev.pieces);
+}
+/* 「つぎのステージへ」: 即開始せずロビーへ戻る。ステージだけ +1 された
+ * ものが選択済みになり、モードは引き継ぎ、ホストがピース数を
+ * 選び直してから「はじめる」で次の対戦が始まる (全モード共通) */
+function mpOnNextEvent(ev) {
+  mp.lobbyStage = ev.stage;
+  mp.started = false;
+  mp.begun = false;
+  mp.completeSent = false;
+  mp.clearShown = false;
+  mp.raceWinner = null;
+  mp.finishSent = false;
+  mp.raceProgress = {};
+  mp.turnIdx = 0;
+  mp.leftPlayers = {};
+  $('resultModal').hidden = true;
+  if (navTop() === 'result') navSilentPop('result');
+  $('mpWaitVeil').hidden = true;
+  $('mpTurnBar').hidden = true;
+  $('mpRaceBar').hidden = true;
+  mpShowLobby();
+  $('mpModal').hidden = false;
+  if (navTop() !== 'mp') navPush('mp');
+  if (mpIsHost()) mpBroadcastLobbyInfo();
+  mpUpdateBadge();
 }
 function mpOnGrab(ev) {
   if (ev.from === mpMyId()) {
@@ -8272,7 +8400,129 @@ function mpOnDrop(ev) {
   pruneSelection();
   updateProgressUI();
   draw();
+  if (mp.mode === 'turn' && res.merged) {
+    // ターン制: 合体が1回以上起きた drop で手番が次へ進む (チェーンでも
+    // その drop は1手番分)。合体しなかった drop では手番は続く
+    mpAdvanceTurn();
+    mpUpdateTurnUI();
+  }
   mpCheckComplete();
+}
+
+/* ---------- ターン制 ---------- */
+/* 保存済み turnIdx から、退出済みを飛ばして現在の手番インデックスを
+ * 解決する (読み取り専用)。全端末が seq 済みイベントから同じ値を導く */
+function mpResolveTurnIdx() {
+  var n = mp.turnOrder.length;
+  if (!n) return 0;
+  for (var i = 0; i < n; i++) {
+    var j = (mp.turnIdx + i) % n;
+    if (!mp.leftPlayers[mp.turnOrder[j]]) return j;
+  }
+  return mp.turnIdx;
+}
+function mpTurnPlayerId() {
+  return mp.turnOrder.length ? mp.turnOrder[mpResolveTurnIdx()] : null;
+}
+function mpAdvanceTurn() {
+  mp.turnIdx = nextTurnIndex(mp.turnOrder, mp.leftPlayers, mpResolveTurnIdx());
+}
+function mpOnPlayerLeft(ev) {
+  if (!ev.player) return;
+  mp.leftPlayers[ev.player] = true; // 手番の解決時に自動で飛ばされる
+  mpUpdateTurnUI();
+}
+function mpUpdateTurnUI() {
+  var bar = $('mpTurnBar');
+  var show = mpInRoom() && mp.mode === 'turn' && mp.begun &&
+    state && state.phase === 'play' && !uiHome;
+  bar.hidden = !show;
+  if (!show) return;
+  var cur = mpTurnPlayerId();
+  $('mpTurnDot').style.background = MP_COLORS[mpColorOf(cur)] || '#999';
+  $('mpTurnText').textContent = cur === mpMyId() ? 'あなたの番です' : mpPlayerName(cur) + 'さんの番です';
+  bar.classList.toggle('mine', cur === mpMyId());
+}
+
+/* ---------- レース ---------- */
+/* 自分の盤面が変わった後に呼ぶ: 進捗 (はめたピース数) が変わっていれば
+ * progress を、完成していれば finish を seq へ送る。結果表示は
+ * finish の確定 (mpOnRaceFinish) を待つので、ローカル完成だけで
+ * 記録や結果画面へ進むことはない */
+function mpRaceAfterBoard() {
+  if (!mp.session || mp.raceWinner) return;
+  var placed = racePlacedCount(mp.pieces, state.clusters.length);
+  if (placed !== (mp.raceProgress[mpMyId()] || 0))
+    mp.session.sendEvent({ t: 'progress', placed: placed });
+  if (!mp.finishSent && isComplete(state.clusters, state.n)) {
+    mp.finishSent = true;
+    mp.session.sendEvent({ t: 'finish' });
+    showToast('完成！ 結果を待っています…');
+  }
+}
+function mpOnRaceProgress(ev) {
+  if (typeof ev.placed !== 'number') return;
+  mp.raceProgress[ev.from] = ev.placed;
+  mpRenderRaceBar();
+}
+/* 勝者は seq 順に最初に適用された finish で確定する (同時完成の競合は
+ * ホストの採番順で一意に決まる)。後の finish は無視する */
+function mpOnRaceFinish(ev) {
+  if (mp.raceWinner || mp.mode !== 'race' || mp.clearShown) return;
+  mp.clearShown = true;
+  mp.raceWinner = ev.from;
+  mp.raceProgress[ev.from] = racePlacedCount(mp.pieces, 1); // 勝者は完成 = 全ピース数 − 1
+  if (drag) { drag = null; stopEdgeScroll(); } // 終了時点で掴んでいた塊は確定させない
+  mpRenderRaceBar();
+  if (ev.from === mpMyId()) {
+    onClear(); // 勝者: 通常のクリア処理 (記録・ごほうびはホストの時だけ通常ルールで付く)
+  } else {
+    mpRaceShowResult();
+  }
+}
+function mpRaceProgressRecord() {
+  var out = {};
+  mp.matchPlayers.forEach(function (p) { out[p.id] = mp.raceProgress[p.id] || 0; });
+  return out;
+}
+/* 負けた側の結果画面: 記録は書かず、勝者と全員の進捗だけを見せる */
+function mpRaceShowResult() {
+  if (!state) return;
+  $('resultTitle').textContent = '結果';
+  $('resultDateLine').textContent = 'ステージ ' + playStage + ' ・ ' + difficulty + 'ピース';
+  $('resultStatLine').textContent = '勝者は ' + mpPlayerName(mp.raceWinner) + 'さん';
+  $('resultBadge').hidden = true;
+  $('resultUpperBadge').hidden = true;
+  $('resultRewardItems').hidden = true;
+  $('resultRewardItems').innerHTML = '';
+  var boardHost = $('resultBoard');
+  boardHost.innerHTML = '';
+  renderBoardCanvasAt({
+    date: playDate, stage: playStage, pieces: difficulty,
+    imageId: state.imageId, imageKey: state.imageKey
+  }, 288).then(function (cv) {
+    if (!cv) return;
+    boardHost.innerHTML = '';
+    boardHost.appendChild(cv);
+  });
+  $('resultModal').hidden = false;
+  navPush('result');
+  mpFillResultExtras(false);
+}
+function mpRenderRaceBar() {
+  var bar = $('mpRaceBar');
+  var show = mpInRoom() && mp.mode === 'race' && mp.started &&
+    state && state.phase === 'play' && !uiHome;
+  bar.hidden = !show;
+  if (!show) return;
+  var html = '';
+  mp.matchPlayers.forEach(function (p) {
+    html += '<div class="mp-race-row"><span class="mp-dot" style="background:' +
+      (MP_COLORS[p.color] || '#999') + '"></span><span class="mp-race-name">' +
+      escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
+      '<span class="mp-race-frac">' + (mp.raceProgress[p.id] || 0) + '/' + mp.pieces + '</span></div>';
+  });
+  bar.innerHTML = html;
 }
 function mpOnSort(ev) {
   (ev.moves || []).forEach(function (m) {
@@ -8304,6 +8554,7 @@ function mpOnComplete() {
 /* ---------- snapshot (途中参加・復帰・不一致の回復) ---------- */
 function mpApplySnapshot(snap) {
   if (!snap) return;
+  if (snap.mode) mp.mode = snap.mode;
   var needLoad = !mp.started || mp.loading || !state || !state.srcCanvas ||
     mp.stage !== snap.stage || mp.pieces !== snap.pieces;
   if (needLoad) {
@@ -8321,6 +8572,25 @@ function mpApplySnapshot(snap) {
 }
 function mpDoApplySnapshot(snap) {
   if (!state) return;
+  if (snap.turnOrder) mpSetMatchFromOrder(snap.turnOrder);
+  if (typeof snap.turnIdx === 'number') mp.turnIdx = snap.turnIdx;
+  if (snap.leftPlayers) mp.leftPlayers = snap.leftPlayers;
+  if (snap.raceProgress) mp.raceProgress = snap.raceProgress;
+  if (snap.raceWinner) mp.raceWinner = snap.raceWinner;
+  if (mp.mode === 'race') {
+    // レースは各自の盤面が正。ホストの盤面で上書きせず、進捗と勝者だけ
+    // 取り込む (再入室した人の盤面は初期配置からやり直しになる)
+    mp.begun = true;
+    $('mpWaitVeil').hidden = true;
+    mpRenderRaceBar();
+    if (mp.raceWinner && !mp.clearShown) {
+      mp.clearShown = true;
+      // 勝者が自分でも、再入室で盤面が初期化されていたら記録は書かず結果だけ見せる
+      if (mp.raceWinner === mpMyId() && isComplete(state.clusters, state.n)) onClear();
+      else mpRaceShowResult();
+    }
+    return;
+  }
   state.clusters = (snap.clusters || []).map(function (c) {
     return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy };
   });
@@ -8382,6 +8652,8 @@ function mpSendSortEvent(items) {
 /* 掴んだ瞬間に grab 要求を送る (本体の pointerdown の後に動く自前リスナ) */
 stage.addEventListener('pointerdown', function () {
   if (!mpInRoom() || !mp.begun) return;
+  if (mp.mode === 'race') return; // レースは各自ローカル盤面 (リース自体がない)
+  if (mp.mode === 'turn' && mpTurnPlayerId() !== mpMyId()) return; // ターン制: 手番以外は要求しない
   if (drag && drag.cluster && !drag.mpGrabbed) {
     drag.mpGrabbed = true;
     var anchor = clusterAnchorId(drag.cluster);
@@ -8393,7 +8665,7 @@ stage.addEventListener('pointerdown', function () {
 /* カーソルとドラッグ中位置の ephemeral 送信 (間引きあり) */
 var mpLastCursorSent = 0, mpLastMoveSent = 0;
 stage.addEventListener('pointermove', function (ev) {
-  if (!mpInRoom() || !mp.begun || !state || state.phase !== 'play' || uiHome) return;
+  if (!mpInRoom() || !mp.begun || mp.mode === 'race' || !state || state.phase !== 'play' || uiHome) return;
   var now = Date.now();
   if (now - mpLastCursorSent >= 120) {
     mpLastCursorSent = now;
@@ -8430,7 +8702,7 @@ function mpFirePin(p) {
 
 /* ---------- 描画の重ね合わせ (draw() の末尾から呼ばれる) ---------- */
 function mpDrawOverlays() {
-  if (!mpInRoom() || !state || !state.srcCanvas || !state.views.desk) return;
+  if (!mpInRoom() || mp.mode === 'race' || !state || !state.srcCanvas || !state.views.desk) return; // レースは相手の盤面が無いので重ね描きなし
   var v = view();
   var n = state.n;
   var now = Date.now();
@@ -8507,14 +8779,19 @@ function mpUpdateBadge() {
   if (!mpInRoom() || uiHome || !state || state.phase !== 'play') {
     badge.hidden = true;
     $('mpPinBtn').hidden = true;
+    $('mpTurnBar').hidden = true;
+    $('mpRaceBar').hidden = true;
     return;
   }
   var list = mpPeerList();
   var connected = list.filter(function (p) { return p.connected; }).length;
-  $('mpBadgeText').textContent = '協力プレイ ・ ' + Math.max(connected, list.length, 1) + '人' + (mp.begun ? '' : ' ・ 準備中');
+  var modeLabel = mp.mode === 'coop' ? '協力プレイ' : (MP_MODE_NAMES[mp.mode] || '協力プレイ');
+  $('mpBadgeText').textContent = modeLabel + ' ・ ' + Math.max(connected, list.length, 1) + '人' + (mp.begun ? '' : ' ・ 準備中');
   badge.classList.toggle('off', !mp.begun);
   badge.hidden = false;
-  $('mpPinBtn').hidden = !mp.begun;
+  $('mpPinBtn').hidden = !mp.begun || mp.mode === 'race'; // レースは各自の盤面なのでピンは出さない
+  mpUpdateTurnUI();
+  mpRenderRaceBar();
 }
 
 /* ---------- クリア画面の協力表示 (onClear から呼ばれる) ---------- */
@@ -8531,6 +8808,32 @@ function mpContribRecord() {
 function mpFillResultExtras(guestClear) {
   var box = $('resultContrib'), note = $('resultCoopNote'), acts = $('resultMpActions');
   if (!mpInRoom()) { box.hidden = true; note.hidden = true; acts.hidden = true; return; }
+  if (mp.mode === 'race') {
+    // レース結果: 勝者 + 全員のはめたピース数 (分数形式)
+    var rhtml = '<p class="cert-contrib-title">レース結果</p><ul class="mp-roster">';
+    mp.matchPlayers.forEach(function (p) {
+      var isWinner = p.id === mp.raceWinner;
+      rhtml += '<li><span class="mp-dot" style="background:' + (MP_COLORS[p.color] || '#999') + '"></span><span>' +
+        escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
+        '<span class="mp-peer-state">' + (isWinner ? '勝者 ・ ' : '') +
+        (mp.raceProgress[p.id] || 0) + '/' + mp.pieces + '</span></li>';
+    });
+    rhtml += '</ul>';
+    box.innerHTML = rhtml;
+    box.hidden = false;
+    note.hidden = false;
+    if (mp.raceWinner === mpMyId()) {
+      note.textContent = mpIsHost()
+        ? 'レース：あなたの勝利です。このクリアはあなたの記録になります'
+        : 'レース：あなたの勝利です。ステージ記録は付きません（記録はホストが勝った時だけ付きます）';
+    } else {
+      note.textContent = 'レース：勝者は ' + mpPlayerName(mp.raceWinner) + 'さん。あなたの記録は付きません';
+    }
+    acts.hidden = false;
+    $('resultNextBtn').hidden = !mpIsHost();
+    $('resultLeaveBtn').textContent = mpIsHost() ? '部屋を解散する' : '部屋を出る';
+    return;
+  }
   var html = '<p class="cert-contrib-title">みんなの貢献</p><ul class="mp-roster">';
   mpContribPlayers().forEach(function (p) {
     html += '<li><span class="mp-dot" style="background:' + (MP_COLORS[p.color] || '#999') + '"></span><span>' +
@@ -8600,7 +8903,11 @@ $('mpStageSel').addEventListener('change', function () {
 });
 $('mpStartBtn').addEventListener('click', function () {
   if (!mpIsHost() || !mp.session) return;
-  mp.session.hostStart({ stage: mp.lobbyStage, pieces: mp.lobbyPieces, startedAt: Date.now() });
+  mp.session.hostStart({
+    stage: mp.lobbyStage, pieces: mp.lobbyPieces, startedAt: Date.now(),
+    mode: mp.lobbyMode, // モードは start で確定し、部屋の間は固定
+    order: mpPeerList().map(function (p) { return p.playerId; }) // 参加順 (手番・結果表示の並び)
+  });
 });
 $('mpLobbyImg').addEventListener('load', function () {
   $('mpLobbyImg').hidden = false;
@@ -8621,7 +8928,9 @@ $('mpPinBtn').addEventListener('click', function () {
 $('resultNextBtn').addEventListener('click', function () {
   if (!mpIsHost() || !mp.session || !state || !state.pool) return;
   var ns = nextStage(store.records, state.pool);
-  mp.session.hostNext({ stage: ns, pieces: difficulty, startedAt: Date.now() });
+  // 即開始はせず、全員をロビーへ戻す (mpOnNextEvent)。ピース数はロビーで
+  // 選び直してから「はじめる」を押す
+  mp.session.hostNext({ stage: ns });
 });
 $('resultLeaveBtn').addEventListener('click', function () {
   $('resultModal').hidden = true;

@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v39'") !== -1, 'sw: VERSION は v39');
+  ok(swSB.indexOf("VERSION = 'v40'") !== -1, 'sw: VERSION は v40');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1578,13 +1578,13 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: スタート導線・ロビー・バッジ・ピンボタン・貢献度表示の要素がある');
   ok(swM.indexOf("'mp.js'") !== -1 && swM.indexOf("endsWith('/mp.js')") !== -1,
      'MP配線: sw.js が mp.js をプリキャッシュし NetworkFirst 対象に含む');
-  ok(appM.indexOf('var MP_LOGIC_VERSION = 1;') !== -1 &&
+  ok(appM.indexOf('var MP_LOGIC_VERSION = 2;') !== -1 &&
      appM.indexOf('hashState: function (clusters) { return canonicalStateHash(clusters); }') !== -1 &&
      appM.indexOf("t: 'grab-req'") !== -1 && appM.indexOf("t: 'drop'") !== -1 && appM.indexOf("t: 'sort'") !== -1,
      'MP配線: hooks が canonicalStateHash を使い、grab-req/drop/sort を送る');
-  ok(appM.indexOf('if (mpInRoom()) { mpSettleDrag(); return; }') !== -1 &&
+  ok(appM.indexOf("if (mpInRoom() && mp.mode !== 'race') { mpSettleDrag(); return; }") !== -1 &&
      appM.indexOf('if (mpInRoom()) return; // 協力プレイはソロの進行中セーブと分離する') !== -1,
-     'MP配線: settleDrag は協力時に seq 経路へ分岐し、persistProgress は協力中に無動作');
+     'MP配線: settleDrag は協力/ターン制で seq 経路へ分岐し (レースはローカル確定)、persistProgress は協力中に無動作');
   ok(appM.indexOf('mpGuestClear') !== -1 && appM.indexOf('rec.coop = true;') !== -1 &&
      appM.indexOf('function mpFillResultExtras(') !== -1,
      'MP配線: クリア記録はホストのみ coop 付きで保存し、ゲストは書かない');
@@ -1616,6 +1616,65 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: ロビーの共有/コピーはコード単体でなく招待リンク (origin + pathname + ?room=) を渡す');
   ok(htmlM.indexOf('招待リンクをコピー') !== -1 && htmlM.indexOf('id="mpRoomCode"') !== -1,
      'MP配線: コピーボタンは招待リンク用ラベルになり、大きな部屋コード表示は残る');
+}
+
+/* マルチプレイ: モード (協力/ターン制/レース) と次のステージの配線 */
+{
+  const fsX = require('fs'), pathX = require('path');
+  const appX = fsX.readFileSync(pathX.join(__dirname, 'app.js'), 'utf8');
+  const htmlX = fsX.readFileSync(pathX.join(__dirname, 'index.html'), 'utf8');
+  const mpX = fsX.readFileSync(pathX.join(__dirname, 'mp.js'), 'utf8');
+  const cssX = fsX.readFileSync(pathX.join(__dirname, 'style.css'), 'utf8');
+  ok(htmlX.indexOf('id="mpModeSeg"') !== -1 && htmlX.indexOf('id="mpModeDesc"') !== -1 &&
+     htmlX.indexOf('id="mpTurnBar"') !== -1 && htmlX.indexOf('id="mpTurnText"') !== -1 &&
+     htmlX.indexOf('id="mpRaceBar"') !== -1 && htmlX.indexOf('id="resultTitle"') !== -1,
+     'MPモード配線: ロビーのモード選択・手番バー・レース進捗バー・結果タイトルの要素がある');
+  ok(appX.indexOf("var MP_MODES = ['coop', 'turn', 'race'];") !== -1 &&
+     appX.indexOf('mode: mp.lobbyMode,') !== -1 &&
+     appX.indexOf('mp.mode = ev.mode || \'coop\';') !== -1,
+     'MPモード配線: モードはロビーで選び start イベントで全端末に一致させる');
+  ok(appX.indexOf('validateGrab: function (fromId) {') !== -1 &&
+     appX.indexOf("return 'not-your-turn';") !== -1 &&
+     mpX.indexOf('hooks.validateGrab(fromId, ev)') !== -1,
+     'MPモード配線: ターン制の grab はホスト検証 (validateGrab) で手番以外を却下する');
+  ok(mpX.indexOf("case 'progress':") !== -1 && mpX.indexOf("case 'finish':") !== -1 &&
+     mpX.indexOf("{ t: 'player-left', player: id }") !== -1,
+     'MPモード配線: エンジンが progress/finish を検証し、対戦中の退出を player-left で seq 配信する');
+  ok(appX.indexOf("case 'player-left': mpOnPlayerLeft(ev); break;") !== -1 &&
+     appX.indexOf("case 'progress': mpOnRaceProgress(ev); break;") !== -1 &&
+     appX.indexOf("case 'finish': mpOnRaceFinish(ev); break;") !== -1,
+     'MPモード配線: 適用側が player-left / progress / finish を処理する');
+  ok(appX.indexOf('function mpOnNextEvent(ev) {') !== -1 &&
+     appX.indexOf("case 'next': mpOnNextEvent(ev); break;") !== -1 &&
+     appX.indexOf('mp.session.hostNext({ stage: ns });') !== -1 &&
+     appX.indexOf('mp.lobbyStage = ev.stage;') !== -1,
+     'MPモード配線: 「つぎのステージへ」は即開始せずロビーへ戻り、ステージだけ引き継ぐ (ピース数は選び直す)');
+  ok(appX.indexOf("if (mpInRoom() && mp.mode === 'race') { mpRaceAfterBoard(); return; }") !== -1 &&
+     appX.indexOf("mp.session.sendEvent({ t: 'finish' });") !== -1 &&
+     appX.indexOf('racePlacedCount(mp.pieces, state.clusters.length)') !== -1,
+     'MPモード配線: レースはローカル確定のたびに進捗を数え、完成で finish を送る');
+  ok(appX.indexOf("if (mpInRoom() && mp.mode === 'race' && (mp.finishSent || mp.raceWinner)) return;") !== -1 &&
+     appX.indexOf("mp.mode === 'turn' && mpTurnPlayerId() !== mpMyId()") !== -1,
+     'MPモード配線: レース終了後とターン制の非手番はクライアント側でも入力を止める');
+  ok(appX.indexOf("rec.race = true;") !== -1 && appX.indexOf('function mpRaceShowResult() {') !== -1 &&
+     appX.indexOf("mp.raceProgress[p.id] || 0) + '/' + mp.pieces") !== -1,
+     'MPモード配線: レース記録はホスト勝利時のみ race 付きで書き、結果は全員分を分数形式で出す');
+  ok(cssX.indexOf('#mpTurnBar') !== -1 && cssX.indexOf('#mpRaceBar') !== -1 && cssX.indexOf('#mpModeSeg') !== -1,
+     'MPモード配線: style.css に手番バー・レース進捗バー・モード選択のスタイルがある');
+}
+
+/* レース進捗とターン進行 (PureLogic) */
+{
+  ok(L.racePlacedCount(36, 36) === 0, 'レース進捗: 初期状態 (全バラ) は 0');
+  ok(L.racePlacedCount(36, 13) === 23, 'レース進捗: はめた数 = 全ピース数 − 塊の数 (36-13=23)');
+  ok(L.racePlacedCount(36, 1) === 35, 'レース進捗: 完成時は 全ピース数 − 1');
+  ok(L.racePlacedCount(16, 1) === 15, 'レース進捗: 16ピース完成時は 15');
+  const order = ['host', 'g1', 'g2'];
+  ok(L.nextTurnIndex(order, {}, 0) === 1, 'ターン: 次は参加順の2人目');
+  ok(L.nextTurnIndex(order, {}, 2) === 0, 'ターン: 末尾からは先頭へ回る');
+  ok(L.nextTurnIndex(order, { g1: true }, 0) === 2, 'ターン: 退出済みの人は飛ばす');
+  ok(L.nextTurnIndex(order, { g1: true, g2: true }, 0) === 0, 'ターン: 自分以外全員退出なら自分のまま');
+  ok(L.nextTurnIndex([], {}, 0) === 0 && L.nextTurnIndex(order, null, 1) === 2, 'ターン: 空の並び・leftSet なしでも壊れない');
 }
 
 /* 招待リンク: ?room= パラメータ解析と URL 組み立て (PureLogic) */

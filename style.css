@@ -1080,6 +1080,28 @@ button { font: inherit; cursor: pointer; }
 #mpBadge[hidden] { display: none; }
 .mp-badge-dot { width: 8px; height: 8px; border-radius: 999px; background: #7dc383; flex: 0 0 auto; }
 #mpBadge.off .mp-badge-dot { background: #d9a441; }
+/* ターン制: 手番表示 (バッジの下に常時出す) */
+#mpTurnBar {
+  position: absolute; right: 10px; top: 100px; z-index: 4; pointer-events: none;
+  display: flex; gap: 7px; align-items: center;
+  background: rgba(24,17,10,.48); color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; padding: 4px 12px;
+  font-size: 12.5px; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+#mpTurnBar[hidden] { display: none; }
+#mpTurnBar.mine { background: var(--brass); border-color: transparent; font-weight: 700; }
+#mpTurnDot { width: 10px; height: 10px; border-radius: 999px; flex: 0 0 auto; border: 2px solid rgba(255,255,255,.85); }
+/* レース: 全員の進捗 (はめた数 / 全ピース数) */
+#mpRaceBar {
+  position: absolute; right: 10px; top: 100px; z-index: 4; pointer-events: none;
+  display: flex; flex-direction: column; gap: 4px; min-width: 128px;
+  background: rgba(24,17,10,.48); color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 12px; padding: 7px 11px;
+  font-size: 12.5px; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+#mpRaceBar[hidden] { display: none; }
+.mp-race-row { display: flex; gap: 7px; align-items: center; }
+.mp-race-row .mp-dot { width: 10px; height: 10px; border-radius: 999px; flex: 0 0 auto; border: 2px solid rgba(255,255,255,.85); }
+.mp-race-name { white-space: nowrap; }
+.mp-race-frac { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
 .mp-pin-btn { right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: center; }
 .mp-pin-btn svg { width: 22px; height: 22px; }
 .mp-pin-btn[hidden] { display: none; }
@@ -1133,6 +1155,10 @@ button { font: inherit; cursor: pointer; }
 .mp-puzzle-line[hidden] { display: none; }
 #mpDiffSeg { gap: 4px; }
 #mpDiffSeg .diff-chip { min-height: 30px; padding: 2px 8px; }
+#mpModeSeg { gap: 4px; flex-wrap: wrap; }
+#mpModeSeg .diff-chip { min-height: 30px; padding: 2px 12px; }
+#mpModeSeg .diff-num { font-size: 13.5px; }
+#mpModeDesc { text-align: left; }
 #mpDiffSeg .diff-num { font-size: 13px; }
 .mp-stage-sel {
   width: 100%; box-sizing: border-box; font: inherit; font-size: 15px; padding: 9px 12px;
