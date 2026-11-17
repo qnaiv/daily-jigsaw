@@ -311,6 +311,26 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(eq(L.clustersInRect(all, n, { x0: 7.5, y0: 0.5, x1: 8.5, y1: 1.5 }), [c3]), '範囲選択: 塊の1ピースでも交差すれば塊全体が選ばれる');
   ok(eq(L.clustersInRect(all, n, { x0: 5.5, y0: 5.5, x1: 9, y1: 9 }), [c2]), '範囲選択: 部分的な重なりでも選ばれる');
   ok(L.clustersInRect(all, n, { x0: -10, y0: -10, x1: 20, y1: 20 }).length === 4, '範囲選択: 全面が対象 (面の絞り込みなし)');
+  // --- nearestClusterByCellDist (掴みの吸着 #3 B2): セル矩形への最短距離で最も近い塊を選ぶ ---
+  const sA = { pieces: [0], surface: 'desk', gx: 2, gy: 2 };        // 矩形 [2,3]×[2,3]
+  const sB = { pieces: [55], surface: 'desk', gx: 5, gy: 5 };       // 矩形 [5,6]×[5,6]
+  const sM = { pieces: [11, 12], surface: 'desk', gx: 7, gy: 1 };   // 11が(7,1)、12が(8,1)
+  const sAll = [sA, sB, sM];
+  const near1 = L.nearestClusterByCellDist(sAll, n, 2.5, 2.5, 0.16, null);
+  ok(near1 && near1.cluster === sA && near1.pieceId === 0 && near1.dist === 0, '吸着: セル矩形の中なら距離0でその塊を選ぶ');
+  const near2 = L.nearestClusterByCellDist(sAll, n, 3.1, 2.5, 0.16, null);
+  ok(near2 && near2.cluster === sA && approx(near2.dist, 0.1), '吸着: 矩形の外でも上限以内なら最も近い塊を選ぶ');
+  ok(L.nearestClusterByCellDist(sAll, n, 3.2, 2.5, 0.16, null) === null, '吸着: 上限 (画面16px相当) を超えたら選ばない');
+  const near4 = L.nearestClusterByCellDist(sAll, n, 8.5, 2.1, 0.16, null);
+  ok(near4 && near4.cluster === sM && near4.pieceId === 12, '吸着: 複数ピースの塊では最も近いピースを返す');
+  const sC = { pieces: [3], surface: 'desk', gx: 3, gy: 2 };        // 矩形 [3,4]×[2,3] (sA と辺を共有)
+  const tie1 = L.nearestClusterByCellDist([sA, sC], n, 3, 2.5, 0.16, null);
+  ok(tie1 && tie1.cluster === sC, '吸着: 同点では最前面 (配列の後方) を優先する');
+  const tie2 = L.nearestClusterByCellDist([sC, sA], n, 3, 2.5, 0.16, null);
+  ok(tie2 && tie2.cluster === sA, '吸着: 同点の優先は並び順 (最前面) に従う');
+  ok(L.nearestClusterByCellDist(sAll, n, 2.5, 2.5, 0.16, function (cl) { return cl === sA; }) === null,
+     '吸着: exclude された塊は候補から外れる (MP の他人リース中)');
+  ok(L.nearestClusterByCellDist([], n, 0, 0, 0.16, null) === null, '吸着: 塊が無ければ null');
   // --- shiftClusters ---
   const src = [{ pieces: [0, 1], surface: 'desk', gx: 3.5, gy: 2.25 }];
   const shifted = L.shiftClusters(src, 2, -1);
@@ -1478,7 +1498,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v43'") !== -1, 'sw: VERSION は v43');
+  ok(swSB.indexOf("VERSION = 'v44'") !== -1, 'sw: VERSION は v44');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1737,26 +1757,44 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP改善#1: 「つぎのステージへ」の適用時にも saveStore の保険が走る');
 }
 
-/* マルチプレイ改善 #3 (改訂): パンは2本指のみ (1本指はピース専用)
- * ユーザー判断で設計書の推奨 (吸着 B2 + C-lite) から差し替え。吸着は入れない */
+/* マルチプレイ改善 #3 (改訂2): パン方式は設定で切替 + 吸着 (B2) を追加
+ * v42 では2本指パン固定 (ユーザー判断で吸着なし) だったが、後に
+ * 「元の1本指方式と設定で切り替えたい + 吸着も入れて」と再変更された */
 {
   const fsP = require('fs'), pathP = require('path');
   const appP = fsP.readFileSync(pathP.join(__dirname, 'app.js'), 'utf8');
-  ok(appP.indexOf('pressPending.carryTap || pressPending.isMouse') !== -1 &&
+  const htmlP = fsP.readFileSync(pathP.join(__dirname, 'index.html'), 'utf8');
+  // パン方式の設定: 既定は 'two' (2本指)、store に保存され即反映・再起動後も維持
+  ok(appP.indexOf("var panMode = store.panMode === 'one' ? 'one' : 'two';") !== -1 &&
+     appP.indexOf('function setPanMode(mode)') !== -1 &&
+     appP.indexOf('store.panMode = panMode;') !== -1,
+     'MP改善#3改訂2: パン方式は store.panMode に保存され、未保存なら2本指方式が既定');
+  ok(htmlP.indexOf('data-panmode="two"') !== -1 && htmlP.indexOf('data-panmode="one"') !== -1 &&
+     htmlP.indexOf('2本指でスクロール') !== -1 && htmlP.indexOf('1本指でスクロール') !== -1,
+     'MP改善#3改訂2: 設定「あそびかた」にパン方式の切替ボタン (2本指/1本指) がある');
+  ok(appP.indexOf("document.querySelectorAll('[data-panmode]')") !== -1 && appP.indexOf('syncPanModeButtons();') !== -1,
+     'MP改善#3改訂2: パン方式ボタンが setPanMode に配線され、選択状態が同期される');
+  // 'one' 方式: v41 以前の1本指パンを復活 (空き地ドラッグ / クリア後 / ピンチ復帰)
+  ok(appP.indexOf("pressPending.carryTap || pressPending.isMouse || panMode === 'one'") !== -1 &&
      appP.indexOf('pressPending.moved = true;') !== -1,
-     'MP改善#3: 空き地の1本指ドラッグはパンに化けず、パン移行は持ち運び中とマウスだけに限る');
-  ok(appP.indexOf('!pp.moved') !== -1,
-     'MP改善#3: 大きく動かした空き地プレスはタップ扱いにもならない (選択解除しない)');
-  ok(appP.indexOf('panStart = { sx: rest.x') === -1,
-     'MP改善#3: ピンチから1本指に戻ってもパンへ移行しない');
-  ok(appP.indexOf("if (ev.pointerType === 'mouse') panStart = {") !== -1,
-     'MP改善#3: クリア後の盤面でもパンはマウスだけ1ボタン可 (タッチは2本指ピンチのみ)');
+     'MP改善#3改訂2: 空き地プレスはパン方式 one でパンに移行し、two では化けない');
+  ok(appP.indexOf("if (ev.pointerType === 'mouse' || panMode === 'one') panStart = {") !== -1,
+     'MP改善#3改訂2: クリア後の盤面はマウスに加えパン方式 one でも1本指パンできる');
+  ok(appP.indexOf("wasPinch && pointers.size === 1 && panMode === 'one'") !== -1 &&
+     appP.indexOf('panStart = { sx: restPt.x, sy: restPt.y, tx: view().tx, ty: view().ty };') !== -1,
+     'MP改善#3改訂2: ピンチから1本指に戻ると、パン方式 one では残った指でパンを引き継ぐ');
   ok(appP.indexOf('pinch = {') !== -1 && appP.indexOf('clampZoom(pinch.scale0 * d / pinch.d0)') !== -1,
-     'MP改善#3: 2本指ピンチ (中心移動=パン + 間隔=ズーム) は現行どおり残る');
+     'MP改善#3改訂2: 2本指ピンチ (中心移動=パン + 間隔=ズーム) は両方式で残る');
   ok(appP.indexOf('机を動かすときは2本指でドラッグします') !== -1,
-     'MP改善#3: チュートリアルの文面が2本指パンに合わせてある');
-  ok(appP.indexOf('nearestCluster') === -1 && appP.indexOf('SNAP_GRAB') === -1,
-     'MP改善#3: 最寄りピース吸着 (B2) は今回入れていない (2本指案単独の効果を見る)');
+     'MP改善#3改訂2: チュートリアルの文面は既定 (2本指方式) の説明のまま');
+  // 吸着 (B2): 精密ヒット失敗時のみ・画面16px・MP では他人リース中を候補から除外
+  ok(appP.indexOf('var GRAB_SUCTION_PX = 16;') !== -1 &&
+     appP.indexOf('function hitClusterWithSuction(sx, sy)') !== -1 &&
+     appP.indexOf('return mpInRoom() && mpLeaseBlocked(cl);') !== -1,
+     'MP改善#3改訂2: 吸着は画面16px以内・MP では他人のリース中の塊を候補から外す');
+  ok(appP.indexOf("if (pointerType === 'mouse') return hitCluster(sx, sy);") !== -1 &&
+     appP.indexOf('grabHitCluster(p.x, p.y, ev.pointerType)') !== -1,
+     'MP改善#3改訂2: 吸着はタッチ/ペンの掴み判定だけに乗り、マウスは精密判定のまま');
 }
 
 /* マルチプレイ改善 #6: 協力/ターン制での範囲選択・一括移動 */

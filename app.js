@@ -418,6 +418,34 @@ function piecePositions(clusters, n) {
   });
   return pos;
 }
+/* 掴みの吸着 (MP_IMPROVEMENTS #3 候補 B2): 点 (wx, wy) [セル単位] から、
+ * 各ピースのセル矩形までの最短距離が maxDist [セル単位] 以下の塊のうち
+ * 最も近いものを返す。距離はピース輪郭パスではなくセル矩形への距離で
+ * 近似する (設計書が許容した近似。凹みの中では 0 になる等、輪郭との差は
+ * ノブの大きさ以下に収まる)。同点 (差が EPS 以下) では配列の後方 =
+ * 最前面の塊を優先する (精密ヒットの逆順走査と同じ基準)。
+ * exclude(cluster) が真の塊は候補から外す (MP の他人リース中など)。
+ * 戻り値: { cluster, pieceId, dist } | null (dist はセル単位) */
+var SUCTION_TIE_EPS = 1e-9;
+function nearestClusterByCellDist(clusters, n, wx, wy, maxDist, exclude) {
+  var best = null;
+  for (var i = clusters.length - 1; i >= 0; i--) {
+    var cl = clusters[i];
+    if (exclude && exclude(cl)) continue;
+    var anchor = pieceHome(clusterAnchorId(cl), n);
+    for (var j = 0; j < cl.pieces.length; j++) {
+      var id = cl.pieces[j], home = pieceHome(id, n);
+      var cx = cl.gx + (home.col - anchor.col), cy = cl.gy + (home.row - anchor.row);
+      var dx = Math.max(cx - wx, 0, wx - (cx + 1));
+      var dy = Math.max(cy - wy, 0, wy - (cy + 1));
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d <= maxDist && (!best || d < best.dist - SUCTION_TIE_EPS)) {
+        best = { cluster: cl, pieceId: id, dist: d };
+      }
+    }
+  }
+  return best;
+}
 /* マルチプレイ用 canonical 状態ハッシュ (MULTIPLAYER_DESIGN §3.4):
  * 塊を anchor (最小ピース id) 昇順に並べ、[anchor, round(gx*1e6), round(gy*1e6),
  * ピース数] を連結した文字列を hashSeed でハッシュする。座標を 1e-6 セルに
@@ -1931,6 +1959,7 @@ var PureLogic = {
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
+  nearestClusterByCellDist: nearestClusterByCellDist,
   canonicalStateHash: canonicalStateHash,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
   absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop,
@@ -2181,6 +2210,26 @@ function setCarryMode(on) {
   saveStore();
   syncOpModeButtons();
   if (!carryMode) dropCarry(); // 従来モードに戻したら運び中のピースはその場に置く
+}
+/* ---------- パン方式 (2本指 / 1本指) ----------
+ * 'two' = パンは2本指ピンチの中心移動のみ。1本指の空振りは無反応で、
+ * ピースの掴み損ねが画面スクロールに化けない (v42〜の既定、#3 改訂)。
+ * 'one' = 従来方式。空き地の1本指ドラッグでもパンでき、ピンチから
+ * 1本指に戻った指でもそのままパンが続く (v41 以前の挙動)。
+ * 持ち運び中の視点移動とマウスの1ボタンパンは両方式で維持する。
+ * 設定は操作モードと同じ流儀で store.panMode に保存する (旧セーブに
+ * キーが無ければ 'two') */
+var panMode = store.panMode === 'one' ? 'one' : 'two';
+function syncPanModeButtons() {
+  document.querySelectorAll('[data-panmode]').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-panmode') === panMode);
+  });
+}
+function setPanMode(mode) {
+  panMode = mode === 'one' ? 'one' : 'two';
+  store.panMode = panMode;
+  saveStore();
+  syncPanModeButtons();
 }
 /* ---------- サウンド (BGM / SE) ----------
  * 設定はテーマと同じ流儀で store に保存する (bgmOn / bgmVolume / seOn)。
@@ -3519,6 +3568,29 @@ function hitCluster(sx, sy) {
   return null;
 }
 
+/* 掴みの吸着 (MP_IMPROVEMENTS #3 候補 B2): 精密ヒットが外れた時だけ、
+ * 指の周り約16px (画面 px 基準なのでズームに依らない) にある最も近い
+ * 塊を掴む。距離はセル矩形への最短距離で近似する
+ * (PureLogic.nearestClusterByCellDist)。MP では他人のリース中の塊を
+ * 候補から外し、次点の塊を拾えるようにする (掴んだ後に弾くのではない) */
+var GRAB_SUCTION_PX = 16;
+function hitClusterWithSuction(sx, sy) {
+  var hit = hitCluster(sx, sy);
+  if (hit) return hit;
+  var w = screenToWorld(sx, sy);
+  var maxDist = GRAB_SUCTION_PX / (CELL * view().scale);
+  var near = nearestClusterByCellDist(state.clusters, state.n, w.x / CELL, w.y / CELL, maxDist, function (cl) {
+    return mpInRoom() && mpLeaseBlocked(cl);
+  });
+  return near ? { cluster: near.cluster, pieceId: near.pieceId } : null;
+}
+/* 掴み判定の入口: マウスは精密に狙えるので吸着しない (パン開始の邪魔を
+ * しないため)。タッチ/ペンの1本指だけ吸着つきで判定する */
+function grabHitCluster(sx, sy, pointerType) {
+  if (pointerType === 'mouse') return hitCluster(sx, sy);
+  return hitClusterWithSuction(sx, sy);
+}
+
 /* ---------- 操作 (ドラッグ / ピンチ / パン / ズーム) ---------- */
 var drag = null;         // { cluster, grabDX, grabDY, moved, group }
 var carry = null;        // 持ち運び中 { cluster, group, anchorX, anchorY, grabDX, grabDY }
@@ -3757,9 +3829,9 @@ var panStart = null;     // { sx, sy, tx, ty }
 
 /* ---------- 範囲選択 (長押し方式・セッション限りで保存しない) ----------
  * 空き地を長押し (450ms・ほぼ静止) すると選択モードに入り、ドラッグで矩形を描く。
- * 長押し判定前に指が 10px 超動いてもタッチではパンに化けない (パンは
- * 2本指ピンチの中心移動のみ、#3 改訂)。ピース上の長押しは従来どおり
- * 即ドラッグ (判定は空き地だけ)。 */
+ * 長押し判定前に指が 10px 超動いた時の扱いはパン方式の設定に従う:
+ * 'two' (既定) ではタッチはパンに化けず無反応、'one' では従来どおり
+ * パンに移行する。ピース上の長押しは従来どおり即ドラッグ (判定は空き地だけ)。 */
 var selection = new Set();  // 選択中の塊オブジェクトの集合
 var pressPending = null;    // 長押し判定待ち { id, sx, sy, tx, ty, timer }
 var selRect = null;         // 描画中の矩形 (画面座標) { id, x0, y0, x1, y1 }
@@ -3830,7 +3902,7 @@ stage.addEventListener('pointerdown', function (ev) {
     return;
   }
   if (carry && pointers.size === 1) {
-    var hitC = state.cleared ? null : hitCluster(p.x, p.y);
+    var hitC = state.cleared ? null : grabHitCluster(p.x, p.y, ev.pointerType);
     if (hitC && hitC.cluster === carry.cluster) {
       dropCarry(); // 運んでいる塊自体をタップ → その場に置く
       return;
@@ -3847,8 +3919,8 @@ stage.addEventListener('pointerdown', function (ev) {
     };
     return;
   }
-  var hit = state.cleared ? null : hitCluster(p.x, p.y);
-  if (hit && mpInRoom() && mpLeaseBlocked(hit.cluster)) hit = null; // 協力: 他人のリース中の塊は掴めない (§3.5)
+  var hit = state.cleared ? null : grabHitCluster(p.x, p.y, ev.pointerType);
+  if (hit && mpInRoom() && mpLeaseBlocked(hit.cluster)) hit = null; // 協力: 他人のリース中の塊は掴めない (§3.5)。吸着は候補から外してあるので、ここに来るのは精密ヒット分
   if (hit && mpInRoom() && mp.mode === 'turn' && mpTurnPlayerId() !== mpMyId()) {
     showToast(mpPlayerName(mpTurnPlayerId()) + 'さんの番です'); // ターン制: 手番のプレイヤーだけが掴める
     hit = null;
@@ -3879,12 +3951,13 @@ stage.addEventListener('pointerdown', function (ev) {
     seGrab(); // 掴んだ音 (紙の「サッ」)
     startTimerOnce();
   } else if (state.cleared) {
-    // クリア後もパンは2本指 (ピンチ) のみ。マウスだけ1ボタンで許す
-    if (ev.pointerType === 'mouse') panStart = { sx: p.x, sy: p.y, tx: view().tx, ty: view().ty };
+    // クリア後のパン: 'two' 方式は2本指 (ピンチ) のみ (マウスだけ1ボタンで
+    // 許す)。'one' 方式は従来どおり1本指でもパンできる
+    if (ev.pointerType === 'mouse' || panMode === 'one') panStart = { sx: p.x, sy: p.y, tx: view().tx, ty: view().ty };
   } else {
     // 空き地: すぐにはパンを始めず、長押し (範囲選択) の判定に入る。
-    // 450ms ほぼ静止できたら選択モードへ。判定前に 10px 超動いても
-    // タッチではパンに化けない (パンは2本指のみ、#3 改訂)。
+    // 450ms ほぼ静止できたら選択モードへ。判定前に 10px 超動いたら、
+    // パン方式 'one' ではパンに移行し、'two' では化けない (pointermove 参照)
     var pid = ev.pointerId, sx0 = p.x, sy0 = p.y;
     var w0 = screenToWorld(sx0, sy0);
     pressPending = {
@@ -3927,15 +4000,16 @@ stage.addEventListener('pointermove', function (ev) {
     return;
   }
   if (pressPending && pressPending.id === ev.pointerId) {
-    // 長押し判定前に指が動いた場合: タッチの1本指はピース専用なので
-    // パンには化けさせない (パンは2本指ピンチの中心移動でのみ行う、
-    // MP_IMPROVEMENTS #3 改訂)。長押し選択もせず、離すまで何も起きない。
-    // 例外: 持ち運び中の視点移動 (現行どおり) と、2本指を持たないマウス。
+    // 長押し判定前に指が動いた場合: パン方式 'two' (既定) ではタッチの
+    // 1本指はピース専用なのでパンには化けさせない (パンは2本指ピンチの
+    // 中心移動でのみ行う、MP_IMPROVEMENTS #3 改訂)。長押し選択もせず、
+    // 離すまで何も起きない。パン方式 'one' では従来どおりパンに移行する。
+    // 方式によらない例外: 持ち運び中の視点移動と、2本指を持たないマウス。
     // パンの基準は pointerdown 時点のままなので、遅れて始まっても視点は
     // 跳ねない (移動量をそのまま適用)。
     if (Math.hypot(p.x - pressPending.sx, p.y - pressPending.sy) > PRESS_MOVE_PX) {
       clearTimeout(pressPending.timer);
-      if (pressPending.carryTap || pressPending.isMouse) {
+      if (pressPending.carryTap || pressPending.isMouse || panMode === 'one') {
         panStart = { sx: pressPending.sx, sy: pressPending.sy, tx: pressPending.tx, ty: pressPending.ty };
         pressPending = null;
       } else {
@@ -3979,9 +4053,15 @@ function endPointer(ev) {
     else finishSelRect(); // 矩形に交差した塊を選択
   }
   pointers.delete(ev.pointerId);
+  var wasPinch = !!pinch;
   if (pointers.size < 2) pinch = null;
-  /* ピンチから1本指に戻ってもパンはしない (パンは2本指のみ、#3 改訂)。
-   * 残った指は離すまで何も起きない */
+  /* ピンチから1本指に戻った時: 'two' 方式はパンしない (残った指は離すまで
+   * 何も起きない)。'one' 方式は従来どおり、残った指の現在位置を基準に
+   * パンを引き継ぐ (ドラッグ/選択の担当が付いている指には付けない) */
+  if (wasPinch && pointers.size === 1 && panMode === 'one' && !drag && !pressPending && !selRect) {
+    var restPt = Array.from(pointers.values())[0];
+    panStart = { sx: restPt.x, sy: restPt.y, tx: view().tx, ty: view().ty };
+  }
   if (pointers.size === 0) {
     if (drag) {
       if (carryMode && !drag.movedFar && !cancelled) {
@@ -7190,6 +7270,10 @@ function wireControls() {
     b.addEventListener('click', function () { setCarryMode(b.getAttribute('data-opmode') === 'carry'); });
   });
   syncOpModeButtons();
+  document.querySelectorAll('[data-panmode]').forEach(function (b) {
+    b.addEventListener('click', function () { setPanMode(b.getAttribute('data-panmode')); });
+  });
+  syncPanModeButtons();
   /* サウンド設定: 設定シートとスタート画面の両方に同じ設定のコントロールが
    * あり、変更は即保存 + 即適用、表示は syncAudioControls で両画面を一致
    * させる。クレジット一覧は BGM_TRACKS から生成する (曲名・作者・ライセンス)。 */
