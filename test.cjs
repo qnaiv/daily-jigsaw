@@ -1498,7 +1498,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v45'") !== -1, 'sw: VERSION は v45');
+  ok(swSB.indexOf("VERSION = 'v46'") !== -1, 'sw: VERSION は v46');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1598,7 +1598,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: スタート導線・ロビー・バッジ・ピンボタン・貢献度表示の要素がある');
   ok(swM.indexOf("'mp.js'") !== -1 && swM.indexOf("endsWith('/mp.js')") !== -1,
      'MP配線: sw.js が mp.js をプリキャッシュし NetworkFirst 対象に含む');
-  ok(appM.indexOf('var MP_LOGIC_VERSION = 3;') !== -1 &&
+  ok(appM.indexOf('var MP_LOGIC_VERSION = 4;') !== -1 &&
      appM.indexOf('hashState: function (clusters) { return canonicalStateHash(clusters); }') !== -1 &&
      appM.indexOf("t: 'grab-req'") !== -1 && appM.indexOf("t: 'drop'") !== -1 && appM.indexOf("t: 'sort'") !== -1,
      'MP配線: hooks が canonicalStateHash を使い、grab-req/drop/sort を送る');
@@ -1677,8 +1677,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appX.indexOf("mp.mode === 'turn' && mpTurnPlayerId() !== mpMyId()") !== -1,
      'MPモード配線: レース終了後とターン制の非手番はクライアント側でも入力を止める');
   ok(appX.indexOf("rec.race = true;") !== -1 && appX.indexOf('function mpRaceShowResult() {') !== -1 &&
-     appX.indexOf("mp.raceProgress[p.id] || 0) + '/' + mp.pieces") !== -1,
-     'MPモード配線: レース記録は勝者 (ホスト/ゲスト共通) のみ race 付きで書き、敗者は結果だけ見て結果は全員分を分数形式で出す');
+     appX.indexOf("mp.raceProgress[p.id] || 0) + '/' + mpPiecesOf(p.id)") !== -1,
+     'MPモード配線: レース記録は勝者 (ホスト/ゲスト共通) のみ race 付きで書き、敗者は結果だけ見て結果は全員分を分数形式で出す (分母は各人の実効ピース数)');
   ok(cssX.indexOf('#mpTurnBar') !== -1 && cssX.indexOf('#mpRaceBar') !== -1 && cssX.indexOf('#mpModeSeg') !== -1,
      'MPモード配線: style.css に手番バー・レース進捗バー・モード選択のスタイルがある');
 }
@@ -1969,8 +1969,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(mpP.indexOf("msg.t === 'profile'") !== -1 && mpP.indexOf('profiles: profiles') !== -1 &&
      mpP.indexOf('resolveProfileColors') !== -1 && mpP.indexOf('var MP_LOGIC_VERSION') === -1,
      'MP改善#4: mp.js は profile を名簿で保持し welcome に同梱、色を調停する');
-  ok(appP.indexOf('var MP_LOGIC_VERSION = 3;') !== -1,
-     'MP改善#4: profile は追加型なので MP_LOGIC_VERSION は 3 のまま');
+  ok(appP.indexOf('var MP_LOGIC_VERSION = 4;') !== -1,
+     'MP改善#4: profile は追加型でバージョンを上げなかった (ハンデの piecesMap で 4 に上げた)');
   ok(cssP.indexOf('.mp-avatar') !== -1 && cssP.indexOf('.mp-prof-icons') !== -1 &&
      cssP.indexOf('#mpTurnDot.has-icon') !== -1,
      'MP改善#4: style.css にアバターと編集シートのスタイルがある');
@@ -2001,6 +2001,94 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   var s4 = [mkCl([0], 0, 0), mkCl([2], 2, 0), mkCl([1], 10, 10)];
   var r4 = L.applyClusterDrop(s4, s4[2], 1, 0, 4, null);
   ok(s4.length - r4.clusters.length === 2, '貢献度: チェーンで2塊取り込んだら +2');
+}
+
+/* レースのハンデ (RACE_HANDICAP_DESIGN + ユーザー決定でプラス方向のみ):
+ * 段階 0..+4 は一辺 n への加算、実効ピース数 = (min(n + 段階, 32))² */
+{
+  const fsH = require('fs');
+  const appH = fsH.readFileSync(__dirname + '/app.js', 'utf8');
+  const mpH = fsH.readFileSync(__dirname + '/mp.js', 'utf8');
+  const htmlH = fsH.readFileSync(__dirname + '/index.html', 'utf8');
+  const cssH = fsH.readFileSync(__dirname + '/style.css', 'utf8');
+
+  // 段階テーブル: 基準 36 (n=6) → 36/49/64/81/100
+  ok([0, 1, 2, 3, 4].map(function (lv) { return L.handicapPieces(36, lv); }).join(',') === '36,49,64,81,100',
+     'ハンデ: 基準36の段階テーブルは 36/49/64/81/100');
+  // 基準 16 (n=4) → 16/25/36/49/64
+  ok([0, 1, 2, 3, 4].map(function (lv) { return L.handicapPieces(16, lv); }).join(',') === '16,25,36,49,64',
+     'ハンデ: 基準16の段階テーブルは 16/25/36/49/64');
+  // 上限: n=32 で頭打ち (1024)、基準900 (n=30) +4 でも 1024
+  ok(L.handicapPieces(1024, 4) === 1024 && L.handicapPieces(900, 4) === 1024,
+     'ハンデ: 一辺は32で頭打ち (実効ピース数は最大1024)');
+  // 非平方数の基準はそのまま返す / 不正な段階は 0 扱い
+  ok(L.handicapPieces(30, 2) === 30 && L.handicapPieces(36, -1) === 36 && L.handicapPieces(36, 9) === 36,
+     'ハンデ: 非平方数の基準は不変、不正な段階はハンデなしとして扱う');
+  // 段階の無害化
+  ok(L.sanitizeHandicapLevel(0) === 0 && L.sanitizeHandicapLevel(4) === 4 &&
+     L.sanitizeHandicapLevel(5) === null && L.sanitizeHandicapLevel(-1) === null &&
+     L.sanitizeHandicapLevel(2.5) === null && L.sanitizeHandicapLevel('2') === null &&
+     L.normalizeHandicap(undefined) === 0 && L.normalizeHandicap(3) === 3,
+     'ハンデ: 段階の無害化は整数 0..4 のみ通し、保存値の正規化は不正値を 0 に落とす');
+  // racePiecesMap: 全員分の実効ピース数。段階が無い人は基準のまま
+  var pm = L.racePiecesMap(36, ['host', 'g1', 'g2'], { host: 0, g1: 2, g2: 4 });
+  ok(pm.host === 36 && pm.g1 === 64 && pm.g2 === 100,
+     'ハンデ: racePiecesMap は各人の段階から実効ピース数を出す');
+  var pm2 = L.racePiecesMap(36, ['host', 'g1'], {});
+  ok(pm2.host === 36 && pm2.g1 === 36, 'ハンデ: 段階の申告が無い人は基準ピース数');
+  // sanitizePiecesMap: 到達可能な値だけ・全員分そろっていること
+  ok(L.sanitizePiecesMap({ host: 36, g1: 64 }, ['host', 'g1'], 36) !== null &&
+     L.sanitizePiecesMap({ host: 36, g1: 50 }, ['host', 'g1'], 36) === null &&
+     L.sanitizePiecesMap({ host: 36 }, ['host', 'g1'], 36) === null &&
+     L.sanitizePiecesMap(null, ['host'], 36) === null,
+     'ハンデ: piecesMap の検証は到達可能な平方数 + 全員分そろった場合のみ通す');
+  // 同じ実効ピース数なら盤面シードが一致する (date + pieces で決定的)
+  var seedA = L.generateEdges('2026-11-17', L.handicapPieces(36, 2));
+  var seedB = L.generateEdges('2026-11-17', 64);
+  ok(JSON.stringify(seedA) === JSON.stringify(seedB),
+     'ハンデ: 実効ピース数が同じなら辺形状 (盤面) が一致する');
+  // コレクション装飾: 最高ティアで決める (盤面密度とは分離)
+  var rec = function (pieces) { return { pieces: pieces }; };
+  ok(L.bestFrameTier([rec(100), rec(144)]) === 'bronze',
+     'ハンデ: 100 の bronze 記録がある絵は 144 の記録があっても装飾は銅のまま');
+  ok(L.bestFrameTier([rec(144)]) === null && L.bestFrameTier([]) === null,
+     'ハンデ: 非標準ピース数だけの記録では装飾は付かない');
+  ok(L.bestFrameTier([rec(225), rec(400)]) === 'gold' && L.bestFrameTier([rec(1024), rec(400)]) === 'royal',
+     'ハンデ: 最高ティアは silver < gold < royal の順で選ばれる');
+  ok(L.frameTierPieces('bronze') === 100 && L.frameTierPieces('silver') === 225 &&
+     L.frameTierPieces('gold') === 400 && L.frameTierPieces('royal') === 1024 && L.frameTierPieces(null) === 0,
+     'ハンデ: ティア→代表ピース数の換算');
+  // 配線: ロビーのハンデ節とチップ、名簿バッジ
+  ok(htmlH.indexOf('id="mpHandicapBlock"') !== -1 && htmlH.indexOf('id="mpHandicapSeg"') !== -1 &&
+     htmlH.indexOf('id="mpHandicapNote"') !== -1 && htmlH.indexOf('あなたのハンデ（レース）') !== -1,
+     'ハンデ配線: ロビーに自分のハンデ節 (チップ + 注記) がある');
+  ok(appH.indexOf('function mpRenderHandicap()') !== -1 && appH.indexOf('mp-handicap-badge') !== -1 &&
+     appH.indexOf('store.mpHandicap = lv;') !== -1,
+     'ハンデ配線: ハンデ節の描画・名簿バッジ・保存の配線がある');
+  ok(cssH.indexOf('#mpHandicapSeg') !== -1 && cssH.indexOf('.mp-handicap-badge') !== -1 &&
+     cssH.indexOf('.diff-sub') !== -1,
+     'ハンデ配線: style.css にハンデ節・バッジ・チップ2段目のスタイルがある');
+  // 配線: start の piecesMap (レースのみ) と MP_LOGIC_VERSION 4
+  ok(appH.indexOf('payload.piecesMap = racePiecesMap(mp.lobbyPieces, order, mpHandicapLevels());') !== -1 &&
+     appH.indexOf('sanitizePiecesMap(ev.piecesMap, ev.order, ev.pieces)') !== -1,
+     'ハンデ配線: start はレース時のみ piecesMap を載せ、受信側で検証する');
+  ok(appH.indexOf('store.mpHandicap = normalizeHandicap(store.mpHandicap);') !== -1 &&
+     appH.indexOf('mp.session.setHandicap(store.mpHandicap)') !== -1,
+     'ハンデ配線: ハンデは store に永続化され、セッション層で共有される');
+  // 配線: snapshot に basePieces / piecesMap を同梱し、再読込は自分の実効数基準
+  ok(appH.indexOf('basePieces: mp.basePieces') !== -1 &&
+     appH.indexOf('mp.pieces !== myPieces') !== -1,
+     'ハンデ配線: snapshot の再読込判定は自分の実効ピース数基準');
+  // 配線: コレクションタイルは最高ティアで装飾する
+  ok(appH.indexOf('cv._tileTier = bestFrameTier(recsForKey)') !== -1 &&
+     appH.indexOf('topDifficultyRecord(recsForKey)') !== -1,
+     'ハンデ配線: コレクションタイルの装飾は最高ティア、盤面密度は最大ピース数の記録のまま');
+  // mp.js 側: セッション層の共有とエンジンの上限検証
+  ok(mpH.indexOf("msg.t === 'handicap'") !== -1 && mpH.indexOf('setHandicap: function') !== -1 &&
+     mpH.indexOf('handicaps: handicaps') !== -1,
+     'ハンデ配線: mp.js は {t:\'handicap\'} を横取りし welcome に同梱する');
+  ok(mpH.indexOf('ev.placed > racePieces[fromId] - 1') !== -1,
+     'ハンデ配線: progress の上限検証は送信者自身の実効ピース数基準');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

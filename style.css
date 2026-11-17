@@ -1157,6 +1157,15 @@ button { font: inherit; cursor: pointer; }
 #mpModeSeg .diff-num { font-size: 13.5px; }
 #mpModeDesc { text-align: left; }
 #mpDiffSeg .diff-num { font-size: 13px; }
+/* レースのハンデ節 (ロビー): チップは段階 + その段階での実効ピース数の2段組み */
+#mpHandicapBlock[hidden] { display: none; }
+#mpHandicapSeg { gap: 4px; flex-wrap: wrap; }
+#mpHandicapSeg .diff-chip { min-height: 34px; padding: 3px 10px; }
+#mpHandicapSeg .diff-num { font-size: 13.5px; }
+.diff-chip .diff-sub { line-height: 1; height: 10px; font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+.diff-chip.active .diff-sub { color: inherit; opacity: .75; }
+#mpHandicapNote { text-align: left; }
+.mp-handicap-badge { font-size: 11px; font-weight: 700; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; flex: 0 0 auto; }
 .mp-stage-sel {
   width: 100%; box-sizing: border-box; font: inherit; font-size: 15px; padding: 9px 12px;
   border: 1px solid var(--line); border-radius: 10px; background: #fffdf6; color: inherit;

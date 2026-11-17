@@ -979,6 +979,81 @@ console.log('[10] プロフィール');
   eq(MP.PROFILE_COLOR_COUNT, 8, 'profile: パレットは8色');
 }
 
+/* ================= 13. レースのハンデ (piecesMap と進捗上限) ================= */
+console.log('[13] レースのハンデ');
+{
+  // 段階の無害化 (app.js の PureLogic.sanitizeHandicapLevel と同じ規則)
+  eq(MP.sanitizeHandicap(0), 0, 'ハンデ: 段階0は通る');
+  eq(MP.sanitizeHandicap(4), 4, 'ハンデ: 段階+4は通る');
+  eq(MP.sanitizeHandicap(5), null, 'ハンデ: 段階+5は範囲外');
+  eq(MP.sanitizeHandicap(-1), null, 'ハンデ: マイナス段階は無い (プラス方向のみ)');
+  eq(MP.sanitizeHandicap(1.5), null, 'ハンデ: 小数の段階は通らない');
+  eq(MP.sanitizeHandicap('2'), null, 'ハンデ: 文字列の段階は通らない');
+
+  // 名簿に handicap が載る (未申告は 0)
+  const peers = MP.peerListWithProfiles(
+    [{ playerId: 'host', color: 0, isHost: true }, { playerId: 'g1', color: 1, isHost: false }],
+    {}, null, { g1: 3 });
+  eq(peers[0].handicap, 0, 'ハンデ: 名簿の未申告者は段階0');
+  eq(peers[1].handicap, 3, 'ハンデ: 名簿に申告した段階が載る');
+  const peers2 = MP.peerListWithProfiles(
+    [{ playerId: 'host', color: 0, isHost: true }], {}, null, { host: 9 });
+  eq(peers2[0].handicap, 0, 'ハンデ: 名簿の不正な段階は 0 に落とす');
+
+  // エンジン: piecesMap があると progress の上限が各自の実効ピース数 − 1 になる
+  function makeCapClient() {
+    const client = { progress: {}, rejects: [] };
+    client.hooks = {
+      getClusters: () => [{ anchorId: 0, pieces: [0], gx: 0, gy: 0 }],
+      clusterExists: () => true,
+      applyEvent: ev => { if (ev.t === 'progress') client.progress[ev.from] = ev.placed; },
+      getSnapshot: () => ({ clusters: client.hooks.getClusters() }),
+      applySnapshot: () => {},
+      allPieceIds: () => [0],
+      hashState: () => 0,
+      deskBounds: () => ({ x0: -100, y0: -100, x1: 100, y1: 100 }),
+      logicVersion: 4, poolFingerprint: 't'
+    };
+    return client;
+  }
+  const host = makeCapClient(), g1 = makeCapClient(), g2 = makeCapClient();
+  const clients = { host, g1, g2 };
+  function wireCap(client, role, id) {
+    client.engine = MP.createEngine({
+      role, hooks: client.hooks,
+      net: role === 'host' ? {
+        broadcast: m => { g1.engine.receiveFromHost(JSON.parse(JSON.stringify(m))); g2.engine.receiveFromHost(JSON.parse(JSON.stringify(m))); },
+        sendTo: (pid, m) => clients[pid].engine.receiveFromHost(JSON.parse(JSON.stringify(m)))
+      } : { sendToHost: m => host.engine.receive(id, JSON.parse(JSON.stringify(m))) },
+      onReject: r => client.rejects.push(r)
+    });
+  }
+  wireCap(host, 'host'); wireCap(g1, 'guest', 'g1'); wireCap(g2, 'guest', 'g2');
+  host.engine.addPlayer('g1', 1, 1);
+  host.engine.addPlayer('g2', 2, 1);
+  // 基準16ピース: ホスト=16 (なし)、ゲスト1=25 (+1)、ゲスト2=36 (+2)
+  host.engine.hostControl({ t: 'start', stage: 9, pieces: 16, mode: 'race',
+    order: ['host', 'g1', 'g2'], piecesMap: { host: 16, g1: 25, g2: 36 } });
+
+  g1.engine.request({ t: 'progress', placed: 24 }); // ゲスト1の完成値 (25 − 1)
+  eq(host.progress.g1, 24, 'ハンデ: ゲスト1は自分の完成値 24 まで報告できる');
+  eq(g1.rejects.length, 0, 'ハンデ: 完成値ちょうどの進捗は却下されない');
+  g1.engine.request({ t: 'progress', placed: 25 }); // 自分の総数を超える
+  eq(g1.rejects[g1.rejects.length - 1].reason, 'bad-event', 'ハンデ: 自分の総数を超える進捗は bad-event で却下');
+  eq(host.progress.g1, 24, 'ハンデ: 却下された進捗は反映されない');
+  g2.engine.request({ t: 'progress', placed: 30 }); // ゲスト2 (総数36) には合法
+  eq(host.progress.g2, 30, 'ハンデ: ゲスト2は総数36の範囲で 30 を報告できる');
+  host.engine.request({ t: 'progress', placed: 16 }); // ホスト (総数16) の完成値 15 を超える
+  eq(host.rejects[host.rejects.length - 1].reason, 'bad-event', 'ハンデ: ホスト自身も自分の上限で検証される');
+  host.engine.request({ t: 'progress', placed: 15 });
+  eq(g1.progress.host, 15, 'ハンデ: ホストの完成値 15 は通る');
+
+  // next で対戦が終わると上限は破棄される (次戦の start で再設定される)
+  host.engine.hostControl({ t: 'next' });
+  g1.engine.request({ t: 'progress', placed: 99 });
+  eq(host.progress.g1, 99, 'ハンデ: next 後は piecesMap の上限が効かない');
+}
+
 MP.encodeManualCode({ v: 1, kind: 'offer', sdp: 'dummy-sdp' }).then(codeStr => {
   ok(/^[gr]\./.test(codeStr), '手動コードに接頭辞が付く');
   return MP.decodeManualCode(codeStr);

@@ -549,6 +549,76 @@ function racePlacedCount(totalPieces, clusterCount) {
   return totalPieces - clusterCount;
 }
 
+/* レースのハンデ (RACE_HANDICAP_DESIGN。ユーザー決定 2026-11-17 で
+ * プラス方向のみ): 段階 0..+4 はグリッドの一辺 n への加算で、実効
+ * ピース数は (min(n + 段階, 32))²。盤面は正方形グリッド (n = 4..32 の
+ * 平方数) 前提なので、基準が平方数でなければそのまま返す */
+var HANDICAP_LEVELS = [0, 1, 2, 3, 4];
+/* ハンデ段階の正規化: 整数 0..4 のみ通し、それ以外は null */
+function sanitizeHandicapLevel(v) {
+  if (typeof v !== 'number' || !isFinite(v) || Math.floor(v) !== v) return null;
+  return (v >= 0 && v <= 4) ? v : null;
+}
+/* store.mpHandicap の正規化 (不正値は既定 0 = ハンデなし) */
+function normalizeHandicap(v) {
+  var lv = sanitizeHandicapLevel(v);
+  return lv == null ? 0 : lv;
+}
+function handicapPieces(basePieces, level) {
+  var n = Math.round(Math.sqrt(basePieces || 0));
+  if (n * n !== basePieces || n < 4 || n > 32) return basePieces;
+  var lv = sanitizeHandicapLevel(level);
+  var m = Math.min(n + (lv == null ? 0 : lv), 32);
+  return m * m;
+}
+/* start 用: 参加順 order と全員分の段階 levels (playerId -> 段階) から、
+ * 各人の実効ピース数の map を作る。段階が無い/不正な人は基準ピース数 */
+function racePiecesMap(basePieces, order, levels) {
+  var out = {};
+  (order || []).forEach(function (id) {
+    out[id] = handicapPieces(basePieces, levels ? levels[id] : null);
+  });
+  return out;
+}
+/* start / snapshot で受け取った piecesMap の検証: order の全員分が揃い、
+ * 各値が「基準からハンデで到達できる平方数」であること。不正・欠落なら
+ * null (呼び出し側は piecesMap を捨てて全員基準ピース数で始める) */
+function sanitizePiecesMap(map, order, basePieces) {
+  if (!map || typeof map !== 'object' || !order || !order.length) return null;
+  var allowed = {};
+  HANDICAP_LEVELS.forEach(function (lv) { allowed[handicapPieces(basePieces, lv)] = 1; });
+  var out = {};
+  for (var i = 0; i < order.length; i++) {
+    var v = map[order[i]];
+    if (typeof v !== 'number' || !allowed[v]) return null;
+    out[order[i]] = v;
+  }
+  return out;
+}
+/* コレクションタイルの装飾ティア: その絵の記録群の中で最も高いティア。
+ * 盤面密度 (最大ピース数の記録 = topDifficultyRecord) とは分離する。
+ * ハンデで非標準ピース数の記録が混ざると、最大ピース数の記録だけを
+ * 見ると装飾が格下げされてしまうため (例: 100 の bronze 記録がある絵を
+ * 144 で勝つと無地になる) */
+var FRAME_TIER_RANK = { bronze: 1, silver: 2, gold: 3, royal: 4 };
+function bestFrameTier(records) {
+  var best = null;
+  (records || []).forEach(function (r) {
+    var t = r ? frameTier(r.pieces) : null;
+    if (t && (!best || FRAME_TIER_RANK[t] > FRAME_TIER_RANK[best])) best = t;
+  });
+  return best;
+}
+/* ティア → 代表ピース数。額描画 (paintFrameUnit) は upperPieces から
+ * frameTier を引くので、ティアをピース数経由で渡すために使う */
+function frameTierPieces(tier) {
+  if (tier === 'royal') return 1024;
+  if (tier === 'gold') return 400;
+  if (tier === 'silver') return 225;
+  if (tier === 'bronze') return 100;
+  return 0;
+}
+
 /* ターン制: 現在の手番インデックス idx の次 (退出済み leftSet の人は
  * 飛ばす) のインデックスを返す。全員退出済みなら idx をそのまま返す。
  * leftSet は playerId をキーにするオブジェクト (真値 = 退出済み) */
@@ -1964,6 +2034,10 @@ var PureLogic = {
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
   absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop,
   racePlacedCount: racePlacedCount, nextTurnIndex: nextTurnIndex,
+  HANDICAP_LEVELS: HANDICAP_LEVELS, sanitizeHandicapLevel: sanitizeHandicapLevel,
+  normalizeHandicap: normalizeHandicap, handicapPieces: handicapPieces,
+  racePiecesMap: racePiecesMap, sanitizePiecesMap: sanitizePiecesMap,
+  bestFrameTier: bestFrameTier, frameTierPieces: frameTierPieces,
   clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
   clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
@@ -2041,6 +2115,7 @@ var store = loadStore();
 store.uiTheme = normalizeUiTheme(store.uiTheme); // 旧テーマ値は無効値として既定 'walnut' に落とす
 store.wall = normalizeWall(store.wall); // 壁インテリア (旧データには無いので空で作る。旧 store.rewards は読み捨て)
 store.profile = normalizeProfile(store.profile); // プレイヤープロフィール (MP改善#4。旧データには無いので null)
+store.mpHandicap = normalizeHandicap(store.mpHandicap); // レースのハンデ段階 0..+4 (旧データには無いので 0)
 /* ラウンド制 (第N回) は廃止 (2026-11-09 ステージ制へ転換)。store.round は旧セーブに残っていても読まない */
 function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
@@ -6617,7 +6692,9 @@ function navHandleRootBack() {
  * クリア済みタイルは「オーク額 + 完成盤面」を Canvas に描く。盤面は
  * 詳細/壁の額と同じ本物レンダラー (generateEdges → detailPiecePath →
  * ベベル + 縁線) で、その絵の最高クリア難易度 (topDifficultyRecord) の
- * 行列で描き、額の装飾ティアもその難易度に連動させる。描画はタイル毎に
+ * 行列で描く。額の装飾ティアは盤面密度と分離し、その絵の記録中の
+ * 最高ティア (bestFrameTier) で決める (ハンデ記録が混ざっても装飾が
+ * 格下げされないように)。描画はタイル毎に
  * 1回だけ行ってキャッシュし、IntersectionObserver で画面に入った
  * タイルから描く (遅延描画)。 */
 var collectionTileCache = {};  // imageKey@pieces -> 完成 Canvas
@@ -6684,7 +6761,7 @@ function collectionTilePx(pieces) {
 /* 額 (オーク) + 盤面 + ティア装飾のタイル Canvas を作る。壁の額
  * (paintWallFrameUnit) と同じ手順: プレースホルダを描き、盤面が
  * できたら同じ Canvas に描き直す (乱数はシード固定で枠は不変) */
-function buildCollectionTile(rec) {
+function buildCollectionTile(rec, tier) {
   var plan = collectionTilePlan(rec.pieces);
   var st = frameStyleById('oak');
   var geo = frameGeometry(plan.frameU, st, COLLECTION_TILE_PAD);
@@ -6692,7 +6769,11 @@ function buildCollectionTile(rec) {
   var cv = document.createElement('canvas');
   cv.width = px;
   cv.height = px;
-  var upper = isUpperTier(rec.pieces) ? rec.pieces : 0;
+  /* 装飾ティアは盤面密度 (rec = 最大ピース数の記録) と分離し、その絵の
+   * 記録中の最高ティア (bestFrameTier) で決める。tier 未指定なら従来
+   * どおり rec 自身のティアに落とす */
+  var upTier = tier === undefined ? frameTier(rec.pieces) : tier;
+  var upper = upTier ? frameTierPieces(upTier) : 0;
   var seedKey = recordImageKey(rec);
   function paint(board) {
     var ctx = cv.getContext('2d');
@@ -6706,11 +6787,11 @@ function buildCollectionTile(rec) {
     return cv;
   });
 }
-function collectionTileFor(rec) {
-  var k = recordImageKey(rec) + '@' + rec.pieces;
+function collectionTileFor(rec, tier) {
+  var k = recordImageKey(rec) + '@' + rec.pieces + '@' + (tier || '');
   if (collectionTileCache[k]) return Promise.resolve(collectionTileCache[k]);
   if (collectionTileJobs[k]) return collectionTileJobs[k];
-  var job = buildCollectionTile(rec).then(function (cv) {
+  var job = buildCollectionTile(rec, tier).then(function (cv) {
     collectionTileCache[k] = cv;
     delete collectionTileJobs[k];
     return cv;
@@ -6727,7 +6808,11 @@ function fillCollectionTile(cv, rec) {
   var px = collectionTilePx(rec.pieces);
   cv.width = px;
   cv.height = px;
-  var done = collectionTileCache[recordImageKey(rec) + '@' + rec.pieces];
+  /* 装飾ティアは一覧側が cv._tileTier に積んだ「その絵の最高ティア」を
+   * 使い、盤面密度 (rec.pieces) とは分離する。未設定なら rec 自身の
+   * ティアに落とす (従来挙動) */
+  var tier = ('_tileTier' in cv) ? cv._tileTier : frameTier(rec.pieces);
+  var done = collectionTileCache[recordImageKey(rec) + '@' + rec.pieces + '@' + (tier || '')];
   if (done) {
     cv.getContext('2d').drawImage(done, 0, 0);
     return;
@@ -6735,8 +6820,8 @@ function fillCollectionTile(cv, rec) {
   var plan = collectionTilePlan(rec.pieces);
   var ctx = cv.getContext('2d');
   ctx.setTransform(plan.frameScale, 0, 0, plan.frameScale, 0, 0);
-  paintFrameUnit(ctx, frameStyleById('oak'), plan.frameU, null, 'loading', recordImageKey(rec), isUpperTier(rec.pieces) ? rec.pieces : 0, COLLECTION_TILE_PAD);
-  collectionTileFor(rec).then(function (built) {
+  paintFrameUnit(ctx, frameStyleById('oak'), plan.frameU, null, 'loading', recordImageKey(rec), tier ? frameTierPieces(tier) : 0, COLLECTION_TILE_PAD);
+  collectionTileFor(rec, tier).then(function (built) {
     if (!built || !cv.isConnected) return;
     var c2 = cv.getContext('2d');
     c2.setTransform(1, 0, 0, 1, 0, 0);
@@ -6793,6 +6878,7 @@ function renderCollection() {
     var cv = document.createElement('canvas');
     cv.className = 'tile-canvas';
     cv._tileRec = top;
+    cv._tileTier = bestFrameTier(recsForKey); // 装飾は記録中の最高ティア (盤面密度とは分離)
     var px = collectionTilePx(top.pieces);
     cv.width = px;
     cv.height = px;
@@ -7775,7 +7861,7 @@ function renderStartScreen() {
  * - persistProgress は部屋中ずっと無動作 (ソロの進行中セーブと分離、§5)
  * - 記録と報酬は参加者全員が自分の store に書く (レースは勝者のみ、§5 改訂)。
  *   確定した記録は onClear がその場で saveStore する (#1) */
-var MP_LOGIC_VERSION = 3; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加
+var MP_LOGIC_VERSION = 4; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加。v4: レースのハンデ (start の piecesMap) を追加 — 旧端末が piecesMap を無視すると別条件のレースが静かに成立するため上げる
 /* プレイヤー識別色のパレット (8色)。先頭4色は従来の参加順割当てと
  * 同じ順序 (互換のため変更しない)。プロフィールで選んだ色がその人の
  * 識別色になり、重複はホストが調停する (MP改善#4) */
@@ -7840,6 +7926,7 @@ var mp = {
   session: null, role: null, code: null, manual: false,
   begun: false, started: false, loading: false,
   stage: null, pieces: null, startedAt: 0,
+  basePieces: null, piecesMap: null, // レースのハンデ: 基準ピース数と全員分の実効ピース数 (playerId -> pieces)
   mode: 'coop', lobbyMode: 'coop',
   turnOrder: [], turnIdx: 0, leftPlayers: {}, matchPlayers: [],
   raceProgress: {}, raceWinner: null, finishSent: false,
@@ -7898,6 +7985,27 @@ function mpPlayerName(playerId, peer) {
   var c = peer ? peer.color : mpColorOf(playerId);
   return 'ゲスト（' + (MP_COLOR_NAMES[c] || '') + '）';
 }
+/* そのプレイヤーの実効ピース数 (レースのハンデ適用後)。piecesMap が
+ * 無い対戦 (協力・ターン制) では全員 mp.pieces (基準) のまま */
+function mpPiecesOf(playerId) {
+  if (mp.piecesMap && typeof mp.piecesMap[playerId] === 'number') return mp.piecesMap[playerId];
+  return mp.pieces;
+}
+/* 自分のハンデ段階 (store の保存値 0..+4) */
+function mpMyHandicap() { return normalizeHandicap(store.mpHandicap); }
+/* start 用: 名簿 (onPeers の各項目が持つ handicap) から全員分の段階を
+ * 集める。届いていない人は 0 (ハンデなし) として扱う */
+function mpHandicapLevels() {
+  var levels = {};
+  mpPeerList().forEach(function (p) {
+    levels[p.playerId] = (typeof p.handicap === 'number') ? p.handicap : 0;
+  });
+  return levels;
+}
+/* 自分のハンデを部屋へ共有する (プロフィールと同じ送信地点で呼ぶ) */
+function mpSendMyHandicap() {
+  if (mp.session && mp.session.setHandicap) mp.session.setHandicap(store.mpHandicap);
+}
 function mpPeerList() {
   if (mp.peers && mp.peers.length) return mp.peers;
   if (mp.manual && mp.session) { // 手動方式は onPeers が来ないので固定2人で合成する
@@ -7943,6 +8051,7 @@ var mpHooksObj = {
     return {
       clusters: mpHooksObj.getClusters(),
       stage: mp.stage, pieces: mp.pieces, startedAt: mp.startedAt,
+      basePieces: mp.basePieces, piecesMap: mp.mode === 'race' ? mp.piecesMap : null,
       elapsedSec: state ? currentElapsed() : 0,
       moves: state ? state.moves : 0,
       contrib: mp.contrib,
@@ -8014,6 +8123,7 @@ function mpOnStatus(status, info) {
   else if (status === 'open') {
     mpSetLobbyStatus('準備ができました');
     mpSendMyProfile(); // 接続が開いた時点で自分のプロフィールを送る (再入室時も)
+    mpSendMyHandicap(); // ハンデも同じタイミングで送り直す
     if (mp.manual) mpShowLobby();
     mpRenderRoster(); mpRenderHostControls(); mpUpdateBadge();
   } else if (status === 'failed') {
@@ -8112,7 +8222,12 @@ function mpOnEphemeral(kind, data, from) {
     mp.pins.push({ x: data.x, y: data.y, color: MP_COLORS[mpColorOf(from)] || '#999', until: Date.now() + 2000 });
     if (state && state.phase === 'play' && !uiHome) requestDraw();
   } else if (kind === 'lobby' && data) {
-    if (!mpIsHost()) { mp.lobbyInfo = data; mpRenderLobbyPuzzle(); }
+    if (!mpIsHost()) {
+      mp.lobbyInfo = data;
+      mpRenderLobbyPuzzle();
+      mpRenderHandicap(); // 基準ピース数/モードの変化にチップの数字とバッジを追随させる
+      mpRenderRoster();
+    }
   }
 }
 
@@ -8214,6 +8329,7 @@ function mpStartSession(session, role, opts) {
   mp.myLeases = {};
   mp.begun = false; mp.started = false; mp.clearShown = false; mp.completeSent = false;
   mpSendMyProfile(); // ホストは即登録、ゲストは 'open' で送り直される
+  mpSendMyHandicap(); // ハンデも同様 (ホストは即登録、ゲストは open で送り直し)
   if (!mp.manual) mpShowLobby();
 }
 function mpResetState() {
@@ -8228,7 +8344,7 @@ function mpResetState() {
   mp.pendingDrops = {}; mp.pendingRelease = {}; mp.pendingSnap = null; mp.queuedEvents = [];
   mp.pendingGroupGrab = null; mp.pendingGroupDrop = null; mp.lastGroupDropAnchors = null; mp.remoteGroups = {};
   mp.cursors = {}; mp.movesEph = {}; mp.pins = []; mp.pinMode = false;
-  mp.stage = null; mp.pieces = null; mp.lobbyInfo = null;
+  mp.stage = null; mp.pieces = null; mp.basePieces = null; mp.piecesMap = null; mp.lobbyInfo = null;
   mp.clearShown = false; mp.completeSent = false; mp.pendingGrabAnchor = null; mp.lastDropAnchor = null;
   mpSyncPieceIdsHook();
   $('mpPinBtn').classList.remove('active');
@@ -8291,6 +8407,7 @@ function mpRenderLobby() {
   mpRenderRoster();
   mpRenderHostControls();
   mpRenderLobbyPuzzle();
+  mpRenderHandicap();
 }
 function mpRenderLobbyBits() {
   $('mpVerifyCode').textContent = mp.verifyCode || '';
@@ -8300,10 +8417,66 @@ function mpSetLobbyStatus(t) {
   mp.lobbyStatus = t;
   if (!$('mpLobbyView').hidden) $('mpLobbyStatus').textContent = t;
 }
+/* ロビーで見えているモードと基準ピース数 (ホストは自分の選択、ゲストは
+ * ホストから届いた lobby 情報)。ハンデ表示はこの2つに連動する */
+function mpLobbyMode() {
+  return mpIsHost() ? mp.lobbyMode : ((mp.lobbyInfo && mp.lobbyInfo.mode) || 'coop');
+}
+function mpLobbyBasePieces() {
+  return mpIsHost() ? mp.lobbyPieces : (mp.lobbyInfo ? mp.lobbyInfo.pieces : null);
+}
+/* ハンデバッジの文面: 「+2（64ピース）」、段階0は「なし（36ピース）」。
+ * 基準がまだ分からない間は段階だけ出す */
+function mpHandicapBadgeText(level, basePieces) {
+  var lv = sanitizeHandicapLevel(level);
+  var head = (lv == null || lv === 0) ? 'なし' : '+' + lv;
+  return basePieces ? head + '（' + handicapPieces(basePieces, lv || 0) + 'ピース）' : head;
+}
+/* 自分のハンデ選択 (レースのときだけ表示)。チップは段階 + その段階での
+ * 実効ピース数で、数字は基準ピース数に連動する。選んだ段階は
+ * store.mpHandicap に保存し、部屋全員へ共有する */
+function mpRenderHandicap() {
+  var block = $('mpHandicapBlock');
+  if (!block || $('mpLobbyView').hidden) return;
+  var show = mpLobbyMode() === 'race';
+  block.hidden = !show;
+  if (!show) return;
+  var base = mpLobbyBasePieces();
+  var mine = mpMyHandicap();
+  var seg = $('mpHandicapSeg');
+  seg.innerHTML = '';
+  HANDICAP_LEVELS.forEach(function (lv) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'diff-chip' + (lv === mine ? ' active' : '');
+    var top = document.createElement('span');
+    top.className = 'diff-num';
+    top.textContent = lv === 0 ? 'なし' : '+' + lv;
+    var sub = document.createElement('span');
+    sub.className = 'diff-sub';
+    sub.textContent = base ? handicapPieces(base, lv) + 'ピース' : '―';
+    b.appendChild(top);
+    b.appendChild(sub);
+    b.addEventListener('click', function () {
+      store.mpHandicap = lv;
+      saveStore();
+      mpSendMyHandicap();
+      mpRenderHandicap();
+      mpRenderRoster(); // 自分のバッジも即座に追随させる (名簿の戻りでも再描画される)
+      mpRenderLobbyPuzzle();
+    });
+    seg.appendChild(b);
+  });
+  $('mpHandicapNote').textContent = base
+    ? '基準 ' + base + 'ピースから、あなたの盤面だけ変わります。選んだハンデは全員に見えます'
+    : 'あなたの盤面だけピース数が変わります。選んだハンデは全員に見えます';
+}
 function mpRenderRoster() {
   var ul = $('mpRoster');
   if (!ul || $('mpLobbyView').hidden) return;
   ul.innerHTML = '';
+  var raceLobby = mpLobbyMode() === 'race';
+  var base = mpLobbyBasePieces();
   mpPeerList().forEach(function (p) {
     var li = document.createElement('li');
     var dot = document.createElement('span');
@@ -8320,12 +8493,19 @@ function mpRenderRoster() {
     }
     var name = document.createElement('span');
     name.textContent = mpPlayerName(p.playerId, p);
+    li.appendChild(dot); li.appendChild(name);
+    if (raceLobby) { // レースでは各人のハンデ段階 + 実効ピース数を全員に見せる
+      var badge = document.createElement('span');
+      badge.className = 'mp-handicap-badge';
+      badge.textContent = mpHandicapBadgeText(p.handicap, base);
+      li.appendChild(badge);
+    }
     var st = document.createElement('span');
     st.className = 'mp-peer-state';
     st.textContent = p.playerId === mpMyId() ? 'あなた'
       : !p.connected ? '待機中'
       : mp.started ? '準備完了' : '接続中';
-    li.appendChild(dot); li.appendChild(name); li.appendChild(st);
+    li.appendChild(st);
     ul.appendChild(li);
   });
 }
@@ -8336,6 +8516,7 @@ function mpRenderHostControls() {
   $('mpHostStage').hidden = !isHost;
   $('mpStartBlock').hidden = !isHost;
   $('mpGuestWait').hidden = isHost;
+  mpRenderHandicap(); // モード/基準の変化にハンデ節 (チップの数字) を追随させる
   if (!isHost || !state || !state.pool) return;
   var sel = $('mpStageSel');
   var cur = nextStage(store.records, state.pool);
@@ -8424,8 +8605,15 @@ function mpRenderLobbyPuzzle() {
     img.dataset.url = url;
     img.src = url;
   }
-  line.textContent = 'ステージ ' + stage + ' ・ ' + pieces + 'ピース' +
-    (mpIsHost() ? '' : ' ・ ' + (MP_MODE_NAMES[(mp.lobbyInfo && mp.lobbyInfo.mode) || 'coop'] || ''));
+  if (!mpIsHost() && mp.lobbyInfo && mp.lobbyInfo.mode === 'race') {
+    // レースのゲスト行: 基準と自分の実効ピース数を並べて自分の条件が分かるようにする
+    line.textContent = 'ステージ ' + stage + ' ・ 基準' + pieces + 'ピース / あなたは' +
+      handicapPieces(pieces, mpMyHandicap()) + 'ピース' +
+      ' ・ ' + (MP_MODE_NAMES[mp.lobbyInfo.mode] || '');
+  } else {
+    line.textContent = 'ステージ ' + stage + ' ・ ' + pieces + 'ピース' +
+      (mpIsHost() ? '' : ' ・ ' + (MP_MODE_NAMES[(mp.lobbyInfo && mp.lobbyInfo.mode) || 'coop'] || ''));
+  }
 }
 function mpBroadcastLobbyInfo() {
   if (!mpIsHost() || !mp.session) return;
@@ -8648,13 +8836,17 @@ function mpSetMatchFromOrder(order) {
   mp.turnOrder = (order && order.length) ? order.slice()
     : mpPeerList().map(function (p) { return p.playerId; });
   mp.matchPlayers = mp.turnOrder.map(function (id) {
-    return { id: id, color: mpColorOf(id), name: mpPlayerName(id), icon: mpPeerIcon(id) };
+    return { id: id, color: mpColorOf(id), name: mpPlayerName(id), icon: mpPeerIcon(id), pieces: mpPiecesOf(id) };
   });
 }
 function mpOnStartEvent(ev) {
   mp.stage = ev.stage;
-  mp.pieces = ev.pieces;
   mp.mode = ev.mode || 'coop';
+  mp.basePieces = ev.pieces;
+  // レースのハンデ: piecesMap を検証し、自分の実効ピース数で自分の盤面を
+  // 組む。不正・欠落なら piecesMap を捨てて全員基準ピース数で始める
+  mp.piecesMap = mp.mode === 'race' ? sanitizePiecesMap(ev.piecesMap, ev.order, ev.pieces) : null;
+  mp.pieces = mp.piecesMap ? (mp.piecesMap[mpMyId()] || ev.pieces) : ev.pieces;
   mp.startedAt = ev.startedAt || Date.now();
   mp.started = true;
   mp.begun = false;
@@ -8677,7 +8869,7 @@ function mpOnStartEvent(ev) {
   mp.turnOrder.forEach(function (id) { mp.raceProgress[id] = 0; });
   mp.raceWinner = null;
   mp.finishSent = false;
-  mpLoadPuzzle(ev.stage, ev.pieces);
+  mpLoadPuzzle(ev.stage, mp.pieces); // 自分の実効ピース数で自分の盤面を組む
 }
 /* 「つぎのステージへ」: 即開始せずロビーへ戻る。ステージだけ +1 された
  * ものが選択済みになり、モードは引き継ぎ、ホストがピース数を
@@ -8946,7 +9138,7 @@ function mpOnRaceFinish(ev) {
   if (mp.raceWinner || mp.mode !== 'race' || mp.clearShown) return;
   mp.clearShown = true;
   mp.raceWinner = ev.from;
-  mp.raceProgress[ev.from] = racePlacedCount(mp.pieces, 1); // 勝者は完成 = 全ピース数 − 1
+  mp.raceProgress[ev.from] = racePlacedCount(mpPiecesOf(ev.from), 1); // 勝者は完成 = 勝者自身の全ピース数 − 1
   if (drag) { drag = null; stopEdgeScroll(); } // 終了時点で掴んでいた塊は確定させない
   mpRenderRaceBar();
   if (ev.from === mpMyId()) {
@@ -8994,7 +9186,7 @@ function mpRenderRaceBar() {
   mp.matchPlayers.forEach(function (p) {
     html += '<div class="mp-race-row">' + mpAvatarHtml(p.icon, p.color, 22) + '<span class="mp-race-name">' +
       escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
-      '<span class="mp-race-frac">' + (mp.raceProgress[p.id] || 0) + '/' + mp.pieces + '</span></div>';
+      '<span class="mp-race-frac">' + (mp.raceProgress[p.id] || 0) + '/' + mpPiecesOf(p.id) + '</span></div>';
   });
   bar.innerHTML = html;
 }
@@ -9029,16 +9221,25 @@ function mpOnComplete() {
 function mpApplySnapshot(snap) {
   if (!snap) return;
   if (snap.mode) mp.mode = snap.mode;
+  // レースのハンデ: 再読込の判定と読込は「自分の実効ピース数」基準にする
+  // (snap.pieces はホスト本人のピース数なので、ハンデがあると永遠に
+  // 一致せず、他人のピース数で盤面を作ってしまう)
+  var snapMap = mp.mode === 'race'
+    ? sanitizePiecesMap(snap.piecesMap, snap.turnOrder, snap.basePieces || snap.pieces)
+    : null;
+  if (snapMap) mp.piecesMap = snapMap;
+  var myPieces = snapMap ? (snapMap[mpMyId()] || snap.pieces) : snap.pieces;
   var needLoad = !mp.started || mp.loading || !state || !state.srcCanvas ||
-    mp.stage !== snap.stage || mp.pieces !== snap.pieces;
+    mp.stage !== snap.stage || mp.pieces !== myPieces;
   if (needLoad) {
     mp.pendingSnap = snap;
     if (snap.stage && snap.pieces) {
       mp.stage = snap.stage;
-      mp.pieces = snap.pieces;
+      mp.pieces = myPieces;
+      if (snap.basePieces) mp.basePieces = snap.basePieces;
       mp.startedAt = snap.startedAt || mp.startedAt || Date.now();
       mp.started = true;
-      mpLoadPuzzle(snap.stage, snap.pieces);
+      mpLoadPuzzle(snap.stage, myPieces);
     }
     return;
   }
@@ -9374,7 +9575,7 @@ function mpFillResultExtras() {
       rhtml += '<li>' + mpAvatarHtml(p.icon, p.color, 26) + '<span>' +
         escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
         '<span class="mp-peer-state">' + (isWinner ? '勝者 ・ ' : '') +
-        (mp.raceProgress[p.id] || 0) + '/' + mp.pieces + '</span></li>';
+        (mp.raceProgress[p.id] || 0) + '/' + mpPiecesOf(p.id) + '</span></li>';
     });
     rhtml += '</ul>';
     box.innerHTML = rhtml;
@@ -9497,11 +9698,18 @@ $('mpStageSel').addEventListener('change', function () {
 });
 $('mpStartBtn').addEventListener('click', function () {
   if (!mpIsHost() || !mp.session) return;
-  mp.session.hostStart({
+  var order = mpPeerList().map(function (p) { return p.playerId; }); // 参加順 (手番・結果表示の並び)
+  var payload = {
     stage: mp.lobbyStage, pieces: mp.lobbyPieces, startedAt: Date.now(),
     mode: mp.lobbyMode, // モードは start で確定し、部屋の間は固定
-    order: mpPeerList().map(function (p) { return p.playerId; }) // 参加順 (手番・結果表示の並び)
-  });
+    order: order
+  };
+  if (mp.lobbyMode === 'race') {
+    // レースだけハンデを確定させる: 全員分の段階から実効ピース数を
+    // 計算して piecesMap で配る (pieces は基準として残す)
+    payload.piecesMap = racePiecesMap(mp.lobbyPieces, order, mpHandicapLevels());
+  }
+  mp.session.hostStart(payload);
 });
 /* ロビーのお題画像 (#mpLobbyImg) は裏読み専用: load / error でも表示には
  * 出さない (ロビーでは「？」で伏せる。mpRenderLobbyPuzzle 参照) */

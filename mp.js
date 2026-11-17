@@ -59,9 +59,10 @@
  *   onStatus(status, info): 接続状態の遷移
  *     status: 'signaling' | 'waiting' | 'connecting' | 'open' | 'failed'
  *             | 'closed' | 'room-ended'
- *   onPeers(peers): 在室一覧 [{ playerId, color, isHost, connected, name, icon }]
+ *   onPeers(peers): 在室一覧 [{ playerId, color, isHost, connected, name, icon, handicap }]
  *     color はプロフィールの希望色をホストが調停した最終色 (パレット
- *     index)。name / icon はプロフィール未設定なら null
+ *     index)。name / icon はプロフィール未設定なら null。handicap は
+ *     レース用ハンデ段階 (整数 0..+4、未申告は 0)
  *   onVerifyCode(code): 照合コード (数字4桁文字列)。ロビーで口頭照合する
  *   onReject(rej): 自分のイベントがホストに却下された { reason, evType, mid }
  *   onEvent(ev, meta): seq 確定イベントの通知 (UI 表示用。状態適用は hooks 側)
@@ -81,6 +82,10 @@
  *     共有する (MP改善#4)。ev チャンネルの { t:'profile' } で送る追加型の
  *     メッセージで、ゲームイベント (seq) には混ぜない。旧クライアントは
  *     未知の種別として無視するので MP_LOGIC_VERSION は上げない
+ *   setHandicap(level): 自分のレース用ハンデ段階 (0..+4) を部屋へ共有する。
+ *     プロフィールと同じセッション層方式 ({ t:'handicap' }、名簿に載せて
+ *     再配信、welcome に同梱)。開始の瞬間にホストが全員分から start の
+ *     piecesMap を確定させる (途中変更は次の対戦から効く)
  *   leave(): 部屋を閉じる / 退出する
  * }
  * ===================================================================== */
@@ -162,15 +167,26 @@ function resolveProfileColors(players, profiles) {
   return out;
 }
 
-/* onPeers / roster で配る1人分の形に整える (色は調停済みの最終色) */
-function peerListWithProfiles(players, profiles, connectedOf) {
+/* ハンデ段階の無害化 (レース用)。整数 0..+4 のみ通し、それ以外は null。
+ * app.js の PureLogic.sanitizeHandicapLevel と同じ規則 */
+function sanitizeHandicap(v) {
+  if (typeof v !== 'number' || !isFinite(v) || Math.floor(v) !== v) return null;
+  return (v >= 0 && v <= 4) ? v : null;
+}
+
+/* onPeers / roster で配る1人分の形に整える (色は調停済みの最終色)。
+ * handicaps (任意、playerId -> 段階) があれば各項目に handicap
+ * (段階、未申告は 0) も載せる */
+function peerListWithProfiles(players, profiles, connectedOf, handicaps) {
   var eff = resolveProfileColors(players, profiles);
   return players.map(function (p) {
     var prof = profiles ? profiles[p.playerId] : null;
+    var hc = handicaps ? sanitizeHandicap(handicaps[p.playerId]) : null;
     return {
       playerId: p.playerId, color: eff[p.playerId], isHost: !!p.isHost,
       connected: connectedOf ? !!connectedOf(p) : true,
-      name: prof ? prof.name : null, icon: prof ? prof.icon : null
+      name: prof ? prof.name : null, icon: prof ? prof.icon : null,
+      handicap: hc == null ? 0 : hc
     };
   });
 }
@@ -331,6 +347,7 @@ function createEngine(opts) {
   var lastSeq = 0;               // ホスト: 採番済み最大 seq / ゲスト: 適用済み watermark
   var begun = false;
   var started = false;
+  var racePieces = null;         // レースのハンデ: 確定した start の piecesMap (playerId -> 実効ピース数)
 
   /* プレイヤー台帳 (ホストが権威) */
   var players = {};              // id -> { color, ready, lastSeen, reqTimes:[] }
@@ -496,6 +513,11 @@ function createEngine(opts) {
         // なので共有状態は変えず、値の形だけを見る
         if (typeof ev.placed !== 'number' || !isFinite(ev.placed) || ev.placed < 0)
           return 'bad-event';
+        // ハンデがあると各自の総数が違うので、上限は送信者自身の実効
+        // ピース数 − 1 (完成値) で見る。piecesMap の無いレースでは
+        // 従来どおり上限なし
+        if (racePieces && typeof racePieces[fromId] === 'number' &&
+            ev.placed > racePieces[fromId] - 1) return 'bad-event';
         return null;
       case 'finish':
         // レースモードの完成申告。勝者は seq 順に最初に適用された
@@ -505,6 +527,17 @@ function createEngine(opts) {
         return null;
       default:
         return 'bad-event';
+    }
+  }
+
+  /* レースのハンデ: 確定した start の piecesMap を覚え、progress の上限
+   * 検証 (各自の実効ピース数) に使う。next で対戦が終わったら破棄する */
+  function trackRacePieces(ev) {
+    if (ev.t === 'start') {
+      racePieces = (ev.mode === 'race' && ev.piecesMap && typeof ev.piecesMap === 'object')
+        ? ev.piecesMap : null;
+    } else if (ev.t === 'next') {
+      racePieces = null;
     }
   }
 
@@ -527,6 +560,7 @@ function createEngine(opts) {
     }
     if (out.t === 'start') { started = true; resetBarrier(); }
     if (out.t === 'next') { resetBarrier(); }
+    trackRacePieces(out);
     if (out.t === 'begin') begun = true;
     if (net.broadcast) net.broadcast(msg);
     onEvent(out, { seq: seq, from: fromId });
@@ -661,6 +695,7 @@ function createEngine(opts) {
     }
     lastSeq = msg.seq;
     if (ev.t === 'start') started = true;
+    trackRacePieces(ev);
     if (ev.t === 'begin') { begun = true; onBegin(); }
     onEvent(ev, { seq: msg.seq, from: msg.from });
     // drop / sort のチェックサム検証 (M6)
@@ -969,6 +1004,7 @@ function createRoom(hooks, callbacks, options) {
   var book = {};         // guestId -> { playerId, color, epoch }
   var bookSeq = 0;
   var profiles = {};     // playerId -> sanitize 済みプロフィール (MP改善#4)
+  var handicaps = {};    // playerId -> ハンデ段階 (プロフィールと同じ共有方式)
 
   function setStatus(s, info) { if (callbacks.onStatus) callbacks.onStatus(s, info); }
   function notifyPeers() {
@@ -976,7 +1012,7 @@ function createRoom(hooks, callbacks, options) {
     // 色はプロフィールの希望をホストが調停した最終色を配る (識別色の正)
     var list = peerListWithProfiles(engine.getPlayers(), profiles, function (p) {
       return p.isHost ? true : !!(findPeerByPlayer(p.playerId) || {}).open;
-    });
+    }, handicaps);
     if (callbacks.onPeers) callbacks.onPeers(list);
     // ゲストにも在室一覧を配る
     for (var gid in peers) sendEv(peers[gid], { t: 'roster', peers: list });
@@ -1076,6 +1112,13 @@ function createRoom(hooks, callbacks, options) {
         notifyPeers();
         return;
       }
+      if (msg && msg.t === 'handicap') {
+        // ハンデもプロフィールと同じセッション層: 名簿に保持して再配信
+        var sh = sanitizeHandicap(msg.level);
+        handicaps[peer.playerId] = sh == null ? 0 : sh;
+        notifyPeers();
+        return;
+      }
       engine.receive(peer.playerId, msg);
     };
     peer.ephCh.onmessage = function (ev) {
@@ -1108,7 +1151,8 @@ function createRoom(hooks, callbacks, options) {
     sendEv(peer, {
       t: 'welcome', playerId: peer.playerId, color: peer.color,
       started: engine.isStarted(), lastSeq: engine.getWatermark(), verify: peer.verify,
-      profiles: profiles // 途中参加者にも既知のプロフィール一式を同梱する (MP改善#4)
+      profiles: profiles, // 途中参加者にも既知のプロフィール一式を同梱する (MP改善#4)
+      handicaps: handicaps // ハンデも同様に同梱する
     });
     if (callbacks.onVerifyCode && peer.verify) callbacks.onVerifyCode(peer.verify);
     notifyPeers();
@@ -1190,6 +1234,11 @@ function createRoom(hooks, callbacks, options) {
       if (sp) profiles[HOST_ID] = sp; else delete profiles[HOST_ID];
       notifyPeers(); // roster で全ゲストへ再配信する
     },
+    setHandicap: function (level) {
+      var sh = sanitizeHandicap(level);
+      handicaps[HOST_ID] = sh == null ? 0 : sh;
+      notifyPeers(); // roster で全ゲストへ再配信する
+    },
     leave: function () {
       if (closed) return;
       closed = true;
@@ -1214,6 +1263,7 @@ function joinRoom(code, hooks, callbacks, options) {
   var connectTimer = null, restartTimer = null;
   var playerId = null;
   var welcomeProfiles = {}; // welcome に同梱された既知プロフィール (MP改善#4)
+  var welcomeHandicaps = {}; // welcome に同梱された既知ハンデ (playerId -> 段階)
   /* 接続確立までの絶対期限。want の再送やシグナリング再接続 (onReopen) で
    * タイマーを延長し続けると failed が永遠に発火しないため、期限は入室時に
    * 一度だけ決め、armConnectTimer は残り時間しか張らない */
@@ -1296,14 +1346,19 @@ function joinRoom(code, hooks, callbacks, options) {
         session.playerId = playerId;
         if (callbacks.onVerifyCode && msg.verify) callbacks.onVerifyCode(msg.verify);
         if (msg.profiles && typeof msg.profiles === 'object') welcomeProfiles = msg.profiles;
+        if (msg.handicaps && typeof msg.handicaps === 'object') welcomeHandicaps = msg.handicaps;
         if (callbacks.onPeers) {
           // roster が届くまでの仮一覧にも、welcome 同梱のプロフィールを反映する
           var hp = welcomeProfiles[HOST_ID], sp = welcomeProfiles[playerId];
+          var hh = sanitizeHandicap(welcomeHandicaps[HOST_ID]);
+          var sh = sanitizeHandicap(welcomeHandicaps[playerId]);
           callbacks.onPeers([
             { playerId: HOST_ID, color: 0, isHost: true, connected: true,
-              name: hp ? hp.name : null, icon: hp ? hp.icon : null },
+              name: hp ? hp.name : null, icon: hp ? hp.icon : null,
+              handicap: hh == null ? 0 : hh },
             { playerId: playerId, color: msg.color, isHost: false, connected: true,
-              name: sp ? sp.name : null, icon: sp ? sp.icon : null }
+              name: sp ? sp.name : null, icon: sp ? sp.icon : null,
+              handicap: sh == null ? 0 : sh }
           ]);
         }
       } else if (msg.t === 'roster') {
@@ -1312,7 +1367,8 @@ function joinRoom(code, hooks, callbacks, options) {
           if ((p.name == null || p.icon == null) && welcomeProfiles[p.playerId]) {
             var wp = welcomeProfiles[p.playerId];
             return { playerId: p.playerId, color: p.color, isHost: p.isHost, connected: p.connected,
-              name: p.name != null ? p.name : wp.name, icon: p.icon != null ? p.icon : wp.icon };
+              name: p.name != null ? p.name : wp.name, icon: p.icon != null ? p.icon : wp.icon,
+              handicap: typeof p.handicap === 'number' ? p.handicap : 0 };
           }
           return p;
         }));
@@ -1390,6 +1446,11 @@ function joinRoom(code, hooks, callbacks, options) {
       }
       sendEvRaw(m);
     },
+    setHandicap: function (level) {
+      // ハンデも ev チャンネルでホストへ送る (名簿に載って roster で返る)
+      var sh = sanitizeHandicap(level);
+      sendEvRaw({ t: 'handicap', level: sh == null ? 0 : sh });
+    },
     leave: function () {
       if (closed) return;
       sig.send({ kind: 'bye', from: guestId, to: 'host' });
@@ -1409,7 +1470,7 @@ function joinRoom(code, hooks, callbacks, options) {
 /* ---------------- 手動コード方式 (仲介B、2人専用) ------------------- */
 function manualBase(role, hooks, callbacks) {
   var pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
-  var state = { pc: pc, evCh: null, ephCh: null, open: false, verify: null, profiles: {} };
+  var state = { pc: pc, evCh: null, ephCh: null, open: false, verify: null, profiles: {}, handicaps: {} };
   /* 手動方式には roster の仕組みがないので、プロフィールが揃うたびに
    * 2人分の在室一覧を組み直して onPeers で渡す。色の調停は両端末が
    * 同じ profiles から resolveProfileColors で決定的に計算して一致させる */
@@ -1419,7 +1480,7 @@ function manualBase(role, hooks, callbacks) {
       { playerId: HOST_ID, color: 0, isHost: true },
       { playerId: 'g1', color: 1, isHost: false }
     ];
-    callbacks.onPeers(peerListWithProfiles(players, state.profiles, function () { return state.open; }));
+    callbacks.onPeers(peerListWithProfiles(players, state.profiles, function () { return state.open; }, state.handicaps));
   };
   var engine = createEngine({
     role: role, hooks: hooks,
@@ -1465,6 +1526,14 @@ function wireManualChannels(role, ctx, onOpen, callbacks) {
         state.emitPeers();
         return;
       }
+      if (msg && msg.t === 'handicap') {
+        // ハンデもエンジンに渡さず名簿に保持する (プロフィールと同じ方式)
+        var hSenderId = role === 'host' ? 'g1' : HOST_ID;
+        var sh = sanitizeHandicap(msg.level);
+        state.handicaps[hSenderId] = sh == null ? 0 : sh;
+        state.emitPeers();
+        return;
+      }
       if (role === 'host') engine.receive('g1', msg);
       else engine.receiveFromHost(msg);
     };
@@ -1492,6 +1561,14 @@ function manualSetProfile(state, myId, p) {
   state.sendEv(state, m);
   state.emitPeers();
 }
+/* 手動方式の setHandicap: 自分の分を名簿に入れ、相手へ { t:'handicap' }
+ * で送る。両端末が同じ名簿を持つので段階も一致する */
+function manualSetHandicap(state, myId, level) {
+  var sh = sanitizeHandicap(level);
+  state.handicaps[myId] = sh == null ? 0 : sh;
+  state.sendEv(state, { t: 'handicap', level: state.handicaps[myId] });
+  state.emitPeers();
+}
 function manualHost(hooks, callbacks, options) {
   callbacks = callbacks || {};
   var ctx = manualBase('host', hooks, callbacks);
@@ -1515,6 +1592,7 @@ function manualHost(hooks, callbacks, options) {
     role: 'host', code: null, engine: engine, hooks: hooks, callbacks: callbacks,
     sendEphemeral: function (kind, data) { sendEph(state.ephCh, { kind: kind, data: data, from: HOST_ID }); },
     setProfile: function (p) { manualSetProfile(state, HOST_ID, p); },
+    setHandicap: function (level) { manualSetHandicap(state, HOST_ID, level); },
     leave: function () { try { pc.close(); } catch (e) {} if (callbacks.onStatus) callbacks.onStatus('closed'); }
   });
   session.getOfferCode = function () {
@@ -1546,6 +1624,7 @@ function manualGuest(hooks, callbacks, options) {
     role: 'guest', code: null, engine: engine, hooks: hooks, callbacks: callbacks,
     sendEphemeral: function (kind, data) { sendEph(state.ephCh, { kind: kind, data: data }); },
     setProfile: function (p) { manualSetProfile(state, 'g1', p); },
+    setHandicap: function (level) { manualSetHandicap(state, 'g1', level); },
     leave: function () { try { pc.close(); } catch (e) {} if (callbacks.onStatus) callbacks.onStatus('closed'); }
   });
   session.playerId = 'g1';
@@ -1575,6 +1654,7 @@ function makeSessionFacade(o) {
     sendEvent: function (ev) { return o.engine.request(ev); },
     sendEphemeral: o.sendEphemeral,
     setProfile: function (p) { if (o.setProfile) o.setProfile(p); },
+    setHandicap: function (level) { if (o.setHandicap) o.setHandicap(level); },
     hostStart: function (payload) {
       var ev = { t: 'start' }; for (var k in (payload || {})) ev[k] = payload[k];
       o.engine.hostControl(ev);
@@ -1603,6 +1683,7 @@ var api = {
   fingerprintCode: fingerprintCode,
   HOST_ID: HOST_ID,
   sanitizeProfile: sanitizeProfile,
+  sanitizeHandicap: sanitizeHandicap,
   resolveProfileColors: resolveProfileColors,
   peerListWithProfiles: peerListWithProfiles,
   PROFILE_COLOR_COUNT: PROFILE_COLOR_COUNT,
