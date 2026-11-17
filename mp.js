@@ -101,6 +101,8 @@ var PHX_HEARTBEAT_MS = 25000;     // Phoenix チャンネルの心拍
 var LEASE_TIMEOUT_MS = 25000;     // リース解放の判定 (設計 §3.3: 20〜30秒)
 var SNAPREQ_MIN_INTERVAL_MS = 3000;
 var EPH_BUFFERED_LIMIT = 64 * 1024; // ephemeral を送らない bufferedAmount 上限
+var EPH_COALESCE_MS = 33;   // ホスト中継の coalesce 間隔 (宛先別)。0 で無効 (即時中継 = 旧挙動)。A/B 切替用
+var EPH_COALESCE_KINDS = { move: 1, cursor: 1 }; // coalesce 対象 (最新値だけ意味のある種別)
 
 /* ------------------------------------------------------------------ *
  * 小物ユーティリティ
@@ -237,7 +239,8 @@ function fingerprintCode(sdp) {
  *   ホスト→ゲスト入室: { t:'welcome', playerId, color, ep, started, lastSeq }
  * ================================================================== */
 var HOST_ID = 'host';
-var STATE_CHANGING = { drop: 1, sort: 1, start: 1 }; // sum を付ける種別
+var STATE_CHANGING = { drop: 1, sort: 1, start: 1, 'group-drop': 1 }; // sum を付ける種別
+var GROUP_GRAB_MAX = 64; // 一括掴み/一括移動の塊数上限 (イベントサイズの歯止め)
 
 function createEngine(opts) {
   opts = opts || {};
@@ -299,8 +302,16 @@ function createEngine(opts) {
     if (ev.t === 'grab') {
       leases[ev.cluster] = { holder: ev.from, epoch: ev.epoch };
       leaseEpochs[ev.cluster] = ev.epoch;
+    } else if (ev.t === 'grab-group') {
+      // 一括掴み: 塊ごとに epoch が割り振られている
+      (ev.clusters || []).forEach(function (a) {
+        leases[a] = { holder: ev.from, epoch: (ev.epochs || {})[a] };
+        leaseEpochs[a] = (ev.epochs || {})[a];
+      });
     } else if (ev.t === 'release' || ev.t === 'lease-expire' || ev.t === 'drop') {
       delete leases[ev.cluster]; // drop = 離した時点でリース終了
+    } else if (ev.t === 'group-drop') {
+      (ev.items || []).forEach(function (it) { delete leases[it.cluster]; });
     } else if (ev.t === 'start' || ev.t === 'next') {
       leases = {}; // 新規盤面ではリースは全て消える
     }
@@ -330,6 +341,52 @@ function createEngine(opts) {
           if (vr) return vr;
         }
         return null;
+      case 'grab-group-req': {
+        // 一括掴みは全か無か (原子的): 1塊でも他人のリース中なら全体を却下する
+        if (!Array.isArray(ev.clusters) || !ev.clusters.length ||
+            ev.clusters.length > GROUP_GRAB_MAX) return 'bad-event';
+        var gSeen = {};
+        for (var gi = 0; gi < ev.clusters.length; gi++) {
+          var ga = ev.clusters[gi];
+          if (gSeen[ga]) return 'bad-event';
+          gSeen[ga] = 1;
+          if (!clusterExists(ga)) return 'no-cluster';
+          L = leases[ga];
+          if (L && L.holder !== fromId) return 'leased';
+        }
+        if (typeof hooks.validateGrab === 'function') {
+          var gvr = hooks.validateGrab(fromId, ev);
+          if (gvr) return gvr;
+        }
+        return null;
+      }
+      case 'group-drop': {
+        // 形式と検証は sort の前例に倣う + 全 items のリース保持を必須にする
+        if (!Array.isArray(ev.items) || !ev.items.length ||
+            ev.items.length > GROUP_GRAB_MAX) return 'bad-event';
+        if (!Array.isArray(ev.order) || !ev.epochs) return 'bad-event';
+        var gcs = hooks.getClusters ? hooks.getClusters() : [];
+        var gAnchors = {};
+        gcs.forEach(function (c) { gAnchors[c.anchorId] = 1; });
+        var iSeen = {};
+        for (var ii = 0; ii < ev.items.length; ii++) {
+          var it = ev.items[ii];
+          if (!gAnchors[it.cluster] || iSeen[it.cluster]) return 'bad-event';
+          iSeen[it.cluster] = 1;
+          L = leases[it.cluster];
+          if (!L || L.holder !== fromId) return 'not-holder';
+          if (L.epoch !== ev.epochs[it.cluster]) return 'epoch';
+          if (!coordsOk(it.x, it.y)) return 'coords';
+        }
+        if (!gAnchors[ev.leader] || !iSeen[ev.leader]) return 'bad-event';
+        if (ev.order.length !== gcs.length) return 'bad-order';
+        var oSeen = {};
+        for (var oi = 0; oi < ev.order.length; oi++) {
+          if (!gAnchors[ev.order[oi]] || oSeen[ev.order[oi]]) return 'bad-order';
+          oSeen[ev.order[oi]] = 1;
+        }
+        return null;
+      }
       case 'drop':
         L = leases[ev.cluster];
         if (!L) return 'not-holder';
@@ -408,6 +465,14 @@ function createEngine(opts) {
     if (ev.t === 'grab-req') {
       var ep = (leaseEpochs[ev.cluster] || 0) + 1;
       return { t: 'grab', cluster: ev.cluster, epoch: ep, from: fromId };
+    }
+    if (ev.t === 'grab-group-req') {
+      var epochs = {};
+      (ev.clusters || []).forEach(function (a) { epochs[a] = (leaseEpochs[a] || 0) + 1; });
+      return {
+        t: 'grab-group', clusters: (ev.clusters || []).slice(),
+        leader: ev.leader, epochs: epochs, from: fromId
+      };
     }
     var copy = {}; for (var k in ev) copy[k] = ev[k];
     copy.from = fromId;
@@ -795,6 +860,33 @@ function sendEph(ch, obj) {
   try { ch.send(JSON.stringify(obj)); } catch (e) {}
 }
 
+/* ephemeral 中継の coalesce: 宛先 (destKey) × スロット (slotKey) ごとに
+ * 最新値だけを保持し、一定間隔でまとめて送る。move/cursor は最新値しか
+ * 意味がないので、ホストの送信回数を「宛先 × フレーム数」に抑えられる。
+ * 喪失許容の eph の範囲内でのみ使う (ev には使わない) */
+function createEphCoalescer(send, intervalMs) {
+  var pending = {}; // destKey -> { slotKey -> msg }
+  var timer = null;
+  function flush() {
+    timer = null;
+    var all = pending;
+    pending = {};
+    for (var dk in all) for (var sk in all[dk]) send(all[dk][sk]);
+  }
+  return {
+    push: function (destKey, slotKey, msg) {
+      if (!pending[destKey]) pending[destKey] = {};
+      pending[destKey][slotKey] = msg;
+      if (!timer && intervalMs > 0) timer = setTimeout(flush, intervalMs);
+    },
+    flush: flush,
+    dispose: function () {
+      if (timer) { clearTimeout(timer); timer = null; }
+      pending = {};
+    }
+  };
+}
+
 /* ---------------- ホスト (部屋コード方式) ------------------------- */
 function createRoom(hooks, callbacks, options) {
   callbacks = callbacks || {}; options = options || {};
@@ -985,11 +1077,20 @@ function createRoom(hooks, callbacks, options) {
     if (peer.timer) clearTimeout(peer.timer);
     try { peer.pc && peer.pc.close(); } catch (e) {}
   }
+  var ephCoalescer = createEphCoalescer(function (it) {
+    if (it.peer.open) sendEph(it.peer.ephCh, { kind: it.kind, data: it.data, from: it.from });
+  }, EPH_COALESCE_MS);
   function relayEph(fromPeer, m) {
     for (var gid in peers) {
       var p = peers[gid];
-      if (p !== fromPeer && p.open)
+      if (p === fromPeer || !p.open) continue;
+      if (EPH_COALESCE_MS > 0 && EPH_COALESCE_KINDS[m.kind]) {
+        // move/cursor は宛先ごとに最新値だけを保持して間引いて送る
+        ephCoalescer.push(gid, m.kind + ':' + fromPeer.playerId,
+          { peer: p, kind: m.kind, data: m.data, from: fromPeer.playerId });
+      } else {
         sendEph(p.ephCh, { kind: m.kind, data: m.data, from: fromPeer.playerId });
+      }
     }
   }
 
@@ -1005,6 +1106,7 @@ function createRoom(hooks, callbacks, options) {
       if (closed) return;
       closed = true;
       clearInterval(tickTimer);
+      ephCoalescer.dispose();
       sig.send({ kind: 'bye', from: 'host', to: null });
       for (var gid in peers) closePeer(gid);
       sig.close();
@@ -1349,6 +1451,9 @@ var api = {
   decodeManualCode: decodeManualCode,
   fingerprintCode: fingerprintCode,
   HOST_ID: HOST_ID,
+  GROUP_GRAB_MAX: GROUP_GRAB_MAX,
+  EPH_COALESCE_MS: EPH_COALESCE_MS,
+  createEphCoalescer: createEphCoalescer,
   _internals: { createSignaling: createSignaling, SUPABASE_URL: SUPABASE_URL }
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

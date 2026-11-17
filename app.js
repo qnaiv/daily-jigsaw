@@ -504,14 +504,14 @@ function absorbMerges(others, moving, n, opts) {
  * 含まないため、そのまま全状態へ代入すると除外した塊が盤面から消えて
  * しまう。除外した塊は元の相対順のまま末尾へ戻す (全端末が同じ前状態と
  * 同じリース判定から同じ並びを再構成できる)。MULTIPLAYER_DESIGN §3.5 */
-function applyClusterDrop(clusters, cl, x, y, n, isLeased) {
+function applyClusterDrop(clusters, cl, x, y, n, isLeased, opts) {
   var excluded = [], others = [];
   clusters.forEach(function (c) {
     if (c === cl) return;
     if (isLeased && isLeased(c)) excluded.push(c);
     else others.push(c);
   });
-  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: x, gy: y }, n);
+  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: x, gy: y }, n, opts);
   return { clusters: res.clusters.concat(excluded), cluster: res.cluster, merged: res.merged };
 }
 
@@ -3733,8 +3733,9 @@ var panStart = null;     // { sx, sy, tx, ty }
 
 /* ---------- 範囲選択 (長押し方式・セッション限りで保存しない) ----------
  * 空き地を長押し (450ms・ほぼ静止) すると選択モードに入り、ドラッグで矩形を描く。
- * 長押し判定前に指が 10px 超動いたら通常パンに移行する (パンは少し遅れて始まる)。
- * ピース上の長押しは従来どおり即ドラッグ (判定は空き地だけ)。 */
+ * 長押し判定前に指が 10px 超動いてもタッチではパンに化けない (パンは
+ * 2本指ピンチの中心移動のみ、#3 改訂)。ピース上の長押しは従来どおり
+ * 即ドラッグ (判定は空き地だけ)。 */
 var selection = new Set();  // 選択中の塊オブジェクトの集合
 var pressPending = null;    // 長押し判定待ち { id, sx, sy, tx, ty, timer }
 var selRect = null;         // 描画中の矩形 (画面座標) { id, x0, y0, x1, y1 }
@@ -3844,9 +3845,9 @@ stage.addEventListener('pointerdown', function (ev) {
       moved: false, group: null,
       sx: p.x, sy: p.y, lastX: p.x, lastY: p.y, movedFar: false
     };
-    if (inSelection && selection.size > 1 && (!mpInRoom() || mp.mode === 'race')) {
+    if (inSelection && selection.size > 1) {
       // 範囲選択のグループドラッグ: 選択全塊の相対オフセットを掴んだ塊基準で保持する
-      // (協力/ターン制では複数塊の移動は無効で、掴んだ塊だけの単一移動になる。§1/M4)
+      // (協力/ターン制でも有効。確定は grab-group / group-drop の seq 経路、#6)
       drag.group = Array.from(selection).map(function (c) {
         return { cluster: c, offX: c.gx - hit.cluster.gx, offY: c.gy - hit.cluster.gy };
       });
@@ -3854,14 +3855,17 @@ stage.addEventListener('pointerdown', function (ev) {
     seGrab(); // 掴んだ音 (紙の「サッ」)
     startTimerOnce();
   } else if (state.cleared) {
-    panStart = { sx: p.x, sy: p.y, tx: view().tx, ty: view().ty };
+    // クリア後もパンは2本指 (ピンチ) のみ。マウスだけ1ボタンで許す
+    if (ev.pointerType === 'mouse') panStart = { sx: p.x, sy: p.y, tx: view().tx, ty: view().ty };
   } else {
-    // 空き地: すぐにはパンを始めず、長押し (範囲選択) かパンかの判定に入る。
-    // 450ms ほぼ静止できたら選択モードへ、判定前に 10px 超動いたら通常パンへ。
+    // 空き地: すぐにはパンを始めず、長押し (範囲選択) の判定に入る。
+    // 450ms ほぼ静止できたら選択モードへ。判定前に 10px 超動いても
+    // タッチではパンに化けない (パンは2本指のみ、#3 改訂)。
     var pid = ev.pointerId, sx0 = p.x, sy0 = p.y;
     var w0 = screenToWorld(sx0, sy0);
     pressPending = {
       id: pid, sx: sx0, sy: sy0, tx: view().tx, ty: view().ty, wx: w0.x, wy: w0.y,
+      isMouse: ev.pointerType === 'mouse',
       timer: setTimeout(function () {
         if (!pressPending || pressPending.id !== pid || !pointers.has(pid)) return;
         pressPending = null;
@@ -3899,12 +3903,20 @@ stage.addEventListener('pointermove', function (ev) {
     return;
   }
   if (pressPending && pressPending.id === ev.pointerId) {
-    // 長押し判定前に指が動いたら通常パンへ移行する。パンの基準は pointerdown
-    // 時点のままなので、遅れて始まっても視点は跳ねない (移動量をそのまま適用)。
+    // 長押し判定前に指が動いた場合: タッチの1本指はピース専用なので
+    // パンには化けさせない (パンは2本指ピンチの中心移動でのみ行う、
+    // MP_IMPROVEMENTS #3 改訂)。長押し選択もせず、離すまで何も起きない。
+    // 例外: 持ち運び中の視点移動 (現行どおり) と、2本指を持たないマウス。
+    // パンの基準は pointerdown 時点のままなので、遅れて始まっても視点は
+    // 跳ねない (移動量をそのまま適用)。
     if (Math.hypot(p.x - pressPending.sx, p.y - pressPending.sy) > PRESS_MOVE_PX) {
       clearTimeout(pressPending.timer);
-      panStart = { sx: pressPending.sx, sy: pressPending.sy, tx: pressPending.tx, ty: pressPending.ty };
-      pressPending = null;
+      if (pressPending.carryTap || pressPending.isMouse) {
+        panStart = { sx: pressPending.sx, sy: pressPending.sy, tx: pressPending.tx, ty: pressPending.ty };
+        pressPending = null;
+      } else {
+        pressPending.moved = true; // タップ扱いにもしない (endPointer 参照)
+      }
     } else {
       return; // 判定待ちの微動では何もしない
     }
@@ -3930,9 +3942,9 @@ function endPointer(ev) {
   // 範囲選択まわりの終了処理 (この指が担当していた場合のみ)
   if (pressPending && pressPending.id === ev.pointerId) {
     clearTimeout(pressPending.timer);
-    var wasTap = !panStart && pointers.size === 1; // パンに移行せず単独で離した = 空き地タップ
     var pp = pressPending;
     pressPending = null;
+    var wasTap = !panStart && pointers.size === 1 && !pp.moved; // パンに移行せず・大きく動かさず単独で離した = 空き地タップ
     if (wasTap && !cancelled) {
       if (pp.carryTap) dropCarry(); // 運び中の空き地タップ → その場に置く
       else clearSelection(); // 空き地を短くタップ → 選択解除
@@ -3944,12 +3956,8 @@ function endPointer(ev) {
   }
   pointers.delete(ev.pointerId);
   if (pointers.size < 2) pinch = null;
-  if (pointers.size === 1 && !drag && state && state.views.desk) {
-    // ピンチから1本指に戻る: 残った指の現在位置でパンの基準を取り直し、
-    // そのままパンへ移行する (基準が古いままだと視点が跳ねる)
-    var rest = Array.from(pointers.values())[0];
-    panStart = { sx: rest.x, sy: rest.y, tx: view().tx, ty: view().ty };
-  }
+  /* ピンチから1本指に戻ってもパンはしない (パンは2本指のみ、#3 改訂)。
+   * 残った指は離すまで何も起きない */
   if (pointers.size === 0) {
     if (drag) {
       if (carryMode && !drag.movedFar && !cancelled) {
@@ -4132,24 +4140,28 @@ function onClear() {
     clearedAt: new Date().toISOString(),
     author: state.author || null
   };
-  /* 協力プレイ (§5): 記録はホストだけが通常ルールで保存し、coop 情報を付ける。
-   * ゲストは記録・報酬・コレクション解放を一切書かない */
-  var mpGuestClear = mpInRoom() && !mpIsHost();
-  if (mpInRoom() && mpIsHost()) {
+  /* 協力プレイ (§5 改訂 2026-11-17): クリア記録は参加者全員が自分の
+   * store に書く (協力/ターン制は全員、レースは勝者のみ — 敗者は
+   * onClear に来ず mpRaceShowResult で記録なしの結果画面になる)。
+   * coop 情報は全員の記録に付ける */
+  if (mpInRoom()) {
     rec.coop = true;
     rec.players = Math.max(2, mp.peers.length || 2);
     if (mp.mode === 'race') {
-      // レースでホストが勝った時だけ通常どおり記録する (contributions には
-      // 各プレイヤーのはめたピース数を入れる)。ゲスト勝利時は誰も書かない
+      // contributions には各プレイヤーのはめたピース数を入れる
       rec.race = true;
       rec.contributions = mpRaceProgressRecord();
     } else {
       rec.contributions = mpContribRecord();
     }
   }
-  if (!mpGuestClear) {
-    if (prev) store.records[store.records.indexOf(prev)] = rec; else store.records.push(rec);
-  }
+  if (prev) store.records[store.records.indexOf(prev)] = rec; else store.records.push(rec);
+  /* 確定した記録はその場で無条件に永続化する (MP_IMPROVEMENTS #1 真因1):
+   * persistProgress は MP 中 no-op で、報酬が無いクリアでは
+   * processRewardsOnClear の saveStore も走らないため、記録がメモリにしか
+   * 残らず再読み込みで消える経路があった。進行中セーブの分離は維持し、
+   * 「確定した記録は書く」責務はここに置く */
+  saveStore();
   persistProgress();
   runConfetti();
   // 記録証 (C案): 額装した完成盤面 + 記録2行 + 「完成図を見ずにクリア」バッジ
@@ -4168,7 +4180,7 @@ function onClear() {
     boardHost.appendChild(cv);
   });
   // クリア報酬: ステージ初クリアでランダム抽選 1 点 (+ フレーム解放判定)
-  var grants = mpGuestClear ? [] : processRewardsOnClear(isFirstStageClear);
+  var grants = processRewardsOnClear(isFirstStageClear);
   if (grants.length) {
     $('resultRewardItems').innerHTML = grants.map(function (id) {
       var it = collectibleById(id);
@@ -4185,7 +4197,7 @@ function onClear() {
   }
   $('resultModal').hidden = false;
   navPush('result');
-  mpFillResultExtras(mpGuestClear); // 協力プレイ時の貢献度と注記 (ソロでは隠したまま)
+  mpFillResultExtras(); // 協力プレイ時の貢献度と注記 (ソロでは隠したまま)
 }
 /* ---------- クリア結果の共有 (文字 / 画像) ---------- */
 function flashShareBtn(text) {
@@ -6371,6 +6383,7 @@ var navPopping = false;
 function navTop() { return navStack[navStack.length - 1]; }
 function navPush(name) {
   if (navPopping || navTop() === name) return;
+  navExitArmed = false; // 画面遷移したら離脱の武装は解除する (履歴ガード #5)
   navStack.push(name);
   try { history.pushState({ djNav: name }, ''); } catch (e) { /* file: 等 */ }
 }
@@ -6409,8 +6422,14 @@ function navCloseLayer(name) {
   else if (name === 'unlock') closeUnlockNotice();
   else if (name === 'result') {
     $('resultModal').hidden = true;
-    navGoHome(); // クリア画面を閉じたらプレイには残らずスタート画面へ
-    goToStartScreen();
+    if (mpInRoom()) {
+      /* 協力中はスタートへ戻さない (戻すと部屋を出てしまう)。プレイ画面に
+       * 残り、接続バッジからロビーを開き直せるようにする (#1 真因2) */
+      mpUpdateBadge();
+    } else {
+      navGoHome(); // クリア画面を閉じたらプレイには残らずスタート画面へ
+      goToStartScreen();
+    }
   }
   else if (name === 'collection') {
     uiCollection = false;
@@ -6455,7 +6474,8 @@ function handlePopstate() {
       return;
     }
     if (navStack.length <= 1) {
-      if (navStale > 0) navStale--;
+      if (navStale > 0) { navStale--; return; }
+      navHandleRootBack(); // ガードエントリが消費された = 根での本当の「戻る」
       return;
     }
     var top = navTop();
@@ -6471,6 +6491,24 @@ function handlePopstate() {
   } finally { navPopping = false; }
 }
 try { history.replaceState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ }
+/* ---------- 履歴ガード (#5) ----------
+ * 起動時に根エントリ + ガードエントリを1枚余分に積む。端スワイプ等の
+ * 「戻る」が根で発火しても、初回はガードを積み直して留まり (トーストで
+ * 知らせる)、武装状態での2回目の戻るで初めて離脱を許可する。
+ * タブを閉じる・ホームへ戻る等は Web からは止められない (対象外)。
+ * overscroll-behavior / touch-action の現行設定はそのまま維持する */
+var navExitArmed = false;
+try { history.pushState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ } // ガードエントリ
+function navHandleRootBack() {
+  if (navExitArmed) {
+    navExitArmed = false;
+    history.back(); // 離脱を許可する (ブラウザの前の履歴へ進める)
+    return;
+  }
+  navExitArmed = true;
+  try { history.pushState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ }
+  showToast('もう一度戻ると終了します');
+}
 /* ---------- コレクション一覧タイル (額 + 継ぎ目) ----------
  * クリア済みタイルは「オーク額 + 完成盤面」を Canvas に描く。盤面は
  * 詳細/壁の額と同じ本物レンダラー (generateEdges → detailPiecePath →
@@ -6945,7 +6983,7 @@ function openCredits() { $('creditsModal').hidden = false; navPush('credits'); }
 var TOUR_STEP_DEFS = [
   { screen: 'start', sel: '#giftBox', title: '箱をタップして開始', text: 'タップすると、いまのステージのパズルが始まります。' },
   { screen: 'start', sel: '.start-difficulty', title: 'ピース数を選ぶ', text: '難易度はここで自由に選べます。クリアすると次のステージに進みます。' },
-  { screen: 'play', sel: '#stageWrap', shrink: 0.55, bubbleBottom: true, title: 'ピースをつなげる', text: 'ピースをドラッグして、となり合うピースに近づけるとくっつきます。全部が1つの塊になったらクリアです。' },
+  { screen: 'play', sel: '#stageWrap', shrink: 0.55, bubbleBottom: true, title: 'ピースをつなげる', text: 'ピースをドラッグして、となり合うピースに近づけるとくっつきます。全部が1つの塊になったらクリアです。机を動かすときは2本指でドラッグします。' },
   { screen: 'play', sel: '#settingsBtn', circle: true, title: '設定はここ', text: '歯車ボタン（または戻るジェスチャー）で設定が開きます。' },
   { screen: 'settings', sel: '.settings-help', title: 'おたすけ', text: '「完成図を見る」で絵を確認したり、「色ごとにまとめる」でバラバラのピースを色の山に分けられます。あそびかた（ドラッグ／持ち運び）の切り替えもこの設定の中です。' },
   { screen: 'settings', sel: '#settingsHomeBtn', title: 'タイトルに戻る', text: '「スタート画面に戻る」でタイトルへ戻れます。中断したパズルは、タイトルの箱をタップすれば続きから遊べます。' },
@@ -7627,8 +7665,9 @@ function renderStartScreen() {
  * ソロのコードパスには触らず、部屋にいる間だけ分岐する薄い層に徹する:
  * - 自分の drop / sort は即時適用せず、ホストの seq 確定イベントで適用する
  * - persistProgress は部屋中ずっと無動作 (ソロの進行中セーブと分離、§5)
- * - 記録と報酬はホストだけ (onClear 内の分岐、§5) */
-var MP_LOGIC_VERSION = 2; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)
+ * - 記録と報酬は参加者全員が自分の store に書く (レースは勝者のみ、§5 改訂)。
+ *   確定した記録は onClear がその場で saveStore する (#1) */
+var MP_LOGIC_VERSION = 3; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加
 var MP_COLORS = ['#d9532b', '#2470c9', '#2f9e5f', '#8b46c7'];
 var MP_COLOR_NAMES = ['あか', 'あお', 'みどり', 'むらさき'];
 /* モード: coop = 協力 (共有盤面) / turn = ターン制 (共有盤面) /
@@ -7641,6 +7680,7 @@ var MP_MODE_DESCS = {
   turn: '順番に1手ずつ。ピースをつなげたら次の人へ',
   race: '各自の盤面で勝負。最初に完成した人の勝ち'
 };
+var MP_GHOST_INTERP_MS = 120; // 相手ゴーストの補間時間 (ms)。0 で補間なし (即ジャンプ = 旧挙動)。A/B 切替用 (#2)
 var mp = {
   session: null, role: null, code: null, manual: false,
   begun: false, started: false, loading: false,
@@ -7655,10 +7695,14 @@ var mp = {
   pendingGrabAnchor: null, lastDropAnchor: null,
   pendingDrops: {},      // epoch 未確定のまま離した drop {anchorId -> {x, y}} (複数溜まっても上書きしない)
   pendingRelease: {},    // anchorId -> true (epoch 未確定のまま離した tap)
+  pendingGroupGrab: null, // 一括掴みの確定待ち {anchors, leader} (却下時の巻き戻し用)
+  pendingGroupDrop: null, // grab-group のエコー前に離した一括移動 {leader, items, order}
+  lastGroupDropAnchors: null, // 送信済み group-drop の塊一覧 (却下時の巻き戻し用)
+  remoteGroups: {},      // playerId -> {leader, clusters, offsets} 相手の一括掴み (ゴースト再構成用)
   contrib: {},           // playerId -> その人の drop でくっつけた回数 (合体した塊の数) (§3.9)
   completeSent: false, clearShown: false,
   cursors: {},           // playerId -> {x, y, holding, at} (セル座標)
-  movesEph: {},          // playerId -> {cluster, x, y, at} (ドラッグ中ゴースト)
+  movesEph: {},          // playerId -> {cluster, fx, fy, tx, ty, t0, at} (ドラッグ中ゴースト、補間つき)
   pins: [],              // {x, y, color, until}
   pinMode: false,
   queuedEvents: [],      // 画像ロード中に届いた確定イベント [ev, meta]
@@ -7850,6 +7894,34 @@ function mpOnReject(rej) {
       if (c2 && hh) { c2.gx = hh.gx; c2.gy = hh.gy; draw(); }
     }
     showToast('置けませんでした');
+  } else if (rej.evType === 'grab-group-req') {
+    // 一括掴みの却下は全塊が対象: ドラッグ中でも確定待ちでも、全塊を
+    // 掴んだ位置へ戻す (部分的に掴めた状態は作らない)
+    var pg = mp.pendingGroupGrab;
+    mp.pendingGroupGrab = null;
+    mp.pendingGroupDrop = null; // エコー待ちの一括移動も破棄する
+    var gAnchors = pg ? pg.anchors : [];
+    gAnchors.forEach(function (a) {
+      var cl = mpClusterByAnchor(a), h = mp.grabHome[a];
+      if (cl && h) { cl.gx = h.gx; cl.gy = h.gy; }
+      delete mp.pendingRelease[a];
+    });
+    if (drag && drag.group && gAnchors.indexOf(clusterAnchorId(drag.cluster)) >= 0) {
+      drag = null;
+      stopEdgeScroll();
+    }
+    draw();
+    if (rej.reason === 'leased') showToast('そのピースは相手が持っています');
+    else if (rej.reason === 'not-your-turn') showToast('あなたの番ではありません');
+  } else if (rej.evType === 'group-drop') {
+    var gdAnchors = mp.lastGroupDropAnchors || [];
+    mp.lastGroupDropAnchors = null;
+    gdAnchors.forEach(function (a) {
+      var cl = mpClusterByAnchor(a), h = mp.grabHome[a];
+      if (cl && h) { cl.gx = h.gx; cl.gy = h.gy; }
+    });
+    draw();
+    showToast('置けませんでした');
   } else if (rej.evType === 'sort') {
     showToast('並べ替えを反映できませんでした');
     if (mp.session && mp.session.engine) mp.session.engine.requestSnapshot();
@@ -7860,11 +7932,20 @@ function mpOnEphemeral(kind, data, from) {
     mp.cursors[from] = { x: data.x, y: data.y, holding: data.holding, at: Date.now() };
     if (state && state.phase === 'play' && !uiHome) requestDraw();
   } else if (kind === 'move' && data) {
-    mp.movesEph[from] = { cluster: data.cluster, x: data.x, y: data.y, at: Date.now() };
+    // ゴーストは補間で滑らかに見せる: 現在の表示位置を起点に、新しい
+    // 位置へ MP_GHOST_INTERP_MS かけて線形に寄せる (表示専用)
+    var nowM = Date.now();
+    var prevM = mp.movesEph[from];
+    var curM = (prevM && prevM.cluster === data.cluster) ? mpGhostPos(prevM, nowM) : { x: data.x, y: data.y };
+    mp.movesEph[from] = {
+      cluster: data.cluster,
+      fx: curM.x, fy: curM.y, tx: data.x, ty: data.y,
+      t0: nowM, at: nowM
+    };
     if (state && state.phase === 'play' && !uiHome) requestDraw();
   } else if (kind === 'ping' && data) {
     mp.pins.push({ x: data.x, y: data.y, color: MP_COLORS[mpColorOf(from)] || '#999', until: Date.now() + 2000 });
-    if (state && state.phase === 'play' && !uiHome) draw();
+    if (state && state.phase === 'play' && !uiHome) requestDraw();
   } else if (kind === 'lobby' && data) {
     if (!mpIsHost()) { mp.lobbyInfo = data; mpRenderLobbyPuzzle(); }
   }
@@ -7893,6 +7974,7 @@ function mpResetState() {
   $('mpRaceBar').hidden = true;
   mp.peers = []; mp.verifyCode = null; mp.contrib = {}; mp.myLeases = {};
   mp.pendingDrops = {}; mp.pendingRelease = {}; mp.pendingSnap = null; mp.queuedEvents = [];
+  mp.pendingGroupGrab = null; mp.pendingGroupDrop = null; mp.lastGroupDropAnchors = null; mp.remoteGroups = {};
   mp.cursors = {}; mp.movesEph = {}; mp.pins = []; mp.pinMode = false;
   mp.stage = null; mp.pieces = null; mp.lobbyInfo = null;
   mp.clearShown = false; mp.completeSent = false; mp.pendingGrabAnchor = null; mp.lastDropAnchor = null;
@@ -7917,7 +7999,10 @@ function mpLeaveRoom() {
 }
 function mpCloseModalFromNav() {
   $('mpModal').hidden = true;
-  if (mp.session && !mp.started) mpLeaveRoom(); // ロビー段階で閉じたら部屋も出る
+  /* ロビー/入口を閉じても部屋は解散しない (#1 真因2)。セッションが
+   * 生きていれば、スタート画面のボタンやプレイ画面の接続バッジから
+   * ロビーを開き直せる。退出・解散は「部屋を出る」「部屋を解散する」の
+   * 明示操作だけにする */
 }
 
 /* ---------- 入口シート / ロビー ---------- */
@@ -8269,13 +8354,24 @@ function mpFlushQueue() {
   });
 }
 function mpApplyEventNow(ev, meta) {
+  // 相手の一括掴みの記録は、その人の確定/解放が来たら役目を終える
+  var rgOwner = ev.t === 'lease-expire' ? ev.by : ev.from;
+  if (rgOwner && rgOwner !== mpMyId() && mp.remoteGroups[rgOwner]) {
+    if (ev.t === 'group-drop' ||
+        ((ev.t === 'release' || ev.t === 'lease-expire' || ev.t === 'drop') &&
+         mp.remoteGroups[rgOwner].clusters.indexOf(ev.cluster) >= 0)) {
+      delete mp.remoteGroups[rgOwner];
+    }
+  }
   switch (ev.t) {
     case 'start': mpOnStartEvent(ev); break;
     case 'next': mpOnNextEvent(ev); break;
     case 'begin': mpOnBegin(); break;
     case 'grab': mpOnGrab(ev); break;
+    case 'grab-group': mpOnGrabGroup(ev); break;
     case 'release': case 'lease-expire': mpOnRelease(ev); break;
     case 'drop': mpOnDrop(ev); break;
+    case 'group-drop': mpOnGroupDrop(ev); break;
     case 'sort': mpOnSort(ev); break;
     case 'complete': mpOnComplete(); break;
     case 'player-left': mpOnPlayerLeft(ev); break;
@@ -8305,6 +8401,9 @@ function mpOnStartEvent(ev) {
   mp.myLeases = {};
   mp.pendingDrops = {};
   mp.pendingRelease = {};
+  mp.pendingGroupGrab = null;
+  mp.pendingGroupDrop = null;
+  mp.remoteGroups = {};
   mp.cursors = {};
   mp.movesEph = {};
   mp.pins = [];
@@ -8321,6 +8420,7 @@ function mpOnStartEvent(ev) {
  * ものが選択済みになり、モードは引き継ぎ、ホストがピース数を
  * 選び直してから「はじめる」で次の対戦が始まる (全モード共通) */
 function mpOnNextEvent(ev) {
+  saveStore(); // 保険: 直前のクリア記録が未保存ならここでも確実に残す (#1)
   mp.lobbyStage = ev.stage;
   mp.started = false;
   mp.begun = false;
@@ -8331,6 +8431,9 @@ function mpOnNextEvent(ev) {
   mp.raceProgress = {};
   mp.turnIdx = 0;
   mp.leftPlayers = {};
+  mp.remoteGroups = {};
+  mp.pendingGroupGrab = null;
+  mp.pendingGroupDrop = null;
   $('resultModal').hidden = true;
   if (navTop() === 'result') navSilentPop('result');
   $('mpWaitVeil').hidden = true;
@@ -8408,6 +8511,110 @@ function mpOnDrop(ev) {
   }
   mpCheckComplete();
 }
+/* grab-group の適用: 自分宛てなら epoch を取り込み、エコー前に離して
+ * あった一括移動 (pendingGroupDrop) や解放 (pendingRelease) を送り直す。
+ * 相手宛てなら、リーダーとの相対オフセットを記録して move のゴーストで
+ * 追随塊も再構成できるようにする */
+function mpOnGrabGroup(ev) {
+  var anchors = ev.clusters || [];
+  if (ev.from === mpMyId()) {
+    anchors.forEach(function (a) { mp.myLeases[a] = (ev.epochs || {})[a]; });
+    if (mp.pendingGroupGrab && mp.pendingGroupGrab.leader === ev.leader) mp.pendingGroupGrab = null;
+    var pg = mp.pendingGroupDrop;
+    if (pg && anchors.indexOf(pg.leader) >= 0) {
+      mp.pendingGroupDrop = null;
+      mpSendGroupDrop(pg.leader, pg.items, pg.order);
+    }
+    anchors.forEach(function (a) {
+      if (mp.pendingRelease[a]) {
+        delete mp.pendingRelease[a];
+        mp.session.sendEvent({ t: 'release', cluster: a, epoch: mp.myLeases[a] });
+      }
+    });
+  } else {
+    var leaderCl = mpClusterByAnchor(ev.leader);
+    if (leaderCl) {
+      var offs = {};
+      anchors.forEach(function (a) {
+        var c = mpClusterByAnchor(a);
+        if (c) offs[a] = { dx: c.gx - leaderCl.gx, dy: c.gy - leaderCl.gy };
+      });
+      mp.remoteGroups[ev.from] = { leader: ev.leader, clusters: anchors.slice(), offsets: offs };
+    }
+  }
+  draw();
+}
+/* group-drop の適用: ソロ settleGroupDrag の決定論的複製。
+ * (1) リーダーを applyClusterDrop で確定する。合体先から外すのは
+ *     「自分 (ev.from) 以外のリース中の塊」と「同じグループの塊」
+ *     (ソロがグループ内をリーダーの合体先から外すのと同じ)
+ * (2) リーダーの実移動量 (吸着込み) を追随塊へ適用し、各追随塊は noSnap で
+ *     合体判定だけ行う。合体先から外すのは他人のリース中だけなので、
+ *     グループ同士・リーダーの塊との合体はソロと同じに起きる
+ * (3) z-order はイベントの order (全塊の順列) を、合体で生き残った
+ *     anchor で辿り直す
+ * 貢献度は単一 drop と同じ規則をイベント全体に適用 (消えた塊の数)。
+ * ターン制では一括移動全体で1手 (合体があれば手番が進む) */
+function mpOnGroupDrop(ev) {
+  var n = state.n;
+  var items = ev.items || [];
+  var itemByAnchor = {};
+  items.forEach(function (it) { itemByAnchor[it.cluster] = it; });
+  var leaderItem = itemByAnchor[ev.leader];
+  var leaderCl = mpClusterByAnchor(ev.leader);
+  if (!leaderCl || !leaderItem) throw new Error('mp: group-drop のリーダーがありません');
+  var engine = mp.session && mp.session.engine;
+  var othersLease = function (c) {
+    var L = engine && engine.getLease(clusterAnchorId(c));
+    return !!L && L.holder !== ev.from;
+  };
+  var clustersBefore = state.clusters.length;
+  var flashPieces = [];
+  // 追随塊は適用前のオブジェクト参照で掴む (合体で消費されたら飛ばす)
+  var followerObjs = [];
+  items.forEach(function (it) {
+    if (it.cluster === ev.leader) return;
+    var c = mpClusterByAnchor(it.cluster);
+    if (c) followerObjs.push(c);
+  });
+  var beforeGx = leaderCl.gx, beforeGy = leaderCl.gy;
+  var res = applyClusterDrop(state.clusters, leaderCl, leaderItem.x, leaderItem.y, n, function (c) {
+    return othersLease(c) || !!itemByAnchor[clusterAnchorId(c)];
+  });
+  var clusters = res.clusters;
+  if (res.merged) flashPieces = flashPieces.concat(res.cluster.pieces);
+  var afterPos = piecePositions([res.cluster], n).get(ev.leader);
+  var dx = afterPos.gx - beforeGx, dy = afterPos.gy - beforeGy;
+  followerObjs.forEach(function (f) {
+    if (clusters.indexOf(f) < 0) return; // 既に別の塊へ合体済み
+    var r2 = applyClusterDrop(clusters, f, f.gx + dx, f.gy + dy, n, othersLease, { noSnap: true });
+    clusters = r2.clusters;
+    if (r2.merged) flashPieces = flashPieces.concat(r2.cluster.pieces);
+  });
+  state.clusters = clusters;
+  if (Array.isArray(ev.order)) {
+    var byAnchor = {};
+    state.clusters.forEach(function (c) { byAnchor[clusterAnchorId(c)] = c; });
+    var ordered = ev.order.map(function (a) { return byAnchor[a]; }).filter(Boolean);
+    if (ordered.length === state.clusters.length) state.clusters = ordered;
+  }
+  state.moves++;
+  var mergedCount = clustersBefore - state.clusters.length;
+  if (mergedCount > 0) {
+    mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + mergedCount;
+    if (flashPieces.length) startMergeFlash(flashPieces);
+    seMerge();
+  }
+  seDrop();
+  pruneSelection();
+  updateProgressUI();
+  draw();
+  if (mp.mode === 'turn' && mergedCount > 0) {
+    mpAdvanceTurn();
+    mpUpdateTurnUI();
+  }
+  mpCheckComplete();
+}
 
 /* ---------- ターン制 ---------- */
 /* 保存済み turnIdx から、退出済みを飛ばして現在の手番インデックスを
@@ -8430,6 +8637,7 @@ function mpAdvanceTurn() {
 function mpOnPlayerLeft(ev) {
   if (!ev.player) return;
   mp.leftPlayers[ev.player] = true; // 手番の解決時に自動で飛ばされる
+  delete mp.remoteGroups[ev.player];
   mpUpdateTurnUI();
 }
 function mpUpdateTurnUI() {
@@ -8475,7 +8683,7 @@ function mpOnRaceFinish(ev) {
   if (drag) { drag = null; stopEdgeScroll(); } // 終了時点で掴んでいた塊は確定させない
   mpRenderRaceBar();
   if (ev.from === mpMyId()) {
-    onClear(); // 勝者: 通常のクリア処理 (記録・ごほうびはホストの時だけ通常ルールで付く)
+    onClear(); // 勝者: 通常のクリア処理 (記録・ごほうびは勝者本人に付く。敗者は記録なし)
   } else {
     mpRaceShowResult();
   }
@@ -8507,7 +8715,7 @@ function mpRaceShowResult() {
   });
   $('resultModal').hidden = false;
   navPush('result');
-  mpFillResultExtras(false);
+  mpFillResultExtras();
 }
 function mpRenderRaceBar() {
   var bar = $('mpRaceBar');
@@ -8618,6 +8826,7 @@ function mpDoApplySnapshot(snap) {
 /* settleDrag の協力分岐: 見た目はローカルで追随済み。確定は seq イベントで */
 function mpSettleDrag() {
   if (!drag) return;
+  if (drag.group && drag.group.length > 1) { mpSettleGroupDrag(); return; }
   var cl = drag.cluster;
   var wasMoved = drag.moved;
   var anchor = clusterAnchorId(cl);
@@ -8632,6 +8841,35 @@ function mpSettleDrag() {
     mp.pendingDrops[anchor] = { x: cl.gx, y: cl.gy };
   }
   draw();
+}
+/* 範囲選択の一括確定 (#6): 確定は group-drop イベントで全端末が同じ
+ * 計算をする。grab-group のエコー前に指を離した場合はエコー到着時に送る */
+function mpSettleGroupDrag() {
+  var group = drag.group;
+  var wasMoved = drag.moved;
+  var leaderAnchor = clusterAnchorId(drag.cluster);
+  drag = null;
+  stopEdgeScroll();
+  var anchors = group.map(function (g) { return clusterAnchorId(g.cluster); });
+  if (!wasMoved) {
+    anchors.forEach(function (a) { mpReleaseMyLease(a); });
+    draw();
+    return;
+  }
+  var items = group.map(function (g) {
+    return { cluster: clusterAnchorId(g.cluster), x: g.cluster.gx, y: g.cluster.gy };
+  });
+  var order = state.clusters.map(function (c) { return clusterAnchorId(c); });
+  var allConfirmed = anchors.every(function (a) { return mp.myLeases[a] != null; });
+  if (allConfirmed) mpSendGroupDrop(leaderAnchor, items, order);
+  else mp.pendingGroupDrop = { leader: leaderAnchor, items: items, order: order };
+  draw();
+}
+function mpSendGroupDrop(leader, items, order) {
+  var epochs = {};
+  items.forEach(function (it) { epochs[it.cluster] = mp.myLeases[it.cluster]; });
+  mp.lastGroupDropAnchors = items.map(function (it) { return it.cluster; });
+  mp.session.sendEvent({ t: 'group-drop', leader: leader, items: items, order: order, epochs: epochs });
 }
 function mpReleaseMyLease(anchor) {
   var epoch = mp.myLeases[anchor];
@@ -8656,6 +8894,17 @@ stage.addEventListener('pointerdown', function () {
   if (mp.mode === 'turn' && mpTurnPlayerId() !== mpMyId()) return; // ターン制: 手番以外は要求しない
   if (drag && drag.cluster && !drag.mpGrabbed) {
     drag.mpGrabbed = true;
+    if (drag.group && drag.group.length > 1) {
+      // 範囲選択の一括移動: 全塊のリースを原子的に要求する (#6)。
+      // 1塊でも他人のリース中なら全体が却下され、全塊が掴み位置へ戻る
+      var gAnchors = drag.group.map(function (g) { return clusterAnchorId(g.cluster); });
+      drag.group.forEach(function (g) {
+        mp.grabHome[clusterAnchorId(g.cluster)] = { gx: g.cluster.gx, gy: g.cluster.gy };
+      });
+      mp.pendingGroupGrab = { anchors: gAnchors, leader: clusterAnchorId(drag.cluster) };
+      mp.session.sendEvent({ t: 'grab-group-req', clusters: gAnchors, leader: clusterAnchorId(drag.cluster) });
+      return;
+    }
     var anchor = clusterAnchorId(drag.cluster);
     mp.grabHome[anchor] = { gx: drag.cluster.gx, gy: drag.cluster.gy };
     mp.pendingGrabAnchor = anchor;
@@ -8700,6 +8949,16 @@ function mpFirePin(p) {
   draw();
 }
 
+/* ゴーストの現在表示位置: 最新 eph 位置へ即ジャンプせず、前回位置から
+ * MP_GHOST_INTERP_MS かけて線形補間する。表示専用なので決定性に影響しない */
+function mpGhostPos(m, now) {
+  if (!MP_GHOST_INTERP_MS || MP_GHOST_INTERP_MS <= 0) return { x: m.tx, y: m.ty };
+  var t = (now - m.t0) / MP_GHOST_INTERP_MS;
+  if (t >= 1) return { x: m.tx, y: m.ty };
+  if (t <= 0) return { x: m.fx, y: m.fy };
+  return { x: m.fx + (m.tx - m.fx) * t, y: m.fy + (m.ty - m.fy) * t };
+}
+
 /* ---------- 描画の重ね合わせ (draw() の末尾から呼ばれる) ---------- */
 function mpDrawOverlays() {
   if (!mpInRoom() || mp.mode === 'race' || !state || !state.srcCanvas || !state.views.desk) return; // レースは相手の盤面が無いので重ね描きなし
@@ -8722,16 +8981,49 @@ function mpDrawOverlays() {
       });
     });
   }
-  // 相手がドラッグ中のゴースト (move ephemeral の位置に半透明で)
+  // 自分の掴みが確定待ちの間は弱い破線枠で予告する (grab が却下されて
+  // いきなり巻き戻る落差を減らす表示。確定したら通常表示に戻る)
+  if (drag && drag.cluster && drag.mpGrabbed) {
+    var pendCls = (drag.group && drag.group.length > 1)
+      ? drag.group.map(function (g) { return g.cluster; }) : [drag.cluster];
+    if (pendCls.some(function (c) { return mp.myLeases[clusterAnchorId(c)] == null; })) {
+      var myCol = MP_COLORS[mpColorOf(mpMyId())] || '#c9a227';
+      sctx.save();
+      sctx.setLineDash([6, 4]);
+      pendCls.forEach(function (c) {
+        if (mp.myLeases[clusterAnchorId(c)] != null) return; // 確定済みは通常表示
+        var anchor = pieceHome(clusterAnchorId(c), n);
+        c.pieces.forEach(function (id) {
+          var home = pieceHome(id, n);
+          var wx = (c.gx + (home.col - anchor.col)) * CELL, wy = (c.gy + (home.row - anchor.row)) * CELL;
+          strokePiece(id, wx, wy, myCol, 2, hexToRgba(myCol, 0.08));
+        });
+      });
+      sctx.restore();
+    }
+  }
+  // 相手がドラッグ中のゴースト (move ephemeral の位置を補間して半透明で)
   var wTl = screenToWorld(0, 0), wBr = screenToWorld(stageW, stageH);
   Object.keys(mp.movesEph).forEach(function (pid) {
     var m = mp.movesEph[pid];
     if (now - m.at > 1500) return;
     var cl = mpClusterByAnchor(m.cluster);
     if (!cl) return;
+    var gp = mpGhostPos(m, now);
+    if (MP_GHOST_INTERP_MS > 0 && now - m.t0 < MP_GHOST_INTERP_MS) requestDraw(); // 補間中は次のフレームも描く
     sctx.save();
     sctx.globalAlpha = 0.45;
-    drawClusterOn(sctx, v, { pieces: cl.pieces, surface: 'desk', gx: m.x, gy: m.y }, wTl, wBr);
+    drawClusterOn(sctx, v, { pieces: cl.pieces, surface: 'desk', gx: gp.x, gy: gp.y }, wTl, wBr);
+    // 一括掴み中は追随塊のゴーストもリーダー + オフセットで再構成する
+    var rg = mp.remoteGroups[pid];
+    if (rg && rg.leader === m.cluster) {
+      rg.clusters.forEach(function (a) {
+        if (a === rg.leader) return;
+        var off = rg.offsets[a], fc = mpClusterByAnchor(a);
+        if (!off || !fc) return;
+        drawClusterOn(sctx, v, { pieces: fc.pieces, surface: 'desk', gx: gp.x + off.dx, gy: gp.y + off.dy }, wTl, wBr);
+      });
+    }
     sctx.restore();
   });
   // 合図ピン (2秒で消える輪)
@@ -8805,7 +9097,7 @@ function mpContribRecord() {
   mpContribPlayers().forEach(function (p) { out[p.id] = mp.contrib[p.id] || 0; });
   return out;
 }
-function mpFillResultExtras(guestClear) {
+function mpFillResultExtras() {
   var box = $('resultContrib'), note = $('resultCoopNote'), acts = $('resultMpActions');
   if (!mpInRoom()) { box.hidden = true; note.hidden = true; acts.hidden = true; return; }
   if (mp.mode === 'race') {
@@ -8823,9 +9115,7 @@ function mpFillResultExtras(guestClear) {
     box.hidden = false;
     note.hidden = false;
     if (mp.raceWinner === mpMyId()) {
-      note.textContent = mpIsHost()
-        ? 'レース：あなたの勝利です。このクリアはあなたの記録になります'
-        : 'レース：あなたの勝利です。ステージ記録は付きません（記録はホストが勝った時だけ付きます）';
+      note.textContent = 'レース：あなたの勝利です。このクリアはあなたの記録になります';
     } else {
       note.textContent = 'レース：勝者は ' + mpPlayerName(mp.raceWinner) + 'さん。あなたの記録は付きません';
     }
@@ -8844,9 +9134,9 @@ function mpFillResultExtras(guestClear) {
   box.innerHTML = html;
   box.hidden = false;
   note.hidden = false;
-  note.textContent = guestClear
-    ? '協力プレイ：このクリアはホストの記録になります。あなたの記録・ごほうびはありません'
-    : '協力プレイ：このクリアはあなたの記録になります';
+  note.textContent = mpIsHost()
+    ? (mp.mode === 'turn' ? 'ターン制' : '協力プレイ') + '：このクリアはみんなの記録になります'
+    : (mp.mode === 'turn' ? 'ターン制' : '協力プレイ') + '：このクリアはあなたの記録にもなります';
   acts.hidden = false;
   $('resultNextBtn').hidden = !mpIsHost();
   $('resultLeaveBtn').textContent = mpIsHost() ? '部屋を解散する' : '部屋を出る';
@@ -8855,7 +9145,17 @@ function mpFillResultExtras(guestClear) {
 /* ---------- 配線 (この節の評価時に登録する。本体 wireControls とは独立) ---------- */
 $('mpBtn').addEventListener('click', function () {
   if (!window.JigsawMP) { showToast('マルチプレイを読み込めませんでした'); return; }
-  mpShowHome();
+  if (mp.session) mpShowLobby(); // セッションが生きていれば入口でなくロビーへ戻る (#1 真因2)
+  else mpShowHome();
+  $('mpModal').hidden = false;
+  navPush('mp');
+});
+/* 接続バッジ: 対戦の合間 (未開始 or クリア表示後) ならタップでロビーを
+ * 開き直せる。結果画面を閉じた後の復帰導線 (#1 真因2) */
+$('mpBadge').addEventListener('click', function () {
+  if (!mp.session) return;
+  if (mp.started && !mp.clearShown) return; // 対戦中は邪魔しない
+  mpShowLobby();
   $('mpModal').hidden = false;
   navPush('mp');
 });
@@ -8878,7 +9178,7 @@ $('mpManualBackBtn').addEventListener('click', function () {
 $('mpManualHostBtn').addEventListener('click', mpManualHostStart);
 $('mpManualGuestBtn').addEventListener('click', mpManualGuestStart);
 $('mpManualAcceptBtn').addEventListener('click', mpManualAccept);
-$('mpLeaveBtn').addEventListener('click', function () { navBack(); });
+$('mpLeaveBtn').addEventListener('click', function () { mpLeaveRoom(); }); // 明示的な退出 (シートを閉じるだけでは解散しない)
 $('mpCopyCodeBtn').addEventListener('click', function () {
   if (!mp.code) return;
   var url = mpInviteUrl();

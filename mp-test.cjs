@@ -792,6 +792,135 @@ console.log('[7] ユーティリティ');
   ok(/^\d{4}$/.test(fc), '照合コードは数字4桁');
   eq(MP.fingerprintCode(sdp), fc, '照合コードは決定的');
 }
+/* ================= 8. 一括移動 (grab-group / group-drop) ================= */
+console.log('[8] 一括移動');
+function extendGroupMock(game) {
+  const orig = game.hooks.applyEvent;
+  game.hooks.applyEvent = ev => {
+    if (ev.t === 'group-drop') {
+      const cs = game.hooks.getClusters();
+      ev.items.forEach(it => {
+        const c = cs.find(c => c.anchorId === it.cluster);
+        if (c) { c.gx = it.x; c.gy = it.y; }
+      });
+      const byId = {}; cs.forEach(c => { byId[c.anchorId] = c; });
+      const ordered = ev.order.map(id => byId[id]).filter(Boolean);
+      if (ordered.length === cs.length) cs.splice(0, cs.length, ...ordered);
+    } else orig(ev);
+  };
+}
+{
+  // 原子性: 1塊でも他人が掴んでいたら全体が却下され、部分取得は起きない
+  const rig = makeRig();
+  [rig.hostGame, rig.g1Game, rig.g2Game].forEach(extendGroupMock);
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 12 });
+  const e5 = grabOk(rig.g1Engine, 5);
+  ok(!!e5, '一括: ゲスト1が塊5を単独で掴んだ');
+  rig.g2Engine.request({ t: 'grab-group-req', clusters: [3, 5, 7], leader: 3 });
+  eq(rig.rejects.g2[rig.rejects.g2.length - 1].reason, 'leased', '一括: 他人のリースを含む一括掴みは leased で全体却下');
+  ok(!rig.hostEngine.getLease(3) && !rig.hostEngine.getLease(7), '一括: 却下時に部分取得は起きない (3,7 は無リース)');
+  eq(rig.hostEngine.getLease(5).holder, 'g1', '一括: 既存のリースは壊れない');
+  rig.g1Engine.request({ t: 'release', cluster: 5, epoch: e5 });
+
+  // 正常系: 一括掴み → 全端末でリース一致 → group-drop で収束
+  rig.g1Engine.request({ t: 'grab-group-req', clusters: [1, 2, 3], leader: 1 });
+  const L1 = rig.g1Engine.getLease(1), L2 = rig.g1Engine.getLease(2), L3 = rig.g1Engine.getLease(3);
+  ok(L1 && L2 && L3 && L1.holder === 'g1', '一括: 3塊まとめてリースが付く');
+  eq(rig.g2Engine.getLease(2).epoch, L2.epoch, '一括: epoch が全端末で一致');
+  const order = rig.g1Game.hooks.getClusters().map(c => c.anchorId);
+  rig.g1Engine.request({
+    t: 'group-drop', leader: 1,
+    items: [
+      { cluster: 1, x: 30, y: 30 }, { cluster: 2, x: 31, y: 30 }, { cluster: 3, x: 32, y: 30 }
+    ],
+    order: order,
+    epochs: { 1: L1.epoch, 2: L2.epoch, 3: L3.epoch }
+  });
+  const h = allHashes(rig);
+  eq(h[1], h[0], '一括: group-drop 後にゲスト1がホストと一致');
+  eq(h[2], h[0], '一括: group-drop 後にゲスト2がホストと一致');
+  ok(!rig.hostEngine.getLease(1) && !rig.g1Engine.getLease(2), '一括: group-drop でリースは全て解放される');
+  const moved = rig.g2Game.hooks.getClusters().find(c => c.anchorId === 3);
+  eq(moved.gx, 32, '一括: 追随塊の位置も全端末で適用される');
+
+  // 検証: 保持していない塊を含む group-drop は not-holder
+  rig.g2Engine.request({
+    t: 'group-drop', leader: 4,
+    items: [{ cluster: 4, x: 0, y: 0 }],
+    order: order, epochs: { 4: 1 }
+  });
+  eq(rig.rejects.g2[rig.rejects.g2.length - 1].reason, 'not-holder', '一括: リースしていない塊の group-drop は not-holder');
+
+  // 検証: epoch 不一致は epoch、順列でない order は bad-order
+  rig.g1Engine.request({ t: 'grab-group-req', clusters: [6, 7], leader: 6 });
+  const M6 = rig.g1Engine.getLease(6), M7 = rig.g1Engine.getLease(7);
+  rig.g1Engine.request({
+    t: 'group-drop', leader: 6,
+    items: [{ cluster: 6, x: 1, y: 1 }, { cluster: 7, x: 2, y: 1 }],
+    order: order, epochs: { 6: M6.epoch + 9, 7: M7.epoch }
+  });
+  eq(rig.rejects.g1[rig.rejects.g1.length - 1].reason, 'epoch', '一括: epoch 不一致の group-drop は epoch で却下');
+  rig.g1Engine.request({
+    t: 'group-drop', leader: 6,
+    items: [{ cluster: 6, x: 1, y: 1 }, { cluster: 7, x: 2, y: 1 }],
+    order: order.slice(1), epochs: { 6: M6.epoch, 7: M7.epoch }
+  });
+  eq(rig.rejects.g1[rig.rejects.g1.length - 1].reason, 'bad-order', '一括: 全塊の順列でない order は bad-order');
+  rig.g1Engine.request({
+    t: 'group-drop', leader: 6,
+    items: [{ cluster: 6, x: 1, y: 1 }, { cluster: 7, x: 2, y: 1 }],
+    order: order, epochs: { 6: M6.epoch, 7: M7.epoch }
+  });
+  const h2 = allHashes(rig);
+  eq(h2[1], h2[0], '一括: 正しい group-drop では収束する');
+  eq(h2[2], h2[0], '一括: 正しい group-drop ではゲスト2も収束する');
+}
+{
+  // ターン制の検証フック (validateGrab) が一括掴みにも効く
+  const rig = makeRig();
+  [rig.hostGame, rig.g1Game, rig.g2Game].forEach(extendGroupMock);
+  rig.hostGame.hooks.validateGrab = fromId => (fromId === 'g2' ? 'not-your-turn' : null);
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 12 });
+  rig.g2Engine.request({ t: 'grab-group-req', clusters: [1, 2], leader: 1 });
+  eq(rig.rejects.g2[rig.rejects.g2.length - 1].reason, 'not-your-turn', '一括: 手番以外の一括掴みは validateGrab で却下');
+  rig.g1Engine.request({ t: 'grab-group-req', clusters: [1, 2], leader: 1 });
+  ok(!!rig.g1Engine.getLease(1), '一括: 手番の人の一括掴みは通る');
+}
+{
+  // 上限: 65塊は bad-event、64塊は通る
+  const rig = makeRig({ pieces: 70 });
+  [rig.hostGame, rig.g1Game, rig.g2Game].forEach(extendGroupMock);
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 70 });
+  const many = []; for (let i = 0; i < 65; i++) many.push(i);
+  rig.g1Engine.request({ t: 'grab-group-req', clusters: many, leader: 0 });
+  eq(rig.rejects.g1[rig.rejects.g1.length - 1].reason, 'bad-event', '一括: 上限 (64) を超える一括掴みは bad-event');
+  rig.g1Engine.request({ t: 'grab-group-req', clusters: many.slice(0, 64), leader: 0 });
+  ok(!!rig.g1Engine.getLease(63), '一括: 64塊ちょうどは通る');
+  eq(MP.GROUP_GRAB_MAX, 64, '一括: 上限は GROUP_GRAB_MAX = 64');
+}
+
+/* ================= 9. 中継 coalesce (#2) ================= */
+console.log('[9] coalesce');
+{
+  const sent = [];
+  const co = MP.createEphCoalescer(m => sent.push(m), 33);
+  eq(MP.EPH_COALESCE_MS, 33, 'coalesce: 間隔定数は 33ms (0 で無効化できる A/B 切替)');
+  co.push('g1', 'move:g2', { v: 1 });
+  co.push('g1', 'move:g2', { v: 2 });
+  co.push('g1', 'move:g2', { v: 3 });
+  co.flush();
+  eq(sent.length, 1, 'coalesce: 同じ宛先×スロットは最新値だけが送られる');
+  eq(sent[0].v, 3, 'coalesce: 送られるのは最後の値');
+  co.push('g1', 'cursor:g2', { v: 4 });
+  co.push('g2', 'move:g2', { v: 5 });
+  co.flush();
+  eq(sent.length, 3, 'coalesce: スロット/宛先が違えば別々に送られる');
+  co.push('g1', 'move:g2', { v: 6 });
+  co.dispose();
+  co.flush();
+  eq(sent.length, 3, 'coalesce: dispose 後は保留分が送られない');
+}
+
 MP.encodeManualCode({ v: 1, kind: 'offer', sdp: 'dummy-sdp' }).then(codeStr => {
   ok(/^[gr]\./.test(codeStr), '手動コードに接頭辞が付く');
   return MP.decodeManualCode(codeStr);

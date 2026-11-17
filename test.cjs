@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v41'") !== -1, 'sw: VERSION は v41');
+  ok(swSB.indexOf("VERSION = 'v42'") !== -1, 'sw: VERSION は v42');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1578,16 +1578,16 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: スタート導線・ロビー・バッジ・ピンボタン・貢献度表示の要素がある');
   ok(swM.indexOf("'mp.js'") !== -1 && swM.indexOf("endsWith('/mp.js')") !== -1,
      'MP配線: sw.js が mp.js をプリキャッシュし NetworkFirst 対象に含む');
-  ok(appM.indexOf('var MP_LOGIC_VERSION = 2;') !== -1 &&
+  ok(appM.indexOf('var MP_LOGIC_VERSION = 3;') !== -1 &&
      appM.indexOf('hashState: function (clusters) { return canonicalStateHash(clusters); }') !== -1 &&
      appM.indexOf("t: 'grab-req'") !== -1 && appM.indexOf("t: 'drop'") !== -1 && appM.indexOf("t: 'sort'") !== -1,
      'MP配線: hooks が canonicalStateHash を使い、grab-req/drop/sort を送る');
   ok(appM.indexOf("if (mpInRoom() && mp.mode !== 'race') { mpSettleDrag(); return; }") !== -1 &&
      appM.indexOf('if (mpInRoom()) return; // 協力プレイはソロの進行中セーブと分離する') !== -1,
      'MP配線: settleDrag は協力/ターン制で seq 経路へ分岐し (レースはローカル確定)、persistProgress は協力中に無動作');
-  ok(appM.indexOf('mpGuestClear') !== -1 && appM.indexOf('rec.coop = true;') !== -1 &&
-     appM.indexOf('function mpFillResultExtras(') !== -1,
-     'MP配線: クリア記録はホストのみ coop 付きで保存し、ゲストは書かない');
+  ok(appM.indexOf('mpGuestClear') === -1 && appM.indexOf('rec.coop = true;') !== -1 &&
+     appM.indexOf('function mpFillResultExtras()') !== -1,
+     'MP配線: クリア記録は参加者全員が coop 付きで自分の store に保存する (旧・ゲスト抑止の分岐は廃止)');
   ok(appM.indexOf('function mpLoadPuzzle(') !== -1 && appM.indexOf('mp.session.setReady()') !== -1 &&
      appM.indexOf('function mpDoApplySnapshot(') !== -1 && appM.indexOf('function mpDrawOverlays(') !== -1,
      'MP配線: お題ロード + ready バリア、snapshot 適用、相手表示の重ね描きがある');
@@ -1658,7 +1658,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MPモード配線: レース終了後とターン制の非手番はクライアント側でも入力を止める');
   ok(appX.indexOf("rec.race = true;") !== -1 && appX.indexOf('function mpRaceShowResult() {') !== -1 &&
      appX.indexOf("mp.raceProgress[p.id] || 0) + '/' + mp.pieces") !== -1,
-     'MPモード配線: レース記録はホスト勝利時のみ race 付きで書き、結果は全員分を分数形式で出す');
+     'MPモード配線: レース記録は勝者 (ホスト/ゲスト共通) のみ race 付きで書き、敗者は結果だけ見て結果は全員分を分数形式で出す');
   ok(cssX.indexOf('#mpTurnBar') !== -1 && cssX.indexOf('#mpRaceBar') !== -1 && cssX.indexOf('#mpModeSeg') !== -1,
      'MPモード配線: style.css に手番バー・レース進捗バー・モード選択のスタイルがある');
 }
@@ -1681,6 +1681,170 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MPロビー: 描画は「？」を出し、画像は隠したまま裏で読み込む');
   ok(cssL.indexOf('.mp-lobby-ph') !== -1 && cssL.indexOf('.mp-img-ph') === -1,
      'MPロビー: プレースホルダのスタイルは .mp-lobby-ph に移り、旧 .mp-img-ph は残っていない');
+}
+
+/* マルチプレイ改善 #1 + #7: 記録の永続化・全員への記録/報酬・ロビー復帰導線
+ * (MP_IMPROVEMENTS_DESIGN #1 真因1/真因2 と #7) */
+{
+  const fsI = require('fs'), pathI = require('path');
+  const appI = fsI.readFileSync(pathI.join(__dirname, 'app.js'), 'utf8');
+  const cssI = fsI.readFileSync(pathI.join(__dirname, 'style.css'), 'utf8');
+  // onClear: 記録を書いたら無条件に saveStore する (永続化は onClear の責務)
+  const ocStart = appI.indexOf('function onClear() {');
+  const ocBody = appI.slice(ocStart, appI.indexOf('/* ---------- クリア結果の共有', ocStart));
+  ok(ocBody.indexOf('store.records.push(rec)') !== -1 &&
+     ocBody.indexOf('saveStore();') > ocBody.indexOf('store.records.push(rec)') &&
+     ocBody.indexOf('saveStore();') < ocBody.indexOf('persistProgress();'),
+     'MP改善#1: onClear は記録を書いた直後に無条件で saveStore する (再読み込みで消えない)');
+  ok(ocBody.indexOf('if (mpInRoom()) {') !== -1 && ocBody.indexOf('rec.coop = true;') !== -1 &&
+     ocBody.indexOf('mpIsHost') === -1,
+     'MP改善#7: coop 情報はホスト/ゲストを問わず部屋の全員の記録に付く');
+  ok(ocBody.indexOf('processRewardsOnClear(isFirstStageClear)') !== -1 &&
+     ocBody.indexOf('mpGuestClear') === -1,
+     'MP改善#7: 報酬処理はゲストでも通常どおり走る (自分の初回判定)');
+  // 注記文: 協力/ターンは全員に記録が付く文言、レース勝者はホスト/ゲスト共通
+  ok(appI.indexOf('みんなの記録になります') !== -1 && appI.indexOf('あなたの記録にもなります') !== -1 &&
+     appI.indexOf('あなたの記録・ごほうびはありません') === -1 &&
+     appI.indexOf('このクリアはホストの記録になります') === -1,
+     'MP改善#7: 結果画面の注記は「全員に記録が付く」文言に替わり、旧・ホストのみ文言は残っていない');
+  ok(appI.indexOf('レース：あなたの勝利です。このクリアはあなたの記録になります') !== -1 &&
+     appI.indexOf('ステージ記録は付きません（記録はホストが勝った時だけ付きます）') === -1,
+     'MP改善#7: レース勝者の注記はホスト/ゲスト共通で「あなたの記録になります」');
+  // ロビー復帰導線: mpBtn はセッションが生きていればロビーを開く
+  ok(appI.indexOf('if (mp.session) mpShowLobby();') !== -1,
+     'MP改善#1: スタート画面のボタンはセッションが生きていれば入口でなくロビーを開く');
+  ok(appI.indexOf("$('mpBadge').addEventListener('click'") !== -1 &&
+     appI.indexOf('if (mp.started && !mp.clearShown) return;') !== -1 &&
+     cssI.indexOf('pointer-events: auto; cursor: pointer;') !== -1,
+     'MP改善#1: 接続バッジはタップ可能で、対戦の合間だけロビーを開き直せる');
+  // ロビーを閉じても解散しない: mpCloseModalFromNav は mpLeaveRoom を呼ばない
+  const mcStart = appI.indexOf('function mpCloseModalFromNav() {');
+  const mcBody = appI.slice(mcStart, appI.indexOf('\n}', mcStart));
+  ok(mcBody.indexOf('mpLeaveRoom') === -1 && mcBody.indexOf("$('mpModal').hidden = true;") !== -1,
+     'MP改善#1: ロビー/入口を閉じても部屋は解散しない (退出は明示操作だけ)');
+  ok(appI.indexOf("$('mpLeaveBtn').addEventListener('click', function () { mpLeaveRoom(); });") !== -1,
+     'MP改善#1: ロビーの「部屋を出る」は明示的に mpLeaveRoom を呼ぶ');
+  // 結果画面を閉じても部屋に残る: navCloseLayer('result') の MP 分岐
+  const ncStart = appI.indexOf("else if (name === 'result') {");
+  const ncBody = appI.slice(ncStart, appI.indexOf("else if (name === 'collection')", ncStart));
+  ok(ncBody.indexOf('if (mpInRoom())') !== -1 && ncBody.indexOf('mpUpdateBadge();') !== -1 &&
+     ncBody.indexOf('goToStartScreen();') > ncBody.indexOf('mpUpdateBadge();'),
+     'MP改善#1: 結果画面を閉じても協力中はスタートへ戻らずプレイ画面に残る');
+  // next 適用時の saveStore 保険
+  const nxStart = appI.indexOf('function mpOnNextEvent(ev) {');
+  const nxBody = appI.slice(nxStart, appI.indexOf('\n}', nxStart));
+  ok(nxBody.indexOf('saveStore();') !== -1 && nxBody.indexOf('saveStore();') < nxBody.indexOf('mp.lobbyStage = ev.stage;'),
+     'MP改善#1: 「つぎのステージへ」の適用時にも saveStore の保険が走る');
+}
+
+/* マルチプレイ改善 #3 (改訂): パンは2本指のみ (1本指はピース専用)
+ * ユーザー判断で設計書の推奨 (吸着 B2 + C-lite) から差し替え。吸着は入れない */
+{
+  const fsP = require('fs'), pathP = require('path');
+  const appP = fsP.readFileSync(pathP.join(__dirname, 'app.js'), 'utf8');
+  ok(appP.indexOf('pressPending.carryTap || pressPending.isMouse') !== -1 &&
+     appP.indexOf('pressPending.moved = true;') !== -1,
+     'MP改善#3: 空き地の1本指ドラッグはパンに化けず、パン移行は持ち運び中とマウスだけに限る');
+  ok(appP.indexOf('!pp.moved') !== -1,
+     'MP改善#3: 大きく動かした空き地プレスはタップ扱いにもならない (選択解除しない)');
+  ok(appP.indexOf('panStart = { sx: rest.x') === -1,
+     'MP改善#3: ピンチから1本指に戻ってもパンへ移行しない');
+  ok(appP.indexOf("if (ev.pointerType === 'mouse') panStart = {") !== -1,
+     'MP改善#3: クリア後の盤面でもパンはマウスだけ1ボタン可 (タッチは2本指ピンチのみ)');
+  ok(appP.indexOf('pinch = {') !== -1 && appP.indexOf('clampZoom(pinch.scale0 * d / pinch.d0)') !== -1,
+     'MP改善#3: 2本指ピンチ (中心移動=パン + 間隔=ズーム) は現行どおり残る');
+  ok(appP.indexOf('机を動かすときは2本指でドラッグします') !== -1,
+     'MP改善#3: チュートリアルの文面が2本指パンに合わせてある');
+  ok(appP.indexOf('nearestCluster') === -1 && appP.indexOf('SNAP_GRAB') === -1,
+     'MP改善#3: 最寄りピース吸着 (B2) は今回入れていない (2本指案単独の効果を見る)');
+}
+
+/* マルチプレイ改善 #6: 協力/ターン制での範囲選択・一括移動 */
+{
+  const fsG = require('fs'), pathG = require('path');
+  const appG = fsG.readFileSync(pathG.join(__dirname, 'app.js'), 'utf8');
+  const mpG = fsG.readFileSync(pathG.join(__dirname, 'mp.js'), 'utf8');
+  ok(mpG.indexOf("case 'grab-group-req':") !== -1 && mpG.indexOf("case 'group-drop':") !== -1 &&
+     mpG.indexOf("'group-drop': 1") !== -1 && mpG.indexOf('var GROUP_GRAB_MAX = 64;') !== -1,
+     'MP改善#6: エンジンが grab-group/group-drop を検証し、group-drop はチェックサム対象・上限64塊');
+  ok(mpG.indexOf("t: 'grab-group', clusters:") !== -1 && mpG.indexOf('epochs[a] = (leaseEpochs[a] || 0) + 1;') !== -1,
+     'MP改善#6: grab-group-req は塊ごとの epoch を割り振って grab-group に変換される');
+  ok(appG.indexOf("t: 'grab-group-req', clusters: gAnchors") !== -1 &&
+     appG.indexOf("t: 'group-drop', leader: leader, items: items, order: order, epochs: epochs") !== -1 &&
+     appG.indexOf('function mpSettleGroupDrag()') !== -1 && appG.indexOf('function mpOnGroupDrop(ev)') !== -1 &&
+     appG.indexOf('function mpOnGrabGroup(ev)') !== -1,
+     'MP改善#6: グルーは一括掴み要求・一括確定・エコー待ち再送・決定論的適用を持つ');
+  ok(appG.indexOf('協力/ターン制では複数塊の移動は無効で') === -1 &&
+     appG.indexOf('if (inSelection && selection.size > 1) {') !== -1,
+     'MP改善#6: グループドラッグの生成はソロ/協力/ターン制で共通 (旧・無効化ゲートは撤去)');
+  ok(appG.indexOf("rej.evType === 'grab-group-req'") !== -1 && appG.indexOf("rej.evType === 'group-drop'") !== -1,
+     'MP改善#6: 一括掴み/一括移動の却下では全塊を掴み位置へ巻き戻す');
+  // applyClusterDrop の noSnap (追随塊用): グリッド吸着せず合体判定だけ行う。
+  // 1.4 は相対スナップ範囲 (0.35) の外なので、通常 drop はグリッド吸着 (→1)
+  // で初めて合体し、noSnap ではそのまま残って合体しない
+  const mkC = (pieces, gx, gy) => ({ pieces: pieces, surface: 'desk', gx: gx, gy: gy });
+  const b1 = [mkC([0], 0, 0), mkC([1], 5, 5)];
+  const ns = L.applyClusterDrop(b1, b1[1], 1.4, 0, 4, null, { noSnap: true });
+  ok(!ns.merged && ns.cluster.gx === 1.4 && ns.cluster.gy === 0,
+     'MP改善#6: noSnap ではグリッド吸着せず、正しい相対位置でなければ合体しない');
+  const b2 = [mkC([0], 0, 0), mkC([1], 5, 5)];
+  const sn = L.applyClusterDrop(b2, b2[1], 1.4, 0, 4, null);
+  ok(sn.merged && sn.clusters.length === 1,
+     'MP改善#6: 通常の drop は従来どおりグリッド吸着して合体する (noSnap は任意引数)');
+  const b3 = [mkC([0], 0, 0), mkC([1], 5, 5)];
+  const ex = L.applyClusterDrop(b3, b3[1], 1, 0, 4, null, { noSnap: true });
+  ok(ex.merged && ex.clusters.length === 1,
+     'MP改善#6: noSnap でも正確な相対位置なら合体する (追随塊の合体)');
+}
+
+/* マルチプレイ改善 #2: ゴースト補間・中継 coalesce・ping 集約・確定待ち枠 */
+{
+  const fsS = require('fs'), pathS = require('path');
+  const appS = fsS.readFileSync(pathS.join(__dirname, 'app.js'), 'utf8');
+  const mpS = fsS.readFileSync(pathS.join(__dirname, 'mp.js'), 'utf8');
+  ok(appS.indexOf('var MP_GHOST_INTERP_MS = 120;') !== -1 &&
+     appS.indexOf('function mpGhostPos(m, now)') !== -1 &&
+     appS.indexOf('fx: curM.x, fy: curM.y, tx: data.x, ty: data.y') !== -1,
+     'MP改善#2: ゴーストは最新位置へ即ジャンプせず 120ms 線形補間で描く (定数で A/B 切替)');
+  ok(mpS.indexOf('var EPH_COALESCE_MS = 33;') !== -1 &&
+     mpS.indexOf('function createEphCoalescer(send, intervalMs)') !== -1 &&
+     mpS.indexOf("ephCoalescer.push(gid, m.kind + ':' + fromPeer.playerId") !== -1 &&
+     mpS.indexOf('var EPH_COALESCE_KINDS = { move: 1, cursor: 1 };') !== -1,
+     'MP改善#2: ホスト中継は move/cursor を宛先別 coalesce し、ping 等は即時のまま');
+  const peStart = appS.indexOf("kind === 'ping' && data");
+  const peBody = appS.slice(peStart, appS.indexOf("kind === 'lobby'", peStart));
+  ok(peBody.indexOf('requestDraw();') !== -1 && peBody.indexOf(' draw();') === -1,
+     'MP改善#2: ping 受信も即時 draw でなく requestDraw に統一');
+  ok(appS.indexOf('sctx.setLineDash([6, 4]);') !== -1 &&
+     appS.indexOf('drag.mpGrabbed') !== -1 &&
+     appS.indexOf('mp.myLeases[clusterAnchorId(c)] == null') !== -1,
+     'MP改善#2: 自分の掴みが確定待ちの間は弱い破線枠で予告表示する');
+}
+
+/* マルチプレイ改善 #5: 履歴ガード (根での戻るは2回で離脱) */
+{
+  const fsH = require('fs'), pathH = require('path');
+  const appH = fsH.readFileSync(pathH.join(__dirname, 'app.js'), 'utf8');
+  const cssH = fsH.readFileSync(pathH.join(__dirname, 'style.css'), 'utf8');
+  ok(appH.indexOf("try { history.replaceState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ }") !== -1 &&
+     appH.indexOf("try { history.pushState({ djNav: 'start' }, ''); } catch (e) { /* ignore */ } // ガードエントリ") !== -1,
+     'MP改善#5: 起動時に根エントリ + ガードエントリを1枚余分に積む');
+  ok(appH.indexOf('function navHandleRootBack()') !== -1 &&
+     appH.indexOf('もう一度戻ると終了します') !== -1 &&
+     appH.indexOf('history.back(); // 離脱を許可する') !== -1,
+     'MP改善#5: 根での初回 popstate は積み直し + トースト、武装中の2回目で離脱を許可する');
+  const hpStart = appH.indexOf('function handlePopstate() {');
+  const hpBody = appH.slice(hpStart, appH.indexOf("var top = navTop();", hpStart));
+  ok(hpBody.indexOf('if (navStale > 0) { navStale--; return; }') !== -1 &&
+     hpBody.indexOf('navHandleRootBack();') > hpBody.indexOf('navStale--'),
+     'MP改善#5: 古エントリの消化 (navStale) が先で、消化し切った根 popstate だけがガード処理に入る');
+  const npStart = appH.indexOf('function navPush(name) {');
+  const npBody = appH.slice(npStart, appH.indexOf('\n}', npStart));
+  ok(npBody.indexOf('navExitArmed = false;') !== -1 && npBody.indexOf('navExitArmed = false;') < npBody.indexOf('navStack.push(name);'),
+     'MP改善#5: 画面遷移 (navPush) で離脱の武装は解除される');
+  ok(cssH.indexOf('overscroll-behavior: none;') !== -1 &&
+     cssH.indexOf('#stage { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none;') !== -1,
+     'MP改善#5: overscroll-behavior / touch-action の現行設定は維持されている');
 }
 
 /* レース進捗とターン進行 (PureLogic) */
