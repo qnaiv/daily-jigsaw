@@ -646,6 +646,22 @@ function sanitizePiecesMap(map, order, basePieces) {
   }
   return out;
 }
+/* BGM 同期の規範リスト (start / snapshot で配られる { seed, files, secs })
+ * の検証。形が崩れていたら同期そのものを無効化する (null) 側に倒す:
+ * 時間軸が端末ごとにずれるより、ローカル再生のほうがましなため。
+ * files はファイル名 (曲の同定)、secs は実測秒で、対の配列 */
+function sanitizeBgmSync(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  var files = raw.files, secs = raw.secs, seed = raw.seed;
+  if (!Array.isArray(files) || !Array.isArray(secs)) return null;
+  if (!files.length || files.length !== secs.length || files.length > 64) return null;
+  for (var i = 0; i < files.length; i++) {
+    if (typeof files[i] !== 'string' || !files[i]) return null;
+    if (typeof secs[i] !== 'number' || !isFinite(secs[i]) || secs[i] <= 0) return null;
+  }
+  if (typeof seed !== 'number' || !isFinite(seed)) return null;
+  return { seed: seed | 0, files: files.slice(), secs: secs.slice() };
+}
 /* コレクションタイルの装飾ティア: その絵の記録群の中で最も高いティア。
  * 盤面密度 (最大ピース数の記録 = topDifficultyRecord) とは分離する。
  * ハンデで非標準ピース数の記録が混ざると、最大ピース数の記録だけを
@@ -1159,6 +1175,63 @@ function crossfadeDuration(durationSec) {
   if (typeof durationSec !== 'number' || !isFinite(durationSec) || durationSec <= 0) return 0;
   var d = Math.min(BGM_FADE_SEC, durationSec / 4);
   return d >= 0.5 ? d : 0;
+}
+
+/* ---- BGM 同期 (マルチプレイ) の時間軸 (純粋ロジック) ----
+ * 対戦開始 (start イベント) の時点で、全端末が共有シードから同じ曲順を
+ * 決定的に作り、1曲目から再生を始める。以後の進行は各端末ローカルだが、
+ * 「開始からの経過秒 → 今どの曲の何秒目か」をこの関数で計算できるので、
+ * 途中参加・対戦中の BGM オン・タブ復帰のたびに通信なしで合流できる。
+ * - 曲順はシード付き rng の連続ストリームで一巡ごとに作る (bgmCycleOrder)。
+ *   ローカル再生の進み方 (bgmNextIndex の継ぎ目処理) と同じ作り方にする。
+ * - 1曲が時間軸を進める長さ (区間長) は、ローカル再生の実進み方に合わせる:
+ *   短い曲は trackPlays 回ぶん再生され、末尾は次曲とのクロスフェードぶん
+ *   だけ次曲の開始が前に倒れる (bgmSegmentSec)。
+ * - 曲の同定はファイル名ベースで、長さは規範リスト (ホストの実測秒) を
+ *   使う。端末が知らない曲も区間だけは数えるので、無音でやり過ごしても
+ *   時間軸は全端末で一致したままになる。 */
+function bgmSegmentSec(sec) {
+  if (typeof sec !== 'number' || !isFinite(sec) || sec <= 0) return 0;
+  return trackPlays(sec) * sec - crossfadeDuration(sec);
+}
+/* シードから cycle 世代目の一巡の曲順を返す (先行世代の末尾と重ならない
+ * 継ぎ目処理込み)。世代を進めるたびにシードから作り直すので、端末側は
+ * rng の途中状態を持たなくてよい */
+function bgmCycleOrder(count, seed, cycle) {
+  var rng = mulberry32(seed);
+  var order = [], last = -1;
+  for (var c = 0; c <= cycle; c++) {
+    order = nextShuffleOrder(count, rng, last);
+    if (order.length) last = order[order.length - 1];
+  }
+  return order;
+}
+/* 経過秒から現在の再生位置を返す: { index (secs の添字), offset (その曲の
+ * 再生開始からの秒。短い曲の2回目以降も含む), cycle, cyclePos, seqPos }。
+ * 長さが全て不明なリストでは時間軸が作れないので null を返す */
+function bgmTimelineAt(secs, seed, elapsedSec) {
+  if (!Array.isArray(secs) || !secs.length) return null;
+  var count = secs.length;
+  var elapsed = (typeof elapsedSec === 'number' && isFinite(elapsedSec) && elapsedSec > 0) ? elapsedSec : 0;
+  var rng = mulberry32(seed);
+  var last = -1, seqPos = 0;
+  for (var cycle = 0; cycle < 100000; cycle++) {
+    var order = nextShuffleOrder(count, rng, last);
+    if (order.length) last = order[order.length - 1];
+    var cycleTotal = 0, i;
+    for (i = 0; i < count; i++) cycleTotal += bgmSegmentSec(secs[order[i]]);
+    if (!(cycleTotal > 0)) return null;
+    if (elapsed >= cycleTotal) { elapsed -= cycleTotal; seqPos += count; continue; }
+    for (var j = 0; j < count; j++) {
+      var seg = bgmSegmentSec(secs[order[j]]);
+      if (elapsed < seg) {
+        return { index: order[j], offset: elapsed, cycle: cycle, cyclePos: j, seqPos: seqPos + j };
+      }
+      elapsed -= seg;
+    }
+    seqPos += count; // 浮動小数の端数で一周を取りこぼした場合は次周で拾う
+  }
+  return null;
 }
 
 /* 保存済み進捗が「開始済み」かどうか。
@@ -2107,7 +2180,7 @@ var PureLogic = {
   raceAllFinished: raceAllFinished,
   HANDICAP_LEVELS: HANDICAP_LEVELS, sanitizeHandicapLevel: sanitizeHandicapLevel,
   normalizeHandicap: normalizeHandicap, handicapPieces: handicapPieces,
-  racePiecesMap: racePiecesMap, sanitizePiecesMap: sanitizePiecesMap,
+  racePiecesMap: racePiecesMap, sanitizePiecesMap: sanitizePiecesMap, sanitizeBgmSync: sanitizeBgmSync,
   bestFrameTier: bestFrameTier, frameTierPieces: frameTierPieces,
   clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
@@ -2154,7 +2227,8 @@ var PureLogic = {
   pieceRelief: pieceRelief,
   BGM_SHORT_TRACK_SEC: BGM_SHORT_TRACK_SEC, isShortTrack: isShortTrack, trackPlays: trackPlays,
   shuffledOrder: shuffledOrder, nextShuffleOrder: nextShuffleOrder,
-  BGM_FADE_SEC: BGM_FADE_SEC, crossfadeCurve: crossfadeCurve, crossfadeDuration: crossfadeDuration
+  BGM_FADE_SEC: BGM_FADE_SEC, crossfadeCurve: crossfadeCurve, crossfadeDuration: crossfadeDuration,
+  bgmSegmentSec: bgmSegmentSec, bgmCycleOrder: bgmCycleOrder, bgmTimelineAt: bgmTimelineAt
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = PureLogic;
 
@@ -2487,26 +2561,40 @@ function onSeVolumeInput(value) {
  * なかった場合に備え、ユーザー操作のたびに再試行する (bgmTryPlay)。
  * 曲名と作者は、その曲が再生されている間ずっと右下へ小さく
  * 出しっぱなしにする (クレジット表示を兼ねる)。 */
+/* sec は実測の曲長 (秒)。マルチプレイの BGM 同期で「開始からの経過 →
+ * 現在の曲と位置」を計算する時間軸 (PureLogic bgmTimelineAt) に使う */
 var BGM_TRACKS = [
-  { file: 'meditation-impromptu-01.mp3', title: 'Meditation Impromptu 01', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
-  { file: 'meditation-impromptu-02.mp3', title: 'Meditation Impromptu 02', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
-  { file: 'meditation-impromptu-03.mp3', title: 'Meditation Impromptu 03', artist: 'Kevin MacLeod', license: 'CC BY 4.0' },
-  { file: 'when-time-called-me-darling.mp3', title: 'When Time Called Me Darling', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'still-life.mp3', title: 'Still Life', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'birds.mp3', title: 'Birds', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'one-night-in-france.mp3', title: 'One Night In France', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'break-from-reality.mp3', title: 'Break From Reality', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'orchid.mp3', title: 'Orchid', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'tranquil-mindscape.mp3', title: 'Tranquil Mindscape', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'wetlands.mp3', title: 'Wetlands', artist: 'HoliznaCC0', license: 'CC0' },
-  { file: 'let-it-happen.mp3', title: 'Let It Happen', artist: 'OtoLogic', license: 'CC BY 4.0' },
-  { file: 'in-that-mood.mp3', title: 'In That Mood', artist: 'OtoLogic', license: 'CC BY 4.0' }
+  { file: 'meditation-impromptu-01.mp3', title: 'Meditation Impromptu 01', artist: 'Kevin MacLeod', license: 'CC BY 4.0', sec: 212.8 },
+  { file: 'meditation-impromptu-02.mp3', title: 'Meditation Impromptu 02', artist: 'Kevin MacLeod', license: 'CC BY 4.0', sec: 249.1 },
+  { file: 'meditation-impromptu-03.mp3', title: 'Meditation Impromptu 03', artist: 'Kevin MacLeod', license: 'CC BY 4.0', sec: 255.2 },
+  { file: 'when-time-called-me-darling.mp3', title: 'When Time Called Me Darling', artist: 'HoliznaCC0', license: 'CC0', sec: 215.3 },
+  { file: 'still-life.mp3', title: 'Still Life', artist: 'HoliznaCC0', license: 'CC0', sec: 134.8 },
+  { file: 'birds.mp3', title: 'Birds', artist: 'HoliznaCC0', license: 'CC0', sec: 169.7 },
+  { file: 'one-night-in-france.mp3', title: 'One Night In France', artist: 'HoliznaCC0', license: 'CC0', sec: 194.8 },
+  { file: 'break-from-reality.mp3', title: 'Break From Reality', artist: 'HoliznaCC0', license: 'CC0', sec: 207.0 },
+  { file: 'orchid.mp3', title: 'Orchid', artist: 'HoliznaCC0', license: 'CC0', sec: 192.0 },
+  { file: 'tranquil-mindscape.mp3', title: 'Tranquil Mindscape', artist: 'HoliznaCC0', license: 'CC0', sec: 153.5 },
+  { file: 'wetlands.mp3', title: 'Wetlands', artist: 'HoliznaCC0', license: 'CC0', sec: 164.0 },
+  { file: 'let-it-happen.mp3', title: 'Let It Happen', artist: 'OtoLogic', license: 'CC BY 4.0', sec: 130.2 },
+  { file: 'in-that-mood.mp3', title: 'In That Mood', artist: 'OtoLogic', license: 'CC BY 4.0', sec: 133.4 },
+  { file: 'washed-up.mp3', title: 'Washed Up', artist: 'HoliznaCC0', license: 'CC0', sec: 234.6 },
+  { file: 'currents-we-used-to-know.mp3', title: 'Currents We Used to Know', artist: 'HoliznaCC0', license: 'CC0', sec: 202.4 },
+  { file: 'ocean-memory.mp3', title: 'Ocean Memory', artist: 'HoliznaCC0', license: 'CC0', sec: 150.8 },
+  { file: 'lullabies-for-the-end-of-the-world-3.mp3', title: 'Lullabies For The End Of The World #3', artist: 'HoliznaCC0', license: 'CC0', sec: 193.3 },
+  { file: 'traveling-in-your-mind.mp3', title: 'Traveling in Your Mind', artist: 'Loyalty Freak Music', license: 'CC0', sec: 236.6 },
+  { file: 'meanwhile.mp3', title: 'Meanwhile', artist: 'Scott Buckley', license: 'CC BY 4.0', sec: 325.8 },
+  { file: 'static.mp3', title: 'Static', artist: 'Scott Buckley', license: 'CC BY 4.0', sec: 248.9 },
+  { file: 'snowfall.mp3', title: 'Snowfall', artist: 'Scott Buckley', license: 'CC BY 4.0', sec: 248.4 }
 ];
 var bgm = {
   decks: [null, null], active: 0,
   order: [], pos: 0, current: -1,
   started: false, hiddenPaused: false, errorStreak: 0, dead: false,
-  fading: null, fadeTimer: null, watchTimer: null
+  fading: null, fadeTimer: null, watchTimer: null,
+  /* マルチプレイの BGM 同期: sync = 同期モード中 (曲順は規範リストの
+   * 位置で進む)、syncCycle = 現在の一巡の世代、syncSilenceTimer /
+   * syncSilenceNext = 知らない曲を無音でやり過ごすための待ち */
+  sync: false, syncCycle: 0, syncSilenceTimer: null, syncSilenceNext: null
 };
 /* Audio 要素は2つ (デッキ) を持ち回し、曲の切り替わりはクロスフェードにする。
  * デッキ: { audio, track (曲 index・未ロードは -1), playsLeft (短い曲の残り再生回数) } */
@@ -2515,9 +2603,15 @@ function bgmDeck(i) {
   var a = new Audio();
   a.preload = 'auto';
   a.volume = 0;
-  var deck = { audio: a, track: -1, playsLeft: 1 };
+  var deck = { audio: a, track: -1, playsLeft: 1, pendingSeek: null, pendingPlays: null };
   a.addEventListener('loadedmetadata', function () {
-    deck.playsLeft = trackPlays(a.duration); // 短い曲は 2 回 (長さ確定後に決める)
+    // 同期モードの途中合流では、シーク位置と残り再生回数が指定される
+    deck.playsLeft = deck.pendingPlays != null ? deck.pendingPlays : trackPlays(a.duration); // 短い曲は 2 回 (長さ確定後に決める)
+    deck.pendingPlays = null;
+    if (deck.pendingSeek != null) {
+      try { a.currentTime = deck.pendingSeek; } catch (e) { /* 未準備なら無視 */ }
+      deck.pendingSeek = null;
+    }
   });
   a.addEventListener('ended', function () {
     // 終端での切替は「フェード監視が間に合わなかった場合」の保険。
@@ -2602,22 +2696,149 @@ function bgmPlayTrack(idx) {
   bgmSetNowPlayingText();
   bgmPlayPromise(deck.audio.play());
 }
-/* シャッフル順の次の曲 index を返す (一巡したら直前と重ならない次の順列を作る) */
+/* シャッフル順の次の曲 index を返す (一巡したら直前と重ならない次の順列を作る)。
+ * 同期モードでは規範リストに対する位置を返し、一巡の作り直しも共有
+ * シードから決定的に作る (bgmCycleOrder)。呼び出し側でローカル index へ
+ * 変換する (bgmSyncLocalOf) */
 function bgmNextIndex() {
   bgm.pos++;
   if (bgm.pos >= bgm.order.length) {
-    bgm.order = nextShuffleOrder(BGM_TRACKS.length, Math.random, bgm.current);
+    if (bgm.sync && mp.bgmSync) {
+      bgm.syncCycle++;
+      bgm.order = bgmCycleOrder(mp.bgmSync.files.length, mp.bgmSync.seed, bgm.syncCycle);
+    } else {
+      bgm.order = nextShuffleOrder(BGM_TRACKS.length, Math.random, bgm.current);
+    }
     bgm.pos = 0;
   }
   return bgm.order[bgm.pos];
 }
 /* フェードなしの即時切替 (終端の保険・エラースキップ用) */
 function bgmAdvanceNow() {
+  if (bgm.syncSilenceNext != null) {
+    // 次が知らない曲だった: 現在の曲は終わっているので、その曲の
+    // 区間ぶんだけ無音でやり過ごしてから次へ進む
+    var sil = bgm.syncSilenceNext;
+    bgm.syncSilenceNext = null;
+    bgmEnterSilence(sil);
+    return;
+  }
   var idx = bgmNextIndex();
+  if (bgm.sync) { bgmStartCanonTrack(idx, 0); return; }
   var out = bgm.decks[bgm.active];
   if (out) out.audio.pause();
   bgm.active = 1 - bgm.active;
   bgmPlayTrack(idx);
+}
+
+/* ---- BGM 同期 (マルチプレイ) ----
+ * 進行の正は「start で配られた規範リスト + 共有シード + 開始時刻」だけ
+ * で、対戦中の追加通信は一切しない。位置合わせが要る場面 (開始・途中
+ * 参加・BGM の途中オン・タブ復帰) では bgmTimelineAt で現在位置を
+ * 計算し直して合流する (bgmSyncSeek)。オン/オフと音量は端末ローカルの
+ * まま (オフの間も時間軸は進み、オンにした瞬間に合流する)。
+ * mp は同じクロージャ内で後から宣言される var (参照は実行時のみ) */
+function bgmSyncActive() { return !!(mp.session && mp.started && mp.bgmSync); }
+function bgmSyncElapsed() {
+  return Math.max(0, (Date.now() - (mp.startedAt || Date.now())) / 1000);
+}
+var bgmFileIndex = null; // file -> ローカル BGM_TRACKS の index
+function bgmLocalIndexOfFile(file) {
+  if (!bgmFileIndex) {
+    bgmFileIndex = {};
+    BGM_TRACKS.forEach(function (t, i) { bgmFileIndex[t.file] = i; });
+  }
+  var v = bgmFileIndex[file];
+  return typeof v === 'number' ? v : -1;
+}
+/* 規範リストの位置 -> ローカル曲 index (知らない曲は -1) */
+function bgmSyncLocalOf(canonIdx) {
+  var sync = mp.bgmSync;
+  if (!sync) return -1;
+  return bgmLocalIndexOfFile(sync.files[canonIdx]);
+}
+/* アクティブデッキへ「その曲の再生開始から offset 秒」のシークを予約
+ * する (短い曲の2回目以降に入る場合は残り再生回数も割り引く) */
+function bgmSeekActiveDeck(offset, sec) {
+  var deck = bgm.decks[bgm.active];
+  if (!deck || !(sec > 0) || !(offset > 0)) return;
+  var consumed = Math.floor(offset / sec);
+  deck.pendingPlays = Math.max(1, trackPlays(sec) - consumed);
+  deck.pendingSeek = offset - consumed * sec;
+}
+/* 規範リストの曲を開始する。知らない曲はその区間の残りだけ無音で
+ * やり過ごす (時間軸はずらさない) */
+function bgmStartCanonTrack(canonIdx, offsetInSegment) {
+  var sync = mp.bgmSync;
+  if (!sync) return;
+  var local = bgmSyncLocalOf(canonIdx);
+  if (local < 0) {
+    bgmEnterSilence(bgmSegmentSec(sync.secs[canonIdx]) - (offsetInSegment || 0));
+    return;
+  }
+  bgmPlayTrack(local);
+  if (offsetInSegment > 0) bgmSeekActiveDeck(offsetInSegment, sync.secs[canonIdx]);
+}
+/* 無音区間: デッキを止め、sec 秒後に次の曲へ進む。タブが隠れている
+ * 間に期限が来ても進めない (表に戻ったときの位置合わせで復帰する) */
+function bgmEnterSilence(sec) {
+  bgmCancelFade();
+  bgmStopAll();
+  bgm.current = -1;
+  bgmHideNowPlaying();
+  if (!(sec > 0)) { bgmAdvanceNow(); return; }
+  bgm.syncSilenceTimer = setTimeout(function () {
+    bgm.syncSilenceTimer = null;
+    if (document.hidden) return;
+    bgmAdvanceNow();
+  }, Math.round(sec * 1000));
+}
+/* 現在位置を時間軸から計算し直して合流する (開始・途中参加・途中オン・
+ * タブ復帰の共通処理)。曲順の状態 (order / pos / 世代) もその位置に
+ * 合わせて組み直すので、以後のローカル進行も全端末で一致し続ける */
+function bgmSyncSeek(elapsedSec) {
+  var sync = mp.bgmSync;
+  if (!sync) return;
+  bgm.sync = true;
+  bgm.started = true;
+  if (!bgm.watchTimer) bgm.watchTimer = setInterval(bgmWatchTick, 250);
+  var tl = bgmTimelineAt(sync.secs, sync.seed, elapsedSec);
+  if (!tl) return;
+  bgm.order = bgmCycleOrder(sync.files.length, sync.seed, tl.cycle);
+  bgm.pos = tl.cyclePos;
+  bgm.syncCycle = tl.cycle;
+  // 既に同じ曲をほぼ同じ位置で再生中なら、読み直さず状態だけ合わせる
+  // (合流処理が短時間に重なっても曲が頭に戻らないように)
+  var local = bgmSyncLocalOf(tl.index);
+  var deck = bgm.decks[bgm.active];
+  if (local >= 0 && deck && deck.track === local && !deck.audio.paused && !bgm.fading) {
+    var sec = sync.secs[tl.index];
+    var inFile = tl.offset - Math.floor(tl.offset / sec) * sec;
+    if (Math.abs(deck.audio.currentTime - inFile) < 2) return;
+  }
+  bgmStartCanonTrack(tl.index, tl.offset);
+}
+/* 対戦への合流点: 鳴っているなら位置を合わせ直し、まだなら開始する
+ * (開始は bgmStart 側で同期シークへ分岐する) */
+function bgmSyncOnMatchStart() {
+  if (!mp.bgmSync || !bgmOn) return;
+  if (bgm.started) bgmSyncSeek(bgmSyncElapsed());
+  else bgmStart();
+}
+/* 同期モードを抜ける (ロビーへ戻る・部屋を出る)。再生中の曲は止めず、
+ * 曲順だけローカルの作り直しに切り替える */
+function bgmSyncExit() {
+  if (bgm.syncSilenceTimer) { clearTimeout(bgm.syncSilenceTimer); bgm.syncSilenceTimer = null; }
+  bgm.syncSilenceNext = null;
+  if (!bgm.sync) return;
+  bgm.sync = false;
+  bgm.syncCycle = 0;
+  bgm.order = nextShuffleOrder(BGM_TRACKS.length, Math.random, -1);
+  var p = bgm.current >= 0 ? bgm.order.indexOf(bgm.current) : -1;
+  if (p >= 0) { bgm.pos = p; return; }
+  bgm.pos = 0;
+  // 無音区間の途中で抜けたら、ローカルの先頭曲から鳴らし直す
+  if (bgmOn && bgm.started && !bgmOnTitle()) bgmPlayTrack(bgm.order[0]);
 }
 /* ---- クロスフェード ----
  * 監視タイマ (250ms) が「その曲の最後の再生 (短い曲の 2 回目含む) の
@@ -2627,6 +2848,7 @@ function bgmAdvanceNow() {
  * 次のティックから自然に反映される。 */
 function bgmWatchTick() {
   if (!bgm.started || bgm.fading || bgm.dead || !bgmOn || document.hidden || bgmOnTitle()) return;
+  if (bgm.syncSilenceNext != null) return; // 次が知らない曲: フェードせず自然な終了 (→ 無音区間) を待つ
   var deck = bgm.decks[bgm.active];
   if (!deck || deck.audio.paused || deck.playsLeft > 1) return;
   var fade = crossfadeDuration(deck.audio.duration);
@@ -2637,6 +2859,16 @@ function bgmStartFade(fadeSec) {
   var inIdx = 1 - bgm.active;
   var inDeck = bgmDeck(inIdx);
   var idx = bgmNextIndex();
+  if (bgm.sync) {
+    var local = bgmSyncLocalOf(idx);
+    if (local < 0) {
+      // 次が知らない曲: フェード先が無いのでフェードはしない。現在の
+      // 曲が終わった時点でその区間ぶんの無音に入る (bgmAdvanceNow)
+      bgm.syncSilenceNext = mp.bgmSync ? bgmSegmentSec(mp.bgmSync.secs[idx]) : 0;
+      return;
+    }
+    idx = local;
+  }
   bgmLoadDeck(inDeck, idx);
   bgm.current = idx; // クレジットはフェード開始 (新曲が主役になる時点) で切り替える
   bgmSetNowPlayingText();
@@ -2679,6 +2911,8 @@ function bgmCancelFade() {
 function bgmStopAll() {
   if (bgm.fadeTimer) { clearInterval(bgm.fadeTimer); bgm.fadeTimer = null; }
   bgm.fading = null;
+  if (bgm.syncSilenceTimer) { clearTimeout(bgm.syncSilenceTimer); bgm.syncSilenceTimer = null; }
+  bgm.syncSilenceNext = null;
   bgm.decks.forEach(function (d) { if (d) d.audio.pause(); });
 }
 /* タイトル画面 (スタート画面) では、まだ一度も BGM が流れていない
@@ -2691,6 +2925,7 @@ function bgmOnTitle() { return uiHome && !uiWall && !bgm.started; }
  * ジェスチャごとの再試行 (bgmTryPlay) から。タイトル画面では開始しない */
 function bgmStart() {
   if (bgm.started || !bgmOn || bgmOnTitle()) return;
+  if (bgmSyncActive()) { bgmSyncSeek(bgmSyncElapsed()); return; }
   bgm.started = true;
   bgm.order = nextShuffleOrder(BGM_TRACKS.length, Math.random, -1);
   bgm.pos = 0;
@@ -2707,6 +2942,7 @@ function bgmTryPlay() {
   if (bgm.fading) return;
   var deck = bgm.decks[bgm.active];
   if (!deck || document.hidden || !deck.audio.paused) return;
+  if (bgmSyncActive()) { bgmSyncSeek(bgmSyncElapsed()); return; } // 対戦中は止まった位置でなく共有位置から合流する
   deck.audio.volume = bgmVolume;
   bgmPlayPromise(deck.audio.play());
 }
@@ -2725,13 +2961,15 @@ function bgmApplySettings() {
     // 全曲読めなかった状態からの明示的な再試行 (オンに戻す操作自体を合図にする)
     bgm.dead = false;
     bgm.errorStreak = 0;
-    if (!bgmOnTitle()) bgmPlayTrack(bgm.current >= 0 ? bgm.current : 0);
+    if (bgmSyncActive()) bgmSyncSeek(bgmSyncElapsed()); // 対戦中は共有位置から再試行する
+    else if (!bgmOnTitle()) bgmPlayTrack(bgm.current >= 0 ? bgm.current : 0);
   } else if (!bgm.started) {
     bgmStart(); // 設定の操作自体がユーザー操作。ただしタイトル画面では bgmStart 側で止まる
   } else if (!bgm.fading) {
     var d2 = bgm.decks[bgm.active];
     if (d2 && d2.audio.paused && !document.hidden && !bgmOnTitle()) {
-      bgmPlayPromise(d2.audio.play()); // オフ→オンに戻したら再開する
+      if (bgmSyncActive()) bgmSyncSeek(bgmSyncElapsed()); // オフ→オンは止めた位置でなく共有位置から合流する
+      else bgmPlayPromise(d2.audio.play()); // オフ→オンに戻したら再開する
     }
   }
 }
@@ -2753,9 +2991,14 @@ document.addEventListener('visibilitychange', function () {
   } else if (bgm.hiddenPaused) {
     bgm.hiddenPaused = false;
     if (bgmOn && !bgmOnTitle()) {
+      if (bgmSyncActive()) { bgmSyncSeek(bgmSyncElapsed()); return; } // 対戦中は裏にいた時間ぶん進んだ共有位置へ
       var deck = bgm.decks[bgm.active];
       if (deck) bgmPlayPromise(deck.audio.play());
     }
+  } else if (bgmSyncActive() && bgmOn && !bgmOnTitle()) {
+    // 無音区間 (知らない曲) の間にタブが隠れていた場合: 一時停止の
+    // 対象が無かったので hiddenPaused は立っていない。位置だけ合わせ直す
+    bgmSyncSeek(bgmSyncElapsed());
   }
 });
 /* タブが隠れている間はブラウザがオフスクリーン canvas の実体を落とす
@@ -8050,6 +8293,7 @@ var mp = {
   turnOrder: [], turnIdx: 0, leftPlayers: {}, matchPlayers: [],
   raceProgress: {}, raceWinner: null, finishSent: false,
   raceFinish: {}, raceDone: false, // レース完走集計: playerId -> { rank, elapsedSec } / 全員完走 (or 残り全員退出) の確定
+  bgmSync: null, // BGM 同期の規範リスト { seed, files, secs } (start / snapshot で配られる)
   lobbyStage: null, lobbyPieces: null, lobbyInfo: null, lobbyStatus: '',
   peers: [], verifyCode: null,
   myLeases: {},          // anchorId -> epoch (自分に付与されたリース)
@@ -8179,6 +8423,7 @@ var mpHooksObj = {
       leftPlayers: mp.leftPlayers,
       raceProgress: mp.raceProgress, raceWinner: mp.raceWinner,
       raceFinish: mp.raceFinish, raceDone: mp.raceDone,
+      bgmSync: mp.bgmSync, // 途中参加者も同じ曲順・同じ位置で合流できるように
       cleared: !!(state && state.cleared)
     };
   },
@@ -8467,6 +8712,8 @@ function mpResetState() {
   mp.pendingGroupGrab = null; mp.pendingGroupDrop = null; mp.lastGroupDropAnchors = null; mp.remoteGroups = {};
   mp.cursors = {}; mp.movesEph = {}; mp.pins = []; mp.pinMode = false;
   mp.stage = null; mp.pieces = null; mp.basePieces = null; mp.piecesMap = null; mp.lobbyInfo = null;
+  mp.bgmSync = null;
+  bgmSyncExit(); // 部屋を出たらローカル再生に戻る (再生中の曲は止めない)
   mp.clearShown = false; mp.completeSent = false; mp.pendingGrabAnchor = null; mp.lastDropAnchor = null;
   mpSyncPieceIdsHook();
   $('mpPinBtn').classList.remove('active');
@@ -8993,6 +9240,12 @@ function mpOnStartEvent(ev) {
   mp.raceFinish = {};
   mp.raceDone = false;
   mp.finishSent = false;
+  // BGM 同期: 規範リストを受け取り、既に鳴っているなら開始時点からの
+  // 経過位置へ切り替える。まだ鳴っていない場合は盤面ロード後の
+  // bgmTryPlay → bgmStart が同期シークへ分岐する。オフの端末は何も
+  // しない (時間軸は startedAt から計算できるので途中オンで合流できる)
+  mp.bgmSync = sanitizeBgmSync(ev.bgmSync);
+  if (mp.bgmSync && bgmOn && bgm.started) bgmSyncSeek(bgmSyncElapsed());
   mpLoadPuzzle(ev.stage, mp.pieces); // 自分の実効ピース数で自分の盤面を組む
 }
 /* 「つぎのステージへ」: 即開始せずロビーへ戻る。ステージだけ +1 された
@@ -9010,6 +9263,8 @@ function mpOnNextEvent(ev) {
   mp.raceDone = false;
   mp.finishSent = false;
   mp.raceProgress = {};
+  mp.bgmSync = null;
+  bgmSyncExit(); // ロビーはローカル扱い: 曲は止めず、曲順だけローカルへ戻す
   mp.turnIdx = 0;
   mp.leftPlayers = {};
   mp.remoteGroups = {};
@@ -9397,6 +9652,7 @@ function mpOnComplete() {
 function mpApplySnapshot(snap) {
   if (!snap) return;
   if (snap.mode) mp.mode = snap.mode;
+  if (snap.bgmSync) mp.bgmSync = sanitizeBgmSync(snap.bgmSync); // BGM 同期の規範リストも復元する (盤面ロード後の合流に使う)
   // レースのハンデ: 再読込の判定と読込は「自分の実効ピース数」基準にする
   // (snap.pieces はホスト本人のピース数なので、ハンデがあると永遠に
   // 一致せず、他人のピース数で盤面を作ってしまう)
@@ -9423,6 +9679,7 @@ function mpApplySnapshot(snap) {
 }
 function mpDoApplySnapshot(snap) {
   if (!state) return;
+  bgmSyncOnMatchStart(); // 途中参加・再入室の合流では BGM も共有位置へ合わせる (再読込の有無によらない)
   if (snap.turnOrder) mpSetMatchFromOrder(snap.turnOrder);
   if (typeof snap.turnIdx === 'number') mp.turnIdx = snap.turnIdx;
   if (snap.leftPlayers) mp.leftPlayers = snap.leftPlayers;
@@ -9908,7 +10165,15 @@ $('mpStartBtn').addEventListener('click', function () {
   var payload = {
     stage: mp.lobbyStage, pieces: mp.lobbyPieces, startedAt: Date.now(),
     mode: mp.lobbyMode, // モードは start で確定し、部屋の間は固定
-    order: order
+    order: order,
+    // BGM 同期: 規範リスト (ファイル名 + 実測秒) と共有シードを配る。
+    // 全端末がこのシードで同じ曲順を決定的に作り、startedAt からの
+    // 経過で現在位置を計算する (対戦中の追加通信はなし)
+    bgmSync: {
+      seed: Math.floor(Math.random() * 4294967296),
+      files: BGM_TRACKS.map(function (t) { return t.file; }),
+      secs: BGM_TRACKS.map(function (t) { return t.sec; })
+    }
   };
   if (mp.lobbyMode === 'race') {
     // レースだけハンデを確定させる: 全員分の段階から実効ピース数を

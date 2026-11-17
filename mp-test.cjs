@@ -1088,6 +1088,68 @@ console.log('[13] レースのハンデ');
   eq(host.progress.g1, 99, 'ハンデ: next 後は piecesMap の上限が効かない');
 }
 
+/* ================= 14. BGM 同期 (規範リストの配布) =================
+ * BGM 同期は「start で規範リスト + シードを配る」だけが通信で、進行の
+ * 同期通信は無い。ここでは start の追加フィールドが全端末へ同一に届き、
+ * snapshot 経由でも途中参加者へ渡ることをエンジン層で保証する */
+console.log('[14] BGM 同期 (start / snapshot の規範リスト配布)');
+{
+  const SYNC = {
+    seed: 424242,
+    files: ['a.mp3', 'b.mp3', 'c.mp3'],
+    secs: [212.8, 134.8, 60]
+  };
+  function makeBgmClient() {
+    const client = { starts: [], snaps: [] };
+    client.hooks = {
+      getClusters: () => [{ anchorId: 0, pieces: [0], gx: 0, gy: 0 }],
+      clusterExists: () => true,
+      applyEvent: ev => { if (ev.t === 'start') client.starts.push(ev); },
+      getSnapshot: () => ({ clusters: client.hooks.getClusters(), bgmSync: SYNC }),
+      applySnapshot: snap => { client.snaps.push(snap); },
+      allPieceIds: () => [0],
+      hashState: () => 0,
+      deskBounds: () => ({ x0: -100, y0: -100, x1: 100, y1: 100 }),
+      logicVersion: 5, poolFingerprint: 't'
+    };
+    return client;
+  }
+  const host = makeBgmClient(), g1 = makeBgmClient(), g2 = makeBgmClient();
+  const clients = { host, g1, g2 };
+  function wireBgm(client, role, id) {
+    client.engine = MP.createEngine({
+      role, hooks: client.hooks,
+      net: role === 'host' ? {
+        broadcast: m => { g1.engine.receiveFromHost(JSON.parse(JSON.stringify(m))); g2.engine.receiveFromHost(JSON.parse(JSON.stringify(m))); },
+        sendTo: (pid, m) => clients[pid].engine.receiveFromHost(JSON.parse(JSON.stringify(m)))
+      } : { sendToHost: m => host.engine.receive(id, JSON.parse(JSON.stringify(m))) }
+    });
+  }
+  wireBgm(host, 'host'); wireBgm(g1, 'guest', 'g1'); wireBgm(g2, 'guest', 'g2');
+  host.engine.addPlayer('g1', 1, 1);
+  host.engine.addPlayer('g2', 2, 1);
+
+  host.engine.hostControl({ t: 'start', stage: 3, pieces: 36, mode: 'coop',
+    order: ['host', 'g1', 'g2'], bgmSync: SYNC });
+  const sameSync = c => c.starts.length === 1 &&
+    JSON.stringify(c.starts[0].bgmSync) === JSON.stringify(SYNC);
+  ok(sameSync(host), 'BGM同期: ホストの start に規範リストが載る');
+  ok(sameSync(g1), 'BGM同期: ゲスト1へ同じ規範リストが届く');
+  ok(sameSync(g2), 'BGM同期: ゲスト2へ同じ規範リストが届く (全端末で同じシード・同じ曲順になる)');
+
+  // 途中参加: snapshot にも規範リストが同梱され、開始時刻 (startedAt) と
+  // 合わせて合流位置を計算できる形で渡る
+  g2.engine.requestSnapshot();
+  ok(g2.snaps.length === 1 && JSON.stringify(g2.snaps[0].bgmSync) === JSON.stringify(SYNC),
+     'BGM同期: snapshot にも規範リストが同梱され途中参加者へ渡る');
+
+  // bgmSync を持たない start (旧ホスト) でも対戦は通常どおり始まる (追加型)
+  host.engine.hostControl({ t: 'next', stage: 4 });
+  host.engine.hostControl({ t: 'start', stage: 4, pieces: 36, mode: 'coop', order: ['host', 'g1', 'g2'] });
+  ok(g1.starts.length === 2 && g1.starts[1].bgmSync === undefined,
+     'BGM同期: 規範リストの無い start はそのまま通る (旧端末は無視できる追加型)');
+}
+
 MP.encodeManualCode({ v: 1, kind: 'offer', sdp: 'dummy-sdp' }).then(codeStr => {
   ok(/^[gr]\./.test(codeStr), '手動コードに接頭辞が付く');
   return MP.decodeManualCode(codeStr);

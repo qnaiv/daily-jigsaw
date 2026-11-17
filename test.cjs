@@ -836,6 +836,103 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.crossfadeDuration(1) === 0 && L.crossfadeDuration(NaN) === 0, 'フェード長: 極端に短い/不明な曲はフェードなし');
 }
 
+/* BGM 同期 (マルチプレイ) の時間軸: 共有シードで全端末が同じ曲順になり、
+ * 「開始からの経過秒 → 現在の曲と位置」が純関数で一致する。区間長は
+ * ローカル再生の進み方 (短い曲は2回・末尾はフェードぶん前倒し) と一致
+ * させる。途中参加・途中オン・タブ復帰はこの計算で合流する */
+{
+  const SECS13 = [212.8, 249.1, 255.2, 215.3, 134.8, 169.7, 194.8, 207.0, 192.0, 153.5, 164.0, 130.2, 133.4];
+  // 区間長
+  ok(Math.abs(L.bgmSegmentSec(212.8) - 209.8) < 1e-9, 'BGM同期: 区間長は曲長 − フェード (長い曲)');
+  ok(L.bgmSegmentSec(60) === 117, 'BGM同期: 短い曲の区間は 2 回ぶん − フェード');
+  ok(L.bgmSegmentSec(1.5) === 3, 'BGM同期: フェードできない極短曲は 2 回ぶんそのまま');
+  ok(L.bgmSegmentSec(0) === 0 && L.bgmSegmentSec(-5) === 0 && L.bgmSegmentSec(NaN) === 0, 'BGM同期: 長さ不明の区間は 0');
+  // 曲順の決定性 (同じシード → 全端末で同じ曲順)
+  ok(eq(L.bgmCycleOrder(13, 42, 0), L.bgmCycleOrder(13, 42, 0)), 'BGM同期: 同じシードの0周目は一致する');
+  ok(eq(L.bgmCycleOrder(13, 42, 3), L.bgmCycleOrder(13, 42, 3)), 'BGM同期: 同じシードの3周目も一致する');
+  ok(!eq(L.bgmCycleOrder(13, 42, 0), L.bgmCycleOrder(13, 43, 0)), 'BGM同期: シードが違えば曲順も変わる');
+  let permOk = true, seamOk2 = true;
+  for (let seed = 1; seed <= 60; seed++) {
+    for (let c = 0; c < 4; c++) {
+      const o = L.bgmCycleOrder(13, seed, c);
+      if (o.length !== 13 || new Set(o).size !== 13) permOk = false;
+      if (c > 0 && L.bgmCycleOrder(13, seed, c - 1)[12] === o[0]) seamOk2 = false;
+    }
+  }
+  ok(permOk, 'BGM同期: どの周も全曲1回ずつの順列 (60シード×4周)');
+  ok(seamOk2, 'BGM同期: 一巡の継ぎ目で同じ曲が連続しない (60シード×4周)');
+  ok(eq(L.bgmCycleOrder(1, 42, 5), [0]), 'BGM同期: 1曲だけなら常に [0]');
+  // 時間軸: 先頭と境界
+  const ord0 = L.bgmCycleOrder(13, 42, 0);
+  const t0 = L.bgmTimelineAt(SECS13, 42, 0);
+  ok(t0.index === ord0[0] && t0.offset === 0 && t0.cycle === 0 && t0.cyclePos === 0 && t0.seqPos === 0, 'BGM同期: 経過0は1曲目の頭');
+  const seg0 = L.bgmSegmentSec(SECS13[ord0[0]]);
+  const tMid = L.bgmTimelineAt(SECS13, 42, seg0 / 2);
+  ok(tMid.index === ord0[0] && Math.abs(tMid.offset - seg0 / 2) < 1e-9, 'BGM同期: 区間の中ほどは同じ曲の途中');
+  const tNext = L.bgmTimelineAt(SECS13, 42, seg0);
+  ok(tNext.index === ord0[1] && tNext.offset === 0 && tNext.cyclePos === 1, 'BGM同期: 区間の境目は次曲の頭');
+  const tNeg = L.bgmTimelineAt(SECS13, 42, -30);
+  ok(tNeg.index === ord0[0] && tNeg.offset === 0, 'BGM同期: 負の経過は0として扱う');
+  // 時間軸と「ローカル進行の歩行」が一致する (3周ぶんを細かくサンプル)
+  {
+    let walkOk = true;
+    const totalCycle = SECS13.reduce((s, v) => s + L.bgmSegmentSec(v), 0);
+    for (let t = 0; t < totalCycle * 3; t += 137.31) {
+      // 歩行: 周と区間を前から積み上げて同じ t の位置を独立に求める
+      let rest = t, expect = null;
+      for (let c = 0; c < 4 && !expect; c++) {
+        const o = L.bgmCycleOrder(13, 42, c);
+        for (let j = 0; j < 13; j++) {
+          const sg = L.bgmSegmentSec(SECS13[o[j]]);
+          if (rest < sg) { expect = { index: o[j], offset: rest, cycle: c, cyclePos: j }; break; }
+          rest -= sg;
+        }
+      }
+      const got = L.bgmTimelineAt(SECS13, 42, t);
+      if (!expect || !got || got.index !== expect.index || got.cycle !== expect.cycle ||
+          got.cyclePos !== expect.cyclePos || Math.abs(got.offset - expect.offset) > 1e-6) walkOk = false;
+    }
+    ok(walkOk, 'BGM同期: 時間軸は曲順の歩行と3周ぶん一致する (途中参加・途中オンの合流位置)');
+  }
+  // 短い曲を含むリスト: offset は2回目の再生にも入る
+  {
+    const secsS = [60, 200, 45];
+    const oS = L.bgmCycleOrder(3, 7, 0);
+    const first = oS[0], segF = L.bgmSegmentSec(secsS[first]);
+    const tIn = L.bgmTimelineAt(secsS, 7, segF - 0.5);
+    ok(tIn.index === first && Math.abs(tIn.offset - (segF - 0.5)) < 1e-9, 'BGM同期: 短い曲リストでも区間内を指す');
+    if (secsS[first] < 90) {
+      const tSecond = L.bgmTimelineAt(secsS, 7, secsS[first] + 5);
+      ok(tSecond.index === first && Math.abs(tSecond.offset - (secsS[first] + 5)) < 1e-9, 'BGM同期: 短い曲は offset が曲長を超えて2回目に入る');
+    }
+  }
+  // 長さ0の曲は時間軸に現れない / 全て不明なら null
+  {
+    const secsZ = [100, 0, 120];
+    let zeroSeen = false;
+    for (let t = 0; t < 400; t += 7.7) {
+      const p = L.bgmTimelineAt(secsZ, 3, t);
+      if (p && p.index === 1) zeroSeen = true;
+    }
+    ok(!zeroSeen, 'BGM同期: 長さ0の曲は時間軸に現れない (区間0として読み飛ばす)');
+    ok(L.bgmTimelineAt([0, 0], 3, 10) === null, 'BGM同期: 全曲長さ不明なら null');
+    ok(L.bgmTimelineAt([], 3, 10) === null, 'BGM同期: 空リストなら null');
+  }
+  // 規範リストの検証
+  {
+    const good = L.sanitizeBgmSync({ seed: 123, files: ['a.mp3', 'b.mp3'], secs: [10, 20] });
+    ok(good && good.seed === 123 && eq(good.files, ['a.mp3', 'b.mp3']) && eq(good.secs, [10, 20]), 'BGM同期: 規範リストの正常形は通る');
+    ok(L.sanitizeBgmSync(null) === null && L.sanitizeBgmSync({}) === null, 'BGM同期: 欠けた規範リストは無効');
+    ok(L.sanitizeBgmSync({ seed: 1, files: ['a.mp3'], secs: [10, 20] }) === null, 'BGM同期: files/secs の長さ不一致は無効');
+    ok(L.sanitizeBgmSync({ seed: 1, files: [], secs: [] }) === null, 'BGM同期: 空の規範リストは無効');
+    ok(L.sanitizeBgmSync({ seed: 1, files: ['a.mp3'], secs: [0] }) === null, 'BGM同期: 長さ0以下の曲を含むリストは無効');
+    ok(L.sanitizeBgmSync({ seed: 1, files: ['a.mp3'], secs: [NaN] }) === null, 'BGM同期: 長さ NaN は無効');
+    ok(L.sanitizeBgmSync({ seed: 1, files: [42], secs: [10] }) === null, 'BGM同期: ファイル名が文字列でなければ無効');
+    ok(L.sanitizeBgmSync({ seed: NaN, files: ['a.mp3'], secs: [10] }) === null, 'BGM同期: シード NaN は無効');
+    ok(L.sanitizeBgmSync({ seed: 7.9, files: ['a.mp3'], secs: [10] }).seed === 7, 'BGM同期: シードは整数化される');
+  }
+}
+
 /* 24. 箱タップの分岐 (id 20: つづきがあっても箱を出す) */
 {
   ok(L.boxTapAction(null) === 'open', '箱タップ: 進捗なしは新規オープン');
@@ -1498,7 +1595,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v48'") !== -1, 'sw: VERSION は v48');
+  ok(swSB.indexOf("VERSION = 'v49'") !== -1, 'sw: VERSION は v49');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -2209,6 +2306,52 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appR.indexOf("mp.session.sendEvent({ t: 'finish' });") === -1 &&
      appR.indexOf('あなたの記録は付きません') === -1,
      'レース完走配線: 旧・勝者のみ仕様の文言と finish 送信は残っていない');
+}
+
+/* マルチプレイ: BGM 同期の配線 (開始時に同じセットリストを全員で始める。
+ * 進行共有はシード + 開始時刻 + 時間軸の純関数のみで、対戦中の同期通信
+ * (ハートビート相乗り・ホストのスケジューラ共有) は存在しない) */
+{
+  const fsB = require('fs'), pathB = require('path');
+  const appB = fsB.readFileSync(pathB.join(__dirname, 'app.js'), 'utf8');
+  const mpB = fsB.readFileSync(pathB.join(__dirname, 'mp.js'), 'utf8');
+  // 規範リストの実データ: 全曲に実測秒が付き、合計は全曲ぶん (約71分)
+  const tbStart = appB.indexOf('var BGM_TRACKS = [');
+  const tbBlock = appB.slice(tbStart, appB.indexOf('];', tbStart));
+  const secVals = [];
+  tbBlock.replace(/sec: ([0-9.]+)/g, function (m, v) { secVals.push(Number(v)); return m; });
+  const fileCount = (tbBlock.match(/file: '/g) || []).length;
+  ok(fileCount === 21 && secVals.length === 21 && secVals.every(function (v) { return v > 0; }),
+     'BGM同期配線: BGM_TRACKS の全21曲に実測秒 (sec) が付いている');
+  const secSum = secVals.reduce(function (s, v) { return s + v; }, 0);
+  ok(secSum > 4200 && secSum < 4300, 'BGM同期配線: 実測秒の合計が全曲ぶん (約71分) になっている');
+  // start ペイロードに規範リスト + シードが載る
+  ok(appB.indexOf('files: BGM_TRACKS.map(function (t) { return t.file; })') !== -1 &&
+     appB.indexOf('secs: BGM_TRACKS.map(function (t) { return t.sec; })') !== -1 &&
+     appB.indexOf('seed: Math.floor(Math.random() * 4294967296)') !== -1,
+     'BGM同期配線: start に規範リスト (ファイル名+実測秒) と共有シードが載る');
+  // 受信側は検証してから使い、既に鳴っているなら開始経過の位置へ切り替える
+  ok(appB.indexOf('mp.bgmSync = sanitizeBgmSync(ev.bgmSync);') !== -1 &&
+     appB.indexOf('if (mp.bgmSync && bgmOn && bgm.started) bgmSyncSeek(bgmSyncElapsed());') !== -1,
+     'BGM同期配線: start の受信で規範リストを検証し、再生中なら共有位置へ切り替える');
+  // snapshot にも同梱され、途中参加・再入室で復元される
+  ok(appB.indexOf('bgmSync: mp.bgmSync,') !== -1 &&
+     appB.indexOf('if (snap.bgmSync) mp.bgmSync = sanitizeBgmSync(snap.bgmSync);') !== -1 &&
+     appB.indexOf('bgmSyncOnMatchStart();') !== -1,
+     'BGM同期配線: snapshot に規範リストが同梱され、合流時に復元して位置を合わせる');
+  // 開始・途中オン・タブ復帰はすべて「共有位置へのシーク」に分岐する
+  ok(appB.indexOf('if (bgmSyncActive()) { bgmSyncSeek(bgmSyncElapsed()); return; }') !== -1 &&
+     appB.indexOf('if (bgmSyncActive()) bgmSyncSeek(bgmSyncElapsed());') !== -1,
+     'BGM同期配線: bgmStart / 再開 / 設定オン / タブ復帰が共有位置シークへ分岐する');
+  // ロビー復帰・退出で同期を抜ける (曲は止めない)
+  ok(appB.indexOf('bgmSyncExit(); // ロビーはローカル扱い') !== -1 &&
+     appB.indexOf('bgmSyncExit(); // 部屋を出たらローカル再生に戻る') !== -1,
+     'BGM同期配線: ロビー復帰と退出で同期モードを抜ける');
+  // 旧方式 (定期同期通信) が入っていないこと: mp.js は BGM に一切触れず、
+  // ephemeral の種別にも BGM は無い
+  ok(mpB.indexOf('bgm') === -1 && appB.indexOf("kind === 'bgm'") === -1 &&
+     appB.indexOf("sendEphemeral('bgm'") === -1 && appB.indexOf('bgmHeartbeat') === -1,
+     'BGM同期配線: ハートビート相乗り等の定期同期通信は存在しない (mp.js は BGM 無関係)');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
