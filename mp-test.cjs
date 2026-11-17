@@ -349,6 +349,156 @@ console.log('[9] リース中の塊の消失防止 (実 PureLogic + 実グルー
   hashesEq();
 }
 
+/* ================= 10. 貢献度: 新しくつながったピース数だけを数える ================= */
+console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
+{
+  const L = require('./app.js');
+  const PIECES = 16, N = 4, DATE = '2026-11-11';
+  const anchorOf = c => L.clusterAnchorId(c);
+  function makeClient() {
+    const client = { engine: null, state: { clusters: L.initialScatter(DATE, PIECES) }, contrib: {} };
+    client.hooks = {
+      getClusters: () => client.state.clusters.map(c => ({ anchorId: anchorOf(c), pieces: c.pieces.slice(), gx: c.gx, gy: c.gy })),
+      clusterExists: id => client.state.clusters.some(c => anchorOf(c) === id),
+      applyEvent: ev => {
+        if (ev.t !== 'drop') return;
+        const cl = client.state.clusters.find(c => anchorOf(c) === ev.cluster);
+        if (!cl) throw new Error('no cluster');
+        // app.js mpOnDrop と同じ適用経路 + 同じ貢献度計算 (適用側で数える)
+        const before = cl.pieces.length;
+        const res = L.applyClusterDrop(client.state.clusters, cl, ev.x, ev.y, N,
+          c => !!client.engine.getLease(anchorOf(c)));
+        client.state.clusters = res.clusters;
+        if (res.merged) client.contrib[ev.from] = (client.contrib[ev.from] || 0) + L.contribForDrop(before, res.cluster.pieces.length);
+      },
+      getSnapshot: () => ({ clusters: JSON.parse(JSON.stringify(client.hooks.getClusters())) }),
+      applySnapshot: snap => { client.state.clusters = snap.clusters.map(c => ({ pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy })); },
+      allPieceIds: () => Array.from({ length: PIECES }, (_, i) => i),
+      hashState: cs => L.canonicalStateHash(cs),
+      deskBounds: () => ({ x0: -100, y0: -100, x1: 100, y1: 100 }),
+      logicVersion: 1, poolFingerprint: 't'
+    };
+    return client;
+  }
+  const host = makeClient(), guest = makeClient();
+  host.engine = MP.createEngine({
+    role: 'host', hooks: host.hooks,
+    net: {
+      broadcast: m => guest.engine.receiveFromHost(JSON.parse(JSON.stringify(m))),
+      sendTo: (id, m) => guest.engine.receiveFromHost(JSON.parse(JSON.stringify(m)))
+    }
+  });
+  guest.engine = MP.createEngine({
+    role: 'guest', hooks: guest.hooks,
+    net: { sendToHost: m => host.engine.receive('g1', JSON.parse(JSON.stringify(m))) }
+  });
+  host.engine.addPlayer('g1', 1, 1);
+
+  function doDrop(engine, mover, x, y) {
+    const anchor = anchorOf(mover);
+    engine.request({ t: 'grab-req', cluster: anchor });
+    const lease = engine.getLease(anchor);
+    if (!lease) throw new Error('grab failed: ' + anchor);
+    engine.request({ t: 'drop', cluster: anchor, epoch: lease.epoch, x, y });
+  }
+  // mover のピース p が、他塊のピース q と正しい隣 (p の home + d = q の home) に
+  // なるような drop 座標を返す。無ければ null
+  function adjoinCoord(clusters, mover, targetCluster) {
+    const pos = L.piecePositions(clusters, N);
+    for (const p of mover.pieces) {
+      const hp = L.pieceHome(p, N);
+      for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const qc = hp.col + d[0], qr = hp.row + d[1];
+        if (qc < 0 || qr < 0 || qc >= N || qr >= N) continue;
+        const q = qr * N + qc;
+        const B = clusters.find(cc => cc.pieces.includes(q));
+        if (!B || B === mover) continue;
+        if (targetCluster && B !== targetCluster) continue;
+        const qp = pos.get(q);
+        if (!qp) continue;
+        const anch = L.pieceHome(anchorOf(mover), N);
+        return { x: qp.gx - d[0] - (hp.col - anch.col), y: qp.gy - d[1] - (hp.row - anch.row), other: B };
+      }
+    }
+    return null;
+  }
+  const contribSum = c => Object.values(c.contrib).reduce((s, v) => s + v, 0);
+  const contribEq = () => eq(JSON.stringify(host.contrib), JSON.stringify(guest.contrib), '貢献度が両端末で一致');
+
+  // (b) バラ同士の合体: +1
+  let firstPair = null;
+  for (const c of host.state.clusters) { const r = adjoinCoord(host.state.clusters, c, null); if (r) { firstPair = { mover: c, coord: r }; break; } }
+  ok(!!firstPair, '隣接するバラ同士が見つかる');
+  doDrop(host.engine, firstPair.mover, firstPair.coord.x, firstPair.coord.y);
+  eq(host.contrib.host || 0, 1, 'バラ同士の合体でホスト +1');
+  contribEq();
+
+  // (b) バラ1つを2ピースの塊へ: +1 (旧公式なら +2 になる水増しケース)
+  const twoCluster = host.state.clusters.find(c => c.pieces.length === 2);
+  ok(!!twoCluster, '2ピースの塊ができている');
+  let attach = null;
+  for (const c of host.state.clusters) {
+    if (c.pieces.length !== 1) continue;
+    const r = adjoinCoord(host.state.clusters, c, twoCluster);
+    if (r) { attach = { mover: c, coord: r }; break; }
+  }
+  ok(!!attach, '2ピースの塊に付けられるバラがある');
+  doDrop(guest.engine, attach.mover, attach.coord.x, attach.coord.y);
+  eq(guest.contrib.g1 || 0, 1, 'バラを2ピースの塊へ付けてもゲスト +1 (付けた先のサイズは数えない)');
+  contribEq();
+
+  // (a) 合体しない移動だけの drop: +0
+  const hostBefore = host.contrib.host || 0;
+  const single = host.state.clusters.find(c => c.pieces.length === 1);
+  const countBefore = host.state.clusters.length;
+  doDrop(host.engine, single, single.gx + 5.5, single.gy + 4.5);
+  eq(host.state.clusters.length, countBefore, '遠くへの drop では合体しない');
+  eq(host.contrib.host || 0, hostBefore, '移動だけの drop は貢献度 +0');
+  contribEq();
+
+  // 残りを解き切る (本体が大きい手を優先し、小さい方を付ける = 終盤型の遊び方)
+  function findMergeMove(clusters) {
+    const pos = L.piecePositions(clusters, N);
+    let best = null;
+    for (const c of clusters) {
+      for (const p of c.pieces) {
+        const hp = L.pieceHome(p, N);
+        for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const qc = hp.col + d[0], qr = hp.row + d[1];
+          if (qc < 0 || qr < 0 || qc >= N || qr >= N) continue;
+          const q = qr * N + qc;
+          const B = clusters.find(cc => cc.pieces.includes(q));
+          if (!B || B === c) continue;
+          const qp = pos.get(q), pp = pos.get(p);
+          if (!qp || !pp) continue;
+          const hq = L.pieceHome(q, N);
+          const anchC = L.pieceHome(anchorOf(c), N);
+          const cx = qp.gx - d[0] - (hp.col - anchC.col), cy = qp.gy - d[1] - (hp.row - anchC.row);
+          const anchB = L.pieceHome(anchorOf(B), N);
+          const bx = pp.gx + d[0] - (hq.col - anchB.col), by = pp.gy + d[1] - (hq.row - anchB.row);
+          const cand = c.pieces.length <= B.pieces.length ? { move: c, target: B, x: cx, y: cy } : { move: B, target: c, x: bx, y: by };
+          if (!best || cand.target.pieces.length > best.target.pieces.length) best = cand;
+        }
+      }
+    }
+    return best;
+  }
+  let turn = 0, guard = 0;
+  while (host.state.clusters.length > 1 && guard++ < 40) {
+    const mv = findMergeMove(host.state.clusters);
+    if (!mv) break;
+    doDrop(turn % 2 === 0 ? guest.engine : host.engine, mv.move, mv.x, mv.y);
+    turn++;
+  }
+  eq(host.state.clusters.length, 1, '16ピースを最後まで解き切れる');
+  // (c) 合計が妥当な範囲 (旧公式では同じ遊び方で 100 超にもなる)
+  const totalContrib = contribSum(host);
+  ok(totalContrib >= PIECES - 1 && totalContrib <= PIECES * 2,
+    '貢献度の合計が妥当な範囲 (実: ' + totalContrib + ' / 16ピース)');
+  contribEq();
+  eq(guest.hooks.hashState(guest.hooks.getClusters()), host.hooks.hashState(host.hooks.getClusters()), '最終状態のハッシュが一致');
+}
+
 /* ================= 7. ユーティリティ ================= */
 console.log('[7] ユーティリティ');
 {

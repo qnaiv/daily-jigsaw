@@ -515,6 +515,20 @@ function applyClusterDrop(clusters, cl, x, y, n, isLeased) {
   return { clusters: res.clusters.concat(excluded), cluster: res.cluster, merged: res.merged };
 }
 
+/* 協力プレイの貢献度 (§3.9): その drop で「新しくつながった」ピース数。
+ * 動かした塊 (movedSize) と、吸収した側の合計 (resultSize - movedSize) の
+ * うち小さい側が、その drop で新たに相手とつながったピース数になる。
+ * 大きい側はその drop 以前からつながっていた塊なので数えない。
+ * (吸収側をそのまま数えると、本体にバラピースを1つ付けるたびに本体の
+ * 全ピース数が加算され、16ピースでも合計100を超える水増しになる)
+ * 合体が無い (resultSize <= movedSize) なら 0。全端末が seq 順に適用した
+ * drop の前後サイズから同一に計算できる。 */
+function contribForDrop(movedSize, resultSize) {
+  var absorbed = resultSize - movedSize;
+  if (absorbed <= 0) return 0;
+  return Math.min(movedSize, absorbed);
+}
+
 /* 範囲選択: 矩形 (セル座標・正規化済み {x0,y0,x1,y1}、x0<x1, y0<y1 前提) と
  * 交差するピースを持つ塊を返す。ピースの矩形は [gx, gx+1] × [gy, gy+1] で、
  * 辺だけが接する場合は交差とみなさない。 */
@@ -1864,7 +1878,7 @@ var PureLogic = {
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
   canonicalStateHash: canonicalStateHash,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
-  absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop,
+  absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop, contribForDrop: contribForDrop,
   clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
   clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
@@ -8203,7 +8217,8 @@ function mpOnDrop(ev) {
   state.clusters = res.clusters;
   state.moves++;
   if (res.merged) {
-    mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + (res.cluster.pieces.length - before);
+    // 貢献度は「その drop で新しくつながったピース数」だけ (contribForDrop)
+    mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + contribForDrop(before, res.cluster.pieces.length);
     startMergeFlash(res.cluster.pieces);
     seMerge();
   }

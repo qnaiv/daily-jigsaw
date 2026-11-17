@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v36'") !== -1, 'sw: VERSION は v36');
+  ok(swSB.indexOf("VERSION = 'v37'") !== -1, 'sw: VERSION は v37');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1593,6 +1593,20 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: お題ロード + ready バリア、snapshot 適用、相手表示の重ね描きがある');
   ok(cssM.indexOf('#mpBadge') !== -1 && cssM.indexOf('.mp-pin-btn') !== -1 && cssM.indexOf('.mp-roster') !== -1,
      'MP配線: style.css にバッジ・ピンボタン・名簿のスタイルがある');
+  ok(appM.indexOf('contribForDrop(before, res.cluster.pieces.length)') !== -1,
+     'MP配線: 貢献度は mpOnDrop の適用側で contribForDrop により数える (送信者の自己申告にしない)');
+}
+
+/* 貢献度 contribForDrop: その drop で新しくつながったピース数だけを数える */
+{
+  ok(L.contribForDrop(1, 1) === 0, '貢献度: 合体なし (移動だけ) は 0');
+  ok(L.contribForDrop(3, 3) === 0, '貢献度: サイズ不変は 0');
+  ok(L.contribForDrop(1, 2) === 1, '貢献度: バラ同士の合体は 1');
+  ok(L.contribForDrop(1, 16) === 1, '貢献度: バラ1つを本体15へ付けても 1 (本体の全ピース数は数えない)');
+  ok(L.contribForDrop(15, 16) === 1, '貢献度: 本体15をバラ1つへ付けても 1 (向きに依らない)');
+  ok(L.contribForDrop(8, 16) === 8, '貢献度: 半分同士の合体は 8');
+  ok(L.contribForDrop(2, 5) === 2, '貢献度: 2ピースの塊が3ピースを吸収 (チェーン) しても 2');
+  ok(L.contribForDrop(5, 11) === 5, '貢献度: 5ピースの塊が6ピースを吸収しても 5');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
