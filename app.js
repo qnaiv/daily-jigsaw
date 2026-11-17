@@ -1830,6 +1830,35 @@ function buildShareText(res) {
     GAME_URL + '\n#まいにちジグソー';
 }
 
+/* 部屋コードの文字種 (Crockford Base32、mp.js の生成と同じ並び。I/L/O/U は含まない) */
+var ROOM_CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+/* 招待リンクの ?room=<コード> を取り出す。形式が正しい (6文字・上記文字種のみ) 場合だけ
+ * コードを返し、パラメータなし・長さ違い・不正な文字なら null を返す (呼び出し側は黙って通常起動)。
+ * 大文字小文字は区別しない (コードは大文字にそろえる) */
+function inviteRoomCode(search) {
+  if (!search) return null;
+  var q = String(search);
+  if (q.charAt(0) === '?') q = q.slice(1);
+  var parts = q.split('&'), raw = null;
+  for (var i = 0; i < parts.length; i++) {
+    var eq = parts[i].indexOf('=');
+    if (eq > 0 && parts[i].slice(0, eq) === 'room') { raw = parts[i].slice(eq + 1); break; }
+  }
+  if (raw == null) return null;
+  var code;
+  try { code = decodeURIComponent(raw); } catch (e) { return null; }
+  code = code.trim().toUpperCase();
+  if (code.length !== 6) return null;
+  for (var j = 0; j < code.length; j++) {
+    if (ROOM_CODE_ALPHABET.indexOf(code.charAt(j)) < 0) return null;
+  }
+  return code;
+}
+/* 招待リンクの組み立て。ドメインは直書きせず、開いているページの origin + pathname を使う */
+function buildInviteUrl(origin, pathname, code) {
+  return origin + pathname + '?room=' + code;
+}
+
 /* 壁アイテムの配置 uid の次番号 ('u' + 数字)。既存の最大値 + 1 を返す */
 function nextWallItemUid(placed) {
   var max = 0;
@@ -1873,6 +1902,7 @@ var PureLogic = {
   isEdgePiece: isEdgePiece, formatTime: formatTime,
   elapsedSeconds: elapsedSeconds, sanitizeClearTime: sanitizeClearTime,
   GAME_URL: GAME_URL, buildShareText: buildShareText,
+  ROOM_CODE_ALPHABET: ROOM_CODE_ALPHABET, inviteRoomCode: inviteRoomCode, buildInviteUrl: buildInviteUrl,
   UI_THEME_IDS: UI_THEME_IDS, normalizeUiTheme: normalizeUiTheme,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   boxTapAction: boxTapAction,
@@ -7978,12 +8008,40 @@ function mpCreateRoom() {
   mpHideHomeError();
   mpStartSession(window.JigsawMP.createRoom(mpHooksObj, mpCallbacks(), {}), 'host');
 }
-function mpJoinRoom() {
+function mpJoinRoom(codeArg) {
   if (!window.JigsawMP) { mpHomeError('マルチプレイを読み込めませんでした'); return; }
-  var code = $('mpJoinCode').value.trim();
+  var code = (typeof codeArg === 'string' ? codeArg : $('mpJoinCode').value).trim();
   if (!code) { mpHomeError('部屋コードを入力してください'); return; }
   mpHideHomeError();
   mpStartSession(window.JigsawMP.joinRoom(code, mpHooksObj, mpCallbacks(), {}), 'guest');
+}
+/* 自分の部屋への招待リンク (開くだけで参加できる URL) */
+function mpInviteUrl() {
+  return buildInviteUrl(location.origin, location.pathname, mp.code);
+}
+/* URL から room パラメータだけを取り除く (他のパラメータとハッシュは残す)。
+ * リロードで古い部屋へ再入室しないための掃除で、履歴の状態 (djNav) はそのまま引き継ぐ */
+function mpClearRoomParam() {
+  try {
+    var params = new URLSearchParams(location.search);
+    if (!params.has('room')) return;
+    params.delete('room');
+    var qs = params.toString();
+    history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+  } catch (e) { /* ignore */ }
+}
+/* 招待リンク (?room=<コード>) で開かれたら、その部屋へ自動で入室を始める。
+ * ブート完了後 (プール読み込み後) に1回だけ呼ばれる。入室を始めたら true を返す。
+ * 形式が不正なパラメータは黙って無視し、通常起動に任せる (false) */
+function mpTryInviteJoin() {
+  var code = inviteRoomCode(location.search);
+  if (!code || !window.JigsawMP) return false;
+  mpClearRoomParam(); // 入室を開始したらパラメータは消す
+  mpShowHome();
+  $('mpModal').hidden = false;
+  navPush('mp');
+  mpJoinRoom(code);
+  return true;
 }
 /* 手動コード (仲介B、2人専用) */
 function mpManualHostStart() {
@@ -8520,14 +8578,15 @@ $('mpManualAcceptBtn').addEventListener('click', mpManualAccept);
 $('mpLeaveBtn').addEventListener('click', function () { navBack(); });
 $('mpCopyCodeBtn').addEventListener('click', function () {
   if (!mp.code) return;
+  var url = mpInviteUrl();
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(mp.code).then(function () { showToast('部屋コードをコピーしました'); },
-      function () { showToast('部屋コード: ' + mp.code); });
-  } else showToast('部屋コード: ' + mp.code);
+    navigator.clipboard.writeText(url).then(function () { showToast('招待リンクをコピーしました'); },
+      function () { showToast('招待リンク: ' + url); });
+  } else showToast('招待リンク: ' + url);
 });
 $('mpShareCodeBtn').addEventListener('click', function () {
   if (!mp.code) return;
-  var text = 'まいにちジグソーで一緒に遊ぼう！ 部屋コード: ' + mp.code + ' https://daily-jigsaw.pages.dev';
+  var text = 'まいにちジグソーで一緒に遊ぼう！ このリンクを開くとそのまま参加できます\n' + mpInviteUrl();
   if (navigator.share) {
     navigator.share({ text: text }).catch(function () { /* キャンセルは無視 */ });
   } else if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -8699,7 +8758,9 @@ fetch('data/images.json')
     applyTheme();
     migrateProgressToStages(pool);
     startGame(pool);
-    setTimeout(function () { maybeTourAuto('start'); }, 600); // 初回だけスタート画面のツアー
+    // 招待リンク (?room=) で開かれた場合は自動で入室を始める (その場合はツアーを出さない)
+    var invited = mpTryInviteJoin();
+    if (!invited) setTimeout(function () { maybeTourAuto('start'); }, 600); // 初回だけスタート画面のツアー
     resizeStage();
   })
   .catch(function () {

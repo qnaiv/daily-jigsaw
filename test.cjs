@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v38'") !== -1, 'sw: VERSION は v38');
+  ok(swSB.indexOf("VERSION = 'v39'") !== -1, 'sw: VERSION は v39');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1599,6 +1599,46 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: 旧・ピース数方式の contribForDrop は廃止され参照が残っていない');
   ok(appM.indexOf("' 回接続</span>") !== -1 && appM.indexOf('ピース接続') === -1,
      'MP配線: クリア画面の貢献ラベルは回数表記 (○○ 回接続)');
+  ok(appM.indexOf('function mpJoinRoom(codeArg)') !== -1 &&
+     appM.indexOf('function mpTryInviteJoin(') !== -1 &&
+     appM.indexOf('var invited = mpTryInviteJoin();') !== -1 &&
+     appM.indexOf("if (!invited) setTimeout(function () { maybeTourAuto('start'); }, 600);") !== -1,
+     'MP配線: 招待リンクの自動入室がブート完了後 (プール読み込み後) に組み込まれ、入室時はツアーを出さない');
+  ok(appM.indexOf('function mpClearRoomParam(') !== -1 &&
+     appM.indexOf("params.delete('room')") !== -1 &&
+     appM.indexOf('history.replaceState(history.state') !== -1,
+     'MP配線: 入室開始時に room パラメータだけを replaceState で URL から消す');
+  ok(appM.indexOf('function mpInviteUrl(') !== -1 &&
+     appM.indexOf('buildInviteUrl(location.origin, location.pathname, mp.code)') !== -1 &&
+     appM.indexOf('このリンクを開くとそのまま参加できます') !== -1 &&
+     appM.indexOf("部屋コード: ' + mp.code + ' https://daily-jigsaw.pages.dev'") === -1 &&
+     appM.indexOf('招待リンクをコピーしました') !== -1,
+     'MP配線: ロビーの共有/コピーはコード単体でなく招待リンク (origin + pathname + ?room=) を渡す');
+  ok(htmlM.indexOf('招待リンクをコピー') !== -1 && htmlM.indexOf('id="mpRoomCode"') !== -1,
+     'MP配線: コピーボタンは招待リンク用ラベルになり、大きな部屋コード表示は残る');
+}
+
+/* 招待リンク: ?room= パラメータ解析と URL 組み立て (PureLogic) */
+{
+  ok(L.inviteRoomCode('?room=ABC123') === 'ABC123', '招待: 正常なコードを取り出す');
+  ok(L.inviteRoomCode('?debug=1&room=XYZ789') === 'XYZ789', '招待: 他のパラメータがあっても room を拾う');
+  ok(L.inviteRoomCode('room=ABC123&x=1') === 'ABC123', '招待: 先頭の ? がなくてもよい');
+  ok(L.inviteRoomCode('?room=abc123') === 'ABC123', '招待: 小文字は大文字にそろえる');
+  ok(L.inviteRoomCode('?room=ABCI23') === null, '招待: Crockford にない文字 (I) は不正');
+  ok(L.inviteRoomCode('?room=ABCO23') === null, '招待: Crockford にない文字 (O) は不正');
+  ok(L.inviteRoomCode('?room=ABC12!') === null, '招待: 記号を含むコードは不正');
+  ok(L.inviteRoomCode('?room=ABC12') === null, '招待: 5文字は長さ違いで不正');
+  ok(L.inviteRoomCode('?room=ABC1234') === null, '招待: 7文字は長さ違いで不正');
+  ok(L.inviteRoomCode('?room=') === null, '招待: 空のコードは不正');
+  ok(L.inviteRoomCode('') === null && L.inviteRoomCode('?') === null &&
+     L.inviteRoomCode('?foo=bar') === null && L.inviteRoomCode(null) === null,
+     '招待: パラメータなしは null (通常起動)');
+  ok(L.buildInviteUrl('https://daily-jigsaw.pages.dev', '/', 'ABC123') ===
+     'https://daily-jigsaw.pages.dev/?room=ABC123',
+     '招待: URL は origin + pathname + ?room=コード で組む');
+  ok(L.buildInviteUrl('http://localhost:8931', '/index.html', 'XYZ789') ===
+     'http://localhost:8931/index.html?room=XYZ789',
+     '招待: pathname が /index.html の環境でもそのまま組む');
 }
 
 /* 貢献度: くっつける操作の回数 = その drop で消えた塊の数
