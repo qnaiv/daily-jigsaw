@@ -515,20 +515,6 @@ function applyClusterDrop(clusters, cl, x, y, n, isLeased) {
   return { clusters: res.clusters.concat(excluded), cluster: res.cluster, merged: res.merged };
 }
 
-/* 協力プレイの貢献度 (§3.9): その drop で「新しくつながった」ピース数。
- * 動かした塊 (movedSize) と、吸収した側の合計 (resultSize - movedSize) の
- * うち小さい側が、その drop で新たに相手とつながったピース数になる。
- * 大きい側はその drop 以前からつながっていた塊なので数えない。
- * (吸収側をそのまま数えると、本体にバラピースを1つ付けるたびに本体の
- * 全ピース数が加算され、16ピースでも合計100を超える水増しになる)
- * 合体が無い (resultSize <= movedSize) なら 0。全端末が seq 順に適用した
- * drop の前後サイズから同一に計算できる。 */
-function contribForDrop(movedSize, resultSize) {
-  var absorbed = resultSize - movedSize;
-  if (absorbed <= 0) return 0;
-  return Math.min(movedSize, absorbed);
-}
-
 /* 範囲選択: 矩形 (セル座標・正規化済み {x0,y0,x1,y1}、x0<x1, y0<y1 前提) と
  * 交差するピースを持つ塊を返す。ピースの矩形は [gx, gx+1] × [gy, gy+1] で、
  * 辺だけが接する場合は交差とみなさない。 */
@@ -1878,7 +1864,7 @@ var PureLogic = {
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
   canonicalStateHash: canonicalStateHash,
   snapToGrid: snapToGrid, findRelativeSnap: findRelativeSnap, isComplete: isComplete,
-  absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop, contribForDrop: contribForDrop,
+  absorbMerges: absorbMerges, applyClusterDrop: applyClusterDrop,
   clustersInRect: clustersInRect, shiftClusters: shiftClusters,
   scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
   clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
@@ -7593,7 +7579,7 @@ var mp = {
   pendingGrabAnchor: null, lastDropAnchor: null,
   pendingDrops: {},      // epoch 未確定のまま離した drop {anchorId -> {x, y}} (複数溜まっても上書きしない)
   pendingRelease: {},    // anchorId -> true (epoch 未確定のまま離した tap)
-  contrib: {},           // playerId -> その人の drop で接続したピース数 (§3.9)
+  contrib: {},           // playerId -> その人の drop でくっつけた回数 (合体した塊の数) (§3.9)
   completeSent: false, clearShown: false,
   cursors: {},           // playerId -> {x, y, holding, at} (セル座標)
   movesEph: {},          // playerId -> {cluster, x, y, at} (ドラッグ中ゴースト)
@@ -8207,7 +8193,7 @@ function mpLeaseBlocked(cl) {
 function mpOnDrop(ev) {
   var cl = mpClusterByAnchor(ev.cluster);
   if (!cl) throw new Error('mp: drop 先の塊がありません');
-  var before = cl.pieces.length;
+  var clustersBefore = state.clusters.length;
   var engine = mp.session && mp.session.engine;
   // リース中の塊は合体先に含めない (§3.5)。除外した塊は盤面に残すこと
   // (applyClusterDrop が戻し忘れを防ぐ。全端末で同じ判定・同じ並びになる)
@@ -8217,8 +8203,10 @@ function mpOnDrop(ev) {
   state.clusters = res.clusters;
   state.moves++;
   if (res.merged) {
-    // 貢献度は「その drop で新しくつながったピース数」だけ (contribForDrop)
-    mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + contribForDrop(before, res.cluster.pieces.length);
+    // 貢献度は「くっつける操作の回数」= その drop で消えた塊の数だけ数える
+    // (大同士の合体も +1、チェーンで2塊取り込めば +2。ピース数は数えない
+    // ので、完走時の全員合計は必ず ピース数 - 1 になる) (§3.9)
+    mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + (clustersBefore - state.clusters.length);
     startMergeFlash(res.cluster.pieces);
     seMerge();
   }
@@ -8489,7 +8477,7 @@ function mpFillResultExtras(guestClear) {
   mpContribPlayers().forEach(function (p) {
     html += '<li><span class="mp-dot" style="background:' + (MP_COLORS[p.color] || '#999') + '"></span><span>' +
       escapeHtml(p.name) + (p.id === mpMyId() ? '（あなた）' : '') + '</span>' +
-      '<span class="mp-peer-state">' + (mp.contrib[p.id] || 0) + ' ピース接続</span></li>';
+      '<span class="mp-peer-state">' + (mp.contrib[p.id] || 0) + ' 回接続</span></li>';
   });
   html += '</ul>';
   box.innerHTML = html;

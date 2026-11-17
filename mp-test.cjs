@@ -349,7 +349,7 @@ console.log('[9] リース中の塊の消失防止 (実 PureLogic + 実グルー
   hashesEq();
 }
 
-/* ================= 10. 貢献度: 新しくつながったピース数だけを数える ================= */
+/* ================= 10. 貢献度: くっつける操作の回数だけを数える ================= */
 console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
 {
   const L = require('./app.js');
@@ -365,11 +365,12 @@ console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
         const cl = client.state.clusters.find(c => anchorOf(c) === ev.cluster);
         if (!cl) throw new Error('no cluster');
         // app.js mpOnDrop と同じ適用経路 + 同じ貢献度計算 (適用側で数える)
-        const before = cl.pieces.length;
+        // 貢献度 = その drop で消えた塊の数 (適用前後の塊数の差分)
+        const clustersBefore = client.state.clusters.length;
         const res = L.applyClusterDrop(client.state.clusters, cl, ev.x, ev.y, N,
           c => !!client.engine.getLease(anchorOf(c)));
         client.state.clusters = res.clusters;
-        if (res.merged) client.contrib[ev.from] = (client.contrib[ev.from] || 0) + L.contribForDrop(before, res.cluster.pieces.length);
+        if (res.merged) client.contrib[ev.from] = (client.contrib[ev.from] || 0) + (clustersBefore - client.state.clusters.length);
       },
       getSnapshot: () => ({ clusters: JSON.parse(JSON.stringify(client.hooks.getClusters())) }),
       applySnapshot: snap => { client.state.clusters = snap.clusters.map(c => ({ pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy })); },
@@ -393,6 +394,21 @@ console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
     net: { sendToHost: m => host.engine.receive('g1', JSON.parse(JSON.stringify(m))) }
   });
   host.engine.addPlayer('g1', 1, 1);
+  // エンジン再生成 (レート制限のバケツやリースを持ち越さずシナリオを分離する)
+  function wireEngines() {
+    host.engine = MP.createEngine({
+      role: 'host', hooks: host.hooks,
+      net: {
+        broadcast: m => guest.engine.receiveFromHost(JSON.parse(JSON.stringify(m))),
+        sendTo: (id, m) => guest.engine.receiveFromHost(JSON.parse(JSON.stringify(m)))
+      }
+    });
+    guest.engine = MP.createEngine({
+      role: 'guest', hooks: guest.hooks,
+      net: { sendToHost: m => host.engine.receive('g1', JSON.parse(JSON.stringify(m))) }
+    });
+    host.engine.addPlayer('g1', 1, 1);
+  }
 
   function doDrop(engine, mover, x, y) {
     const anchor = anchorOf(mover);
@@ -433,7 +449,7 @@ console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
   eq(host.contrib.host || 0, 1, 'バラ同士の合体でホスト +1');
   contribEq();
 
-  // (b) バラ1つを2ピースの塊へ: +1 (旧公式なら +2 になる水増しケース)
+  // バラ1つを2ピースの塊へ: 合体1回なので +1
   const twoCluster = host.state.clusters.find(c => c.pieces.length === 2);
   ok(!!twoCluster, '2ピースの塊ができている');
   let attach = null;
@@ -444,7 +460,7 @@ console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
   }
   ok(!!attach, '2ピースの塊に付けられるバラがある');
   doDrop(guest.engine, attach.mover, attach.coord.x, attach.coord.y);
-  eq(guest.contrib.g1 || 0, 1, 'バラを2ピースの塊へ付けてもゲスト +1 (付けた先のサイズは数えない)');
+  eq(guest.contrib.g1 || 0, 1, 'バラを2ピースの塊へ付けてもゲスト +1 (合体1回ぶん)');
   contribEq();
 
   // (a) 合体しない移動だけの drop: +0
@@ -456,8 +472,43 @@ console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
   eq(host.contrib.host || 0, hostBefore, '移動だけの drop は貢献度 +0');
   contribEq();
 
+  // 両端末の盤面と貢献度を指定レイアウトへ差し替える (手組みシナリオ用)
+  function resetClients(clusters) {
+    for (const c of [host, guest]) {
+      c.state.clusters = JSON.parse(JSON.stringify(clusters)).map(x => ({ pieces: x.pieces, surface: 'desk', gx: x.gx, gy: x.gy }));
+      c.contrib = {};
+    }
+  }
+  const farSingles = skip => Array.from({ length: PIECES }, (_, i) => i)
+    .filter(i => !skip.includes(i))
+    .map(i => ({ pieces: [i], gx: 12 + (i % 4) * 2, gy: 12 + Math.floor(i / 4) * 2 }));
+
+  // 大きな塊同士 (4+4) の合体でも +1 (ピース数は数えない)
+  resetClients([
+    { pieces: [0, 1, 4, 5], gx: 0, gy: 0 },
+    { pieces: [2, 3, 6, 7], gx: 2, gy: 0 },
+    ...farSingles([0, 1, 2, 3, 4, 5, 6, 7])
+  ]);
+  const bigA = host.state.clusters.find(c => c.pieces.length === 4);
+  doDrop(host.engine, bigA, 0, 0);
+  eq(host.contrib.host || 0, 1, '大同士 (4+4) をくっつけてもホスト +1');
+  eq(host.state.clusters.length, 9, '大同士の合体で塊は1つ減る');
+  contribEq();
+
+  // チェーン合体: バラを2つの塊の間に置くと両方取り込んで +2
+  resetClients([
+    { pieces: [0], gx: 0, gy: 0 },
+    { pieces: [2], gx: 2, gy: 0 },
+    { pieces: [1], gx: 12, gy: 12 },
+    ...farSingles([0, 1, 2])
+  ]);
+  const midPiece = host.state.clusters.find(c => c.pieces[0] === 1);
+  doDrop(guest.engine, midPiece, 1, 0);
+  eq(guest.contrib.g1 || 0, 2, 'チェーンで2塊取り込んだらゲスト +2');
+  contribEq();
+
   // 残りを解き切る (本体が大きい手を優先し、小さい方を付ける = 終盤型の遊び方)
-  function findMergeMove(clusters) {
+  function findMergeMove(clusters, moveSmaller) {
     const pos = L.piecePositions(clusters, N);
     let best = null;
     for (const c of clusters) {
@@ -476,27 +527,33 @@ console.log('[10] 貢献度カウント (実 PureLogic + 実グルー適用)');
           const cx = qp.gx - d[0] - (hp.col - anchC.col), cy = qp.gy - d[1] - (hp.row - anchC.row);
           const anchB = L.pieceHome(anchorOf(B), N);
           const bx = pp.gx + d[0] - (hq.col - anchB.col), by = pp.gy + d[1] - (hq.row - anchB.row);
-          const cand = c.pieces.length <= B.pieces.length ? { move: c, target: B, x: cx, y: cy } : { move: B, target: c, x: bx, y: by };
+          const smallFirst = (c.pieces.length <= B.pieces.length) === !!moveSmaller;
+          const cand = smallFirst ? { move: c, target: B, x: cx, y: cy } : { move: B, target: c, x: bx, y: by };
           if (!best || cand.target.pieces.length > best.target.pieces.length) best = cand;
         }
       }
     }
     return best;
   }
-  let turn = 0, guard = 0;
-  while (host.state.clusters.length > 1 && guard++ < 40) {
-    const mv = findMergeMove(host.state.clusters);
-    if (!mv) break;
-    doDrop(turn % 2 === 0 ? guest.engine : host.engine, mv.move, mv.x, mv.y);
-    turn++;
+  // 完走シナリオ: 遊び方を変えても全員の貢献度合計は必ず ピース数 - 1 = 15
+  function solveWith(moveSmaller, label) {
+    wireEngines();
+    resetClients(L.initialScatter(DATE, PIECES));
+    let turn = 0, guard = 0;
+    while (host.state.clusters.length > 1 && guard++ < 60) {
+      const mv = findMergeMove(host.state.clusters, moveSmaller);
+      if (!mv) break;
+      doDrop(turn % 2 === 0 ? guest.engine : host.engine, mv.move, mv.x, mv.y);
+      turn++;
+    }
+    eq(host.state.clusters.length, 1, label + ': 16ピースを最後まで解き切れる');
+    eq(contribSum(host), PIECES - 1,
+      label + ': 貢献度の合計がちょうど 15 (実: ' + contribSum(host) + ')');
+    contribEq();
+    eq(guest.hooks.hashState(guest.hooks.getClusters()), host.hooks.hashState(host.hooks.getClusters()), label + ': 最終状態のハッシュが一致');
   }
-  eq(host.state.clusters.length, 1, '16ピースを最後まで解き切れる');
-  // (c) 合計が妥当な範囲 (旧公式では同じ遊び方で 100 超にもなる)
-  const totalContrib = contribSum(host);
-  ok(totalContrib >= PIECES - 1 && totalContrib <= PIECES * 2,
-    '貢献度の合計が妥当な範囲 (実: ' + totalContrib + ' / 16ピース)');
-  contribEq();
-  eq(guest.hooks.hashState(guest.hooks.getClusters()), host.hooks.hashState(host.hooks.getClusters()), '最終状態のハッシュが一致');
+  solveWith(true, '小さい方を付ける遊び方');
+  solveWith(false, '大きい方を動かす遊び方');
 }
 
 /* ================= 7. ユーティリティ ================= */

@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v37'") !== -1, 'sw: VERSION は v37');
+  ok(swSB.indexOf("VERSION = 'v38'") !== -1, 'sw: VERSION は v38');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1593,20 +1593,35 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: お題ロード + ready バリア、snapshot 適用、相手表示の重ね描きがある');
   ok(cssM.indexOf('#mpBadge') !== -1 && cssM.indexOf('.mp-pin-btn') !== -1 && cssM.indexOf('.mp-roster') !== -1,
      'MP配線: style.css にバッジ・ピンボタン・名簿のスタイルがある');
-  ok(appM.indexOf('contribForDrop(before, res.cluster.pieces.length)') !== -1,
-     'MP配線: 貢献度は mpOnDrop の適用側で contribForDrop により数える (送信者の自己申告にしない)');
+  ok(appM.indexOf('mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + (clustersBefore - state.clusters.length);') !== -1,
+     'MP配線: 貢献度は mpOnDrop の適用側で「その drop で消えた塊の数」を数える (送信者の自己申告にしない)');
+  ok(appM.indexOf('contribForDrop') === -1,
+     'MP配線: 旧・ピース数方式の contribForDrop は廃止され参照が残っていない');
+  ok(appM.indexOf("' 回接続</span>") !== -1 && appM.indexOf('ピース接続') === -1,
+     'MP配線: クリア画面の貢献ラベルは回数表記 (○○ 回接続)');
 }
 
-/* 貢献度 contribForDrop: その drop で新しくつながったピース数だけを数える */
+/* 貢献度: くっつける操作の回数 = その drop で消えた塊の数
+ * (mpOnDrop は applyClusterDrop 適用前後の state.clusters.length 差分で数える。
+ *  ここでは実 PureLogic の applyClusterDrop で同じ差分を検証する) */
 {
-  ok(L.contribForDrop(1, 1) === 0, '貢献度: 合体なし (移動だけ) は 0');
-  ok(L.contribForDrop(3, 3) === 0, '貢献度: サイズ不変は 0');
-  ok(L.contribForDrop(1, 2) === 1, '貢献度: バラ同士の合体は 1');
-  ok(L.contribForDrop(1, 16) === 1, '貢献度: バラ1つを本体15へ付けても 1 (本体の全ピース数は数えない)');
-  ok(L.contribForDrop(15, 16) === 1, '貢献度: 本体15をバラ1つへ付けても 1 (向きに依らない)');
-  ok(L.contribForDrop(8, 16) === 8, '貢献度: 半分同士の合体は 8');
-  ok(L.contribForDrop(2, 5) === 2, '貢献度: 2ピースの塊が3ピースを吸収 (チェーン) しても 2');
-  ok(L.contribForDrop(5, 11) === 5, '貢献度: 5ピースの塊が6ピースを吸収しても 5');
+  var mkCl = function (pieces, gx, gy) { return { pieces: pieces, surface: 'desk', gx: gx, gy: gy }; };
+  // 合体しない移動だけ: 塊数は変わらない → +0
+  var s1 = [mkCl([0], 0, 0), mkCl([5], 10, 10)];
+  var r1 = L.applyClusterDrop(s1, s1[1], 20, 20, 4, null);
+  ok(s1.length - r1.clusters.length === 0 && !r1.merged, '貢献度: 合体なし (移動だけ) は 0');
+  // バラ同士の合体 → +1
+  var s2 = [mkCl([0], 0, 0), mkCl([1], 10, 10)];
+  var r2 = L.applyClusterDrop(s2, s2[1], 1, 0, 4, null);
+  ok(s2.length - r2.clusters.length === 1, '貢献度: バラ同士の合体は +1');
+  // 大きな塊同士 (4+4) の合体でも消える塊は1つ → +1
+  var s3 = [mkCl([0, 1, 4, 5], 0, 0), mkCl([2, 3, 6, 7], 2, 0)];
+  var r3 = L.applyClusterDrop(s3, s3[0], 0, 0, 4, null);
+  ok(s3.length - r3.clusters.length === 1, '貢献度: 大同士 (4+4) をくっつけても +1');
+  // チェーン合体: バラを2つの塊の間に置いて両方取り込む → +2
+  var s4 = [mkCl([0], 0, 0), mkCl([2], 2, 0), mkCl([1], 10, 10)];
+  var r4 = L.applyClusterDrop(s4, s4[2], 1, 0, 4, null);
+  ok(s4.length - r4.clusters.length === 2, '貢献度: チェーンで2塊取り込んだら +2');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
