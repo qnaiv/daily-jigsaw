@@ -1595,7 +1595,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v49'") !== -1, 'sw: VERSION は v49');
+  ok(swSB.indexOf("VERSION = 'v50'") !== -1, 'sw: VERSION は v50');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -1724,7 +1724,21 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appM.indexOf('function mpClearRoomParam(') !== -1 &&
      appM.indexOf("params.delete('room')") !== -1 &&
      appM.indexOf('history.replaceState(history.state') !== -1,
-     'MP配線: 入室開始時に room パラメータだけを replaceState で URL から消す');
+     'MP配線: mpClearRoomParam は room パラメータだけを replaceState で URL から消す');
+  // 招待パラメータは入室中ずっと残す (LINE 内ブラウザ→Safari 開き直し対策)。
+  // 消えるのはセッション終了時だけ: 退出 (mpLeaveRoom) と入室の最終失敗 (failed)
+  const tijStart = appM.indexOf('function mpTryInviteJoin() {');
+  const tijBody = appM.slice(tijStart, appM.indexOf('\n}', tijStart));
+  ok(tijBody.indexOf('mpClearRoomParam') === -1 && tijBody.indexOf('mpJoinRoom(code)') !== -1,
+     'MP配線: 自動入室はパラメータを消さずに開始する (残っている間のリロードは再入室になる)');
+  const lvStart = appM.indexOf('function mpLeaveRoom() {');
+  const lvBody = appM.slice(lvStart, appM.indexOf('\n}', lvStart));
+  ok(lvBody.indexOf('mpClearRoomParam()') !== -1,
+     'MP配線: 部屋を出たら (ホスト終了の room-ended 経由も含む) 招待パラメータを消す');
+  const failStart = appM.indexOf("} else if (status === 'failed') {");
+  const failBody = appM.slice(failStart, appM.indexOf("} else if (status === 'room-ended') {", failStart));
+  ok(failBody.indexOf('mpClearRoomParam()') !== -1,
+     'MP配線: 入室が最終的に失敗したら招待パラメータを消す (解散済みの部屋で繰り返さない)');
   ok(appM.indexOf('function mpInviteUrl(') !== -1 &&
      appM.indexOf('buildInviteUrl(location.origin, location.pathname, mp.code)') !== -1 &&
      appM.indexOf('このリンクを開くとそのまま参加できます') !== -1 &&

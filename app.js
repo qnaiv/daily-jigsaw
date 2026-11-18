@@ -8499,6 +8499,9 @@ function mpOnStatus(status, info) {
       : '直結できませんでした。同じ Wi-Fi につなぐか、回線を変えて試してください';
     mpSetLobbyStatus(msg);
     showToast(msg);
+    // 入室が最終的に失敗したら招待パラメータを消す (解散済みの部屋への
+    // リロード再入室が繰り返されないように。エラー表示はロビーに残る)
+    mpClearRoomParam();
   } else if (status === 'room-ended') {
     showToast('ホストが部屋を閉じました');
     mpLeaveRoom();
@@ -8721,6 +8724,7 @@ function mpResetState() {
 function mpLeaveRoom() {
   var pool = state && state.pool;
   if (mp.session) { try { mp.session.leave(); } catch (e) { /* ignore */ } }
+  mpClearRoomParam(); // セッション終了: 招待パラメータを消し、リロードで古い部屋へ戻らない
   mpResetState();
   $('mpModal').hidden = true;
   $('mpBadge').hidden = true;
@@ -9005,7 +9009,10 @@ function mpInviteUrl() {
   return buildInviteUrl(location.origin, location.pathname, mp.code);
 }
 /* URL から room パラメータだけを取り除く (他のパラメータとハッシュは残す)。
- * リロードで古い部屋へ再入室しないための掃除で、履歴の状態 (djNav) はそのまま引き継ぐ */
+ * 呼ぶのは部屋のセッションが終わった時だけ (退出・部屋終了・入室の最終失敗)。
+ * 入室中は消さない: LINE 等のアプリ内ブラウザから「Safariで開く」をした時に
+ * パラメータ付きの URL がそのまま渡り、Safari 側でも同じ部屋へ自動入室できる。
+ * 履歴の状態 (djNav) はそのまま引き継ぐ */
 function mpClearRoomParam() {
   try {
     var params = new URLSearchParams(location.search);
@@ -9021,7 +9028,8 @@ function mpClearRoomParam() {
 function mpTryInviteJoin() {
   var code = inviteRoomCode(location.search);
   if (!code || !window.JigsawMP) return false;
-  mpClearRoomParam(); // 入室を開始したらパラメータは消す
+  // パラメータは入室中ずっと残す (消すのはセッション終了時: mpLeaveRoom / failed)。
+  // 残っている間のリロードは同じ部屋への再入室として扱われ、スナップショットで復元される
   mpShowHome();
   $('mpModal').hidden = false;
   navPush('mp');
