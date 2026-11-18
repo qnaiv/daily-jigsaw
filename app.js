@@ -8307,6 +8307,9 @@ var mp = {
   remoteGroups: {},      // playerId -> {leader, clusters, offsets} 相手の一括掴み (ゴースト再構成用)
   contrib: {},           // playerId -> その人の drop でくっつけた回数 (合体した塊の数) (§3.9)
   completeSent: false, clearShown: false,
+  hostWaitUntil: 0, hostWaitTimer: null, // ホスト復帰の猶予カウントダウン (ゲスト側)
+  claimWatchdog: null,   // 復帰を試みてゲストが現れない場合の見切り (ホスト側)
+  waitVeilTimer: null,   // 待機ベールの「誰待ちか」表示の更新 (ホスト側)
   cursors: {},           // playerId -> {x, y, holding, at} (セル座標)
   movesEph: {},          // playerId -> {cluster, fx, fy, tx, ty, t0, at} (ドラッグ中ゴースト、補間つき)
   pins: [],              // {x, y, color, until}
@@ -8460,6 +8463,10 @@ function mpCallbacks() {
     onStatus: mpOnStatus,
     onPeers: function (peers) {
       mp.peers = peers;
+      if (mp.claimWatchdog && peers.some(function (p) { return !p.isHost; })) {
+        clearTimeout(mp.claimWatchdog); // 復帰先にゲストがいた: 見切りを解除する
+        mp.claimWatchdog = null;
+      }
       mpRenderRoster();
       mpRenderHostControls();
       mpUpdateBadge();
@@ -8475,9 +8482,18 @@ function mpCallbacks() {
     },
     onEphemeral: mpOnEphemeral,
     onError: function () { showToast('接続で問題が起きました'); },
-    onPeerLost: function () {
-      showToast('相手との接続が切れました');
+    onPeerLost: function (playerId, reason) {
+      // バリア期限/無応答で外した場合は通常の切断と文言を分ける
+      if (reason === 'barrier' || reason === 'stale') showToast('応答のない参加者を外しました');
+      else showToast('相手との接続が切れました');
       mpRenderRoster(); mpUpdateBadge();
+    },
+    onClaimMidgame: function () {
+      // 復帰を試みたが対戦が始まっていた部屋だった (Phase 1 では対象外)
+      if (mp.claimWatchdog) { clearTimeout(mp.claimWatchdog); mp.claimWatchdog = null; }
+      showToast('対戦が始まっていた部屋には戻れません');
+      mpHostRoomClear();
+      mpLeaveRoom();
     }
   };
 }
@@ -8487,12 +8503,20 @@ function mpOnStatus(status, info) {
   else if (status === 'waiting') mpSetLobbyStatus('部屋ができました。相手の参加を待っています');
   else if (status === 'connecting') mpSetLobbyStatus('相手と接続しています…');
   else if (status === 'open') {
+    if (mp.hostWaitUntil) { // 猶予から復帰できた
+      mpStopHostWaitCountdown();
+      $('mpWaitVeil').hidden = true;
+      showToast('ホストが復帰しました');
+    }
     mpSetLobbyStatus('準備ができました');
     mpSendMyProfile(); // 接続が開いた時点で自分のプロフィールを送る (再入室時も)
     mpSendMyHandicap(); // ハンデも同じタイミングで送り直す
     if (mp.manual) mpShowLobby();
     mpRenderRoster(); mpRenderHostControls(); mpUpdateBadge();
+  } else if (status === 'host-wait') {
+    mpStartHostWaitCountdown(info);
   } else if (status === 'failed') {
+    mpStopHostWaitCountdown();
     var reason = info && info.reason;
     var msg = reason === 'version'
       ? 'ゲームのバージョンが違うため参加できませんでした。ページを再読み込みしてから試してください'
@@ -8502,13 +8526,88 @@ function mpOnStatus(status, info) {
     // 入室が最終的に失敗したら招待パラメータを消す (解散済みの部屋への
     // リロード再入室が繰り返されないように。エラー表示はロビーに残る)
     mpClearRoomParam();
+  } else if (status === 'kicked') {
+    showToast('ホストに部屋から外されました');
+    mpLeaveRoom();
+    return;
   } else if (status === 'room-ended') {
-    showToast('ホストが部屋を閉じました');
+    showToast(info && info.reason === 'host-lost'
+      ? 'ホストと再接続できませんでした'
+      : 'ホストが部屋を閉じました');
     mpLeaveRoom();
     return;
   }
   mpRenderLobbyBits();
 }
+/* ---------- ホスト復帰の猶予カウントダウン (ゲスト側) ---------- */
+function mpStartHostWaitCountdown(info) {
+  mp.hostWaitUntil = info && info.until ? info.until : Date.now() + 60000;
+  if (mp.hostWaitTimer) clearInterval(mp.hostWaitTimer);
+  mp.hostWaitTimer = setInterval(mpTickHostWaitCountdown, 1000);
+  mpTickHostWaitCountdown();
+}
+function mpTickHostWaitCountdown() {
+  if (!mp.hostWaitUntil) { mpStopHostWaitCountdown(); return; }
+  var remain = Math.max(0, Math.ceil((mp.hostWaitUntil - Date.now()) / 1000));
+  var msg = 'ホストの再接続を待っています…（あと' + remain + '秒）';
+  var lobbyVisible = !$('mpModal').hidden && !$('mpLobbyView').hidden;
+  if (lobbyVisible) {
+    mpSetLobbyStatus(msg);
+  } else if (mp.session) {
+    // 対戦中は待機ベールで知らせる (退出ボタン付きで出す)
+    $('mpWaitVeil').hidden = false;
+    $('mpWaitText').textContent = msg;
+    $('mpWaitLeaveBtn').hidden = false;
+  }
+}
+function mpStopHostWaitCountdown() {
+  mp.hostWaitUntil = 0;
+  if (mp.hostWaitTimer) { clearInterval(mp.hostWaitTimer); mp.hostWaitTimer = null; }
+  var lb = $('mpWaitLeaveBtn');
+  if (lb) lb.hidden = true;
+}
+
+/* ---------- 待機ベールの「誰待ちか」表示 (ホスト側) ---------- */
+/* 準備バリアで誰の ready を待っているかを示し、その場で外せるように
+ * する (GHOST_DESIGN §5.1)。ベール表示中だけ1秒間隔で更新する */
+function mpRefreshWaitVeil() {
+  var actions = $('mpWaitActions');
+  if (!actions) return;
+  actions.innerHTML = '';
+  if (!mpIsHost() || !mp.session || !mp.started || mp.begun) return;
+  var eng = mp.session.engine;
+  if (!eng || !eng.getPlayers) return;
+  var myId = mpMyId();
+  var waiting = eng.getPlayers().filter(function (p) {
+    return p.playerId !== myId && !p.ready;
+  });
+  if (!waiting.length) return;
+  $('mpWaitText').textContent = waiting.map(function (p) {
+    return mpPlayerName(p.playerId);
+  }).join('、') + 'さんの準備を待っています…';
+  waiting.forEach(function (p) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'mp-kick-btn';
+    b.textContent = mpPlayerName(p.playerId) + 'さんを外す';
+    b.addEventListener('click', function () {
+      if (mp.session) mp.session.kickPlayer(p.playerId);
+    });
+    actions.appendChild(b);
+  });
+}
+function mpStartWaitVeilTimer() {
+  mpStopWaitVeilTimer();
+  mpRefreshWaitVeil();
+  mp.waitVeilTimer = setInterval(function () {
+    if ($('mpWaitVeil').hidden) { mpStopWaitVeilTimer(); return; }
+    mpRefreshWaitVeil();
+  }, 1000);
+}
+function mpStopWaitVeilTimer() {
+  if (mp.waitVeilTimer) { clearInterval(mp.waitVeilTimer); mp.waitVeilTimer = null; }
+}
+
 function mpOnReject(rej) {
   if (!rej) return;
   if (rej.evType === 'grab-req') {
@@ -8715,6 +8814,10 @@ function mpResetState() {
   mp.pendingGroupGrab = null; mp.pendingGroupDrop = null; mp.lastGroupDropAnchors = null; mp.remoteGroups = {};
   mp.cursors = {}; mp.movesEph = {}; mp.pins = []; mp.pinMode = false;
   mp.stage = null; mp.pieces = null; mp.basePieces = null; mp.piecesMap = null; mp.lobbyInfo = null;
+  mpStopHostWaitCountdown();
+  mpStopWaitVeilTimer();
+  if (mp.claimWatchdog) { clearTimeout(mp.claimWatchdog); mp.claimWatchdog = null; }
+  var wa = $('mpWaitActions'); if (wa) wa.innerHTML = '';
   mp.bgmSync = null;
   bgmSyncExit(); // 部屋を出たらローカル再生に戻る (再生中の曲は止めない)
   mp.clearShown = false; mp.completeSent = false; mp.pendingGrabAnchor = null; mp.lastDropAnchor = null;
@@ -8724,6 +8827,7 @@ function mpResetState() {
 function mpLeaveRoom() {
   var pool = state && state.pool;
   if (mp.session) { try { mp.session.leave(); } catch (e) { /* ignore */ } }
+  if (mp.role === 'host') mpHostRoomClear(); // 明示退出したら復帰の資格情報も消す
   mpClearRoomParam(); // セッション終了: 招待パラメータを消し、リロードで古い部屋へ戻らない
   mpResetState();
   $('mpModal').hidden = true;
@@ -8750,6 +8854,7 @@ function mpCloseModalFromNav() {
 function mpShowHome() {
   mpHideHomeError();
   mpRenderProfileRows();
+  mpRenderReclaimBtn();
   if (state && state.pool) {
     if (mp.lobbyStage == null) mp.lobbyStage = nextStage(store.records, state.pool);
     if (mp.lobbyPieces == null) mp.lobbyPieces = difficulty;
@@ -8879,6 +8984,21 @@ function mpRenderRoster() {
       : !p.connected ? '待機中'
       : mp.started ? '準備完了' : '接続中';
     li.appendChild(st);
+    if (p.sameLine) { // 同じ回線 (公開アドレス) からの接続の印 (ホストにだけ届く)
+      var sl = document.createElement('span');
+      sl.className = 'mp-sameline';
+      sl.textContent = '同じ回線から接続中';
+      li.appendChild(sl);
+    }
+    if (mpIsHost() && !p.isHost && !mp.begun && mp.session && mp.session.kickPlayer) {
+      // ホストだけがロビーで参加者を外せる (対戦中は出さない)
+      var kb = document.createElement('button');
+      kb.type = 'button';
+      kb.className = 'mp-kick-btn';
+      kb.textContent = '外す';
+      kb.addEventListener('click', function () { mp.session.kickPlayer(p.playerId); });
+      li.appendChild(kb);
+    }
     ul.appendChild(li);
   });
 }
@@ -8990,12 +9110,99 @@ function mpRenderLobbyPuzzle() {
 }
 function mpBroadcastLobbyInfo() {
   if (!mpIsHost() || !mp.session) return;
+  mpHostRoomSaveLobby(); // 復帰時にロビー設定を戻せるよう保存記録へも反映する
   mp.session.sendEphemeral('lobby', { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode });
 }
+
+/* ---------- ホスト復帰の資格情報 (HOST_RECLAIM_DESIGN §3.2) ---------- */
+/* 部屋専用の秘密鍵とロビー設定を、このブラウザの localStorage にだけ
+ * 保存する。同一ブラウザでリロードした時だけ復帰でき、別ブラウザ
+ * (LINE 内ブラウザ → Safari 等) では復帰できない (設計の割り切り) */
+var MP_HOST_ROOM_KEY = 'daily-jigsaw:hostRoom';
+var MP_HOST_ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+function mpHostRoomSave(rec) {
+  try { localStorage.setItem(MP_HOST_ROOM_KEY, JSON.stringify(rec)); } catch (e) { /* ignore */ }
+}
+function mpHostRoomLoad() {
+  var rec = null;
+  try { rec = JSON.parse(localStorage.getItem(MP_HOST_ROOM_KEY) || 'null'); } catch (e) { rec = null; }
+  if (!rec || typeof rec.code !== 'string' || !rec.privateKeyJwk || !rec.publicKeyJwk ||
+      !rec.createdAt || Date.now() - rec.createdAt > MP_HOST_ROOM_TTL_MS) {
+    if (rec) mpHostRoomClear(); // 形式不正・期限切れは掃除する
+    return null;
+  }
+  return rec;
+}
+function mpHostRoomClear() {
+  try { localStorage.removeItem(MP_HOST_ROOM_KEY); } catch (e) { /* ignore */ }
+}
+/* ロビー設定 (ステージ/ピース数/モード) を保存記録へ反映する。
+ * 自分がホストで、記録のコードが自分の部屋と一致する時だけ */
+function mpHostRoomSaveLobby() {
+  if (!mpIsHost() || !mp.code) return;
+  var rec = mpHostRoomLoad();
+  if (!rec || rec.code !== mp.code) return;
+  rec.lobby = { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode };
+  mpHostRoomSave(rec);
+}
+/* 入口の「前の部屋に戻る」ボタンの表示 (保存記録がある時だけ) */
+function mpRenderReclaimBtn() {
+  var btn = $('mpReclaimBtn');
+  if (!btn) return;
+  var rec = mpInRoom() ? null : mpHostRoomLoad();
+  btn.hidden = !rec;
+  if (rec) $('mpReclaimCode').textContent = rec.code;
+}
+/* 前の部屋への復帰 (手動)。同じコードで部屋を作り直し、名乗り
+ * (claim) を送る。猶予中のゲストが challenge を返し、署名の検証を
+ * 通れば通常の入室 (want) が来て名簿が再構築される。自動では戻らない */
+function mpReclaimRoom() {
+  if (!window.JigsawMP || mp.session) return;
+  var rec = mpHostRoomLoad();
+  if (!rec) { mpRenderReclaimBtn(); return; }
+  mpHideHomeError();
+  if (rec.lobby) {
+    if (rec.lobby.stage != null) mp.lobbyStage = rec.lobby.stage;
+    if (rec.lobby.pieces != null) mp.lobbyPieces = rec.lobby.pieces;
+    if (rec.lobby.mode) mp.lobbyMode = rec.lobby.mode;
+  }
+  mpStartSession(window.JigsawMP.createRoom(mpHooksObj, mpCallbacks(), {
+    code: rec.code, hostPublicJwk: rec.publicKeyJwk,
+    hostPrivateJwk: rec.privateKeyJwk, reclaim: true
+  }), 'host');
+  mp.session.claimHost();
+  // 見切り: ゲストが1人も現れなければ部屋は終わっていると判断する
+  // (猶予の60秒より十分に早く切り上げる)
+  mp.claimWatchdog = setTimeout(function () {
+    mp.claimWatchdog = null;
+    if (!mp.session) return;
+    showToast('前の部屋は終了しています');
+    mpHostRoomClear();
+    mpLeaveRoom();
+  }, 12000);
+}
+
 function mpCreateRoom() {
   if (!window.JigsawMP) { mpHomeError('マルチプレイを読み込めませんでした'); return; }
+  if (mp.session) return; // 鍵生成が非同期なので、二度押しで部屋が二重にできないように
   mpHideHomeError();
-  mpStartSession(window.JigsawMP.createRoom(mpHooksObj, mpCallbacks(), {}), 'host');
+  var code = window.JigsawMP.makeRoomCode();
+  var begin = function (opts) {
+    opts.code = code;
+    mpStartSession(window.JigsawMP.createRoom(mpHooksObj, mpCallbacks(), opts), 'host');
+  };
+  // 部屋専用の鍵ペアを作り、秘密鍵はこのブラウザにだけ残す (復帰用)。
+  // 作れなければ鍵なしで始める (復帰できないだけで対戦は従来どおり)
+  if (window.JigsawMP.generateHostKeyPair) {
+    window.JigsawMP.generateHostKeyPair().then(function (kp) {
+      mpHostRoomSave({
+        code: code, privateKeyJwk: kp.privateJwk, publicKeyJwk: kp.publicJwk,
+        lobby: { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode },
+        createdAt: Date.now()
+      });
+      begin({ hostPublicJwk: kp.publicJwk });
+    }).catch(function () { begin({}); });
+  } else begin({});
 }
 function mpJoinRoom(codeArg) {
   if (!window.JigsawMP) { mpHomeError('マルチプレイを読み込めませんでした'); return; }
@@ -9117,6 +9324,7 @@ function mpLoadPuzzle(stage, pieces) {
   $('loadingOverlay').style.display = 'flex';
   $('mpWaitVeil').hidden = false;
   $('mpWaitText').textContent = 'みんなの準備を待っています…';
+  mpStartWaitVeilTimer(); // ホストは「誰待ちか」+ 外すボタンを出す
   mpUpdateBadge();
   loadSourceImage().then(function (res) {
     if (!mpInRoom() || !state) return; // 途中で部屋を出ていたら破棄する
@@ -10101,6 +10309,8 @@ document.querySelectorAll('[data-mp-close]').forEach(function (el) {
   el.addEventListener('click', function () { navBack(); });
 });
 $('mpCreateBtn').addEventListener('click', mpCreateRoom);
+$('mpReclaimBtn').addEventListener('click', mpReclaimRoom);
+$('mpWaitLeaveBtn').addEventListener('click', function () { mpLeaveRoom(); });
 $('mpJoinBtn').addEventListener('click', mpJoinRoom);
 $('mpJoinCode').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') mpJoinRoom(); });
 $('mpManualBtn').addEventListener('click', function () {

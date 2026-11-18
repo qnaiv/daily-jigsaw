@@ -1595,7 +1595,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v50'") !== -1, 'sw: VERSION は v50');
+  ok(swSB.indexOf("VERSION = 'v51'") !== -1, 'sw: VERSION は v51');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -2366,6 +2366,75 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(mpB.indexOf('bgm') === -1 && appB.indexOf("kind === 'bgm'") === -1 &&
      appB.indexOf("sendEphemeral('bgm'") === -1 && appB.indexOf('bgmHeartbeat') === -1,
      'BGM同期配線: ハートビート相乗り等の定期同期通信は存在しない (mp.js は BGM 無関係)');
+}
+
+/* ============ マルチ堅牢化 (ゴースト対策 + ホスト復帰 Phase 1) ============ */
+{
+  const fsR = require('fs'), pathR = require('path');
+  const appR = fsR.readFileSync(pathR.join(__dirname, 'app.js'), 'utf8');
+  const mpR = fsR.readFileSync(pathR.join(__dirname, 'mp.js'), 'utf8');
+  const htmlR = fsR.readFileSync(pathR.join(__dirname, 'index.html'), 'utf8');
+  const cssR = fsR.readFileSync(pathR.join(__dirname, 'style.css'), 'utf8');
+
+  // 準備バリアの期限 (30秒) と無応答 prune (60秒) がエンジンに配線されている
+  ok(mpR.indexOf('BARRIER_TIMEOUT_MS = 30000') !== -1 &&
+     mpR.indexOf('PRUNE_MS = 60000') !== -1 &&
+     mpR.indexOf("onPlayerPruned(id, 'barrier')") !== -1 &&
+     mpR.indexOf("onPlayerPruned(id, 'stale')") !== -1 &&
+     mpR.indexOf('setPeerOpen') !== -1,
+     '堅牢化: バリア期限30秒・無応答 prune 60秒・接続中表示の是正が配線されている');
+  // バリア期限は start でだけ武装する (ロビーで誤発火しない)
+  ok(mpR.indexOf("if (out.t === 'start') { started = true; resetBarrier(true); }") !== -1 &&
+     mpR.indexOf("if (out.t === 'next') { resetBarrier(false); }") !== -1,
+     '堅牢化: バリア期限は start でのみ武装し、next (ロビー復帰) では武装しない');
+  // キック: シグナリング通知 + 台帳からの削除 + アプリの着地まで
+  ok(mpR.indexOf("kind: 'kicked'") !== -1 &&
+     mpR.indexOf('kickPlayer: kickPlayer') !== -1 &&
+     appR.indexOf('mp.session.kickPlayer(p.playerId)') !== -1 &&
+     appR.indexOf("status === 'kicked'") !== -1 &&
+     appR.indexOf('ホストに部屋から外されました') !== -1,
+     '堅牢化: キックがセッション層からアプリの着地まで配線されている');
+  // 待機ベールに「誰待ちか」と外すボタン、ロビー名簿にも外すボタン
+  ok(htmlR.indexOf('id="mpWaitActions"') !== -1 &&
+     htmlR.indexOf('id="mpWaitLeaveBtn"') !== -1 &&
+     appR.indexOf('mpRefreshWaitVeil') !== -1 &&
+     appR.indexOf('さんを外す') !== -1 &&
+     appR.indexOf("kb.textContent = '外す'") !== -1 &&
+     cssR.indexOf('.mp-kick-btn') !== -1,
+     '堅牢化: 待機ベールとロビー名簿に外すボタンがある');
+  // IP 補助表示: srflx の印はホストの onPeers だけに付き、roster へは配らない
+  ok(mpR.indexOf('parseSrflxAddress') !== -1 &&
+     mpR.indexOf('sameLinePlayerIds') !== -1 &&
+     mpR.indexOf("k !== 'sameLine'") !== -1 &&
+     appR.indexOf('同じ回線から接続中') !== -1 &&
+     cssR.indexOf('.mp-sameline') !== -1,
+     '堅牢化: 同じ回線の印はホストだけに付き、アドレス自体は出ない');
+  // ホスト復帰: 鍵ペア・welcome の公開鍵・challenge/proof・猶予・prevPlayerId
+  ok(mpR.indexOf('generateHostKeyPair') !== -1 &&
+     mpR.indexOf('hostPub: options.hostPublicJwk || null') !== -1 &&
+     mpR.indexOf("kind: 'host-claim'") !== -1 &&
+     mpR.indexOf("kind: 'host-challenge'") !== -1 &&
+     mpR.indexOf("kind: 'host-proof'") !== -1 &&
+     mpR.indexOf("setStatus('host-wait'") !== -1 &&
+     mpR.indexOf('HOST_WAIT_MS = 60000') !== -1 &&
+     mpR.indexOf('prevPlayerId: playerId || undefined') !== -1,
+     '堅牢化: ホスト復帰の鍵・証明・猶予60秒・prevPlayerId が配線されている');
+  // 復帰の資格情報は localStorage に保存し、入口ボタンから手動で戻る
+  ok(appR.indexOf("var MP_HOST_ROOM_KEY = 'daily-jigsaw:hostRoom';") !== -1 &&
+     appR.indexOf('function mpReclaimRoom()') !== -1 &&
+     appR.indexOf('function mpHostRoomSave(') !== -1 &&
+     htmlR.indexOf('id="mpReclaimBtn"') !== -1 &&
+     htmlR.indexOf('id="mpReclaimCode"') !== -1,
+     '堅牢化: 復帰の資格情報の保存と入口の戻るボタンがある');
+  // 猶予の表示と文言 (残り秒数 / 是正した終了文言 / 復帰・対象外の通知)
+  ok(appR.indexOf('ホストの再接続を待っています') !== -1 &&
+     appR.indexOf('ホストと再接続できませんでした') !== -1 &&
+     appR.indexOf('ホストが復帰しました') !== -1 &&
+     appR.indexOf('対戦が始まっていた部屋には戻れません') !== -1,
+     '堅牢化: 猶予カウントダウンと復帰まわりの文言が配線されている');
+  // MP_LOGIC_VERSION は据え置き (追加型プロトコルで旧端末と混在安全なため)
+  ok(appR.indexOf('var MP_LOGIC_VERSION = 5;') !== -1,
+     '堅牢化: MP_LOGIC_VERSION は 5 のまま (上げる必要なし)');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');

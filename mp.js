@@ -115,6 +115,9 @@ var EPH_BUFFERED_LIMIT = 64 * 1024; // ephemeral を送らない bufferedAmount 
 var EPH_COALESCE_MS = 33;   // ホスト中継の coalesce 間隔 (宛先別)。0 で無効 (即時中継 = 旧挙動)。A/B 切替用
 var EPH_COALESCE_KINDS = { move: 1, cursor: 1 }; // coalesce 対象 (最新値だけ意味のある種別)
 var PROFILE_COLOR_COUNT = 8; // プロフィールの背景色パレット数 (app.js の MP_COLORS と同数)
+var BARRIER_TIMEOUT_MS = 30000;   // ready バリアの期限: 過ぎたら未 ready を外して begin する (GHOST_DESIGN §5.1)
+var PRUNE_MS = 60000;             // 無応答 (lastSeen 停止) の prune 判定 (GHOST_DESIGN §5.3)
+var HOST_WAIT_MS = 60000;         // ホスト復帰の猶予: bye なき切断でゲストが claim を待つ時間 (HOST_RECLAIM_DESIGN §4)
 
 /* プロフィール { name, icon, color } の無害化 (MP改善#4)。ワイヤ・保存の
  * 両経路で使う。name は最大8文字 (コードポイント単位)、icon は短い
@@ -172,6 +175,75 @@ function resolveProfileColors(players, profiles) {
 function sanitizeHandicap(v) {
   if (typeof v !== 'number' || !isFinite(v) || Math.floor(v) !== v) return null;
   return (v >= 0 && v <= 4) ? v : null;
+}
+
+/* ICE candidate 文字列から srflx (公開) アドレスを取り出す (GHOST_DESIGN
+ * §7.1)。形式は candidate:<foundation> <component> <protocol> <priority>
+ * <address> <port> typ <type> ... で、typ が srflx の時だけ address を返す。
+ * host candidate (LAN アドレス) や relay 等は対象外 (null) */
+function parseSrflxAddress(candidateStr) {
+  if (typeof candidateStr !== 'string') return null;
+  var parts = candidateStr.split(/\s+/);
+  for (var i = 0; i + 1 < parts.length; i++) {
+    if (parts[i] === 'typ') return parts[i + 1] === 'srflx' ? (parts[4] || null) : null;
+  }
+  return null;
+}
+
+/* 公開アドレスの共有関係から「同じ回線から接続中」の参加者を割り出す
+ * (GHOST_DESIGN §7.3a)。ipMap は playerId -> アドレス文字列の配列。
+ * 同じアドレスを持つ参加者が2人以上いる場合だけ、その全員を true に
+ * する。アドレス自体は返さない (印だけ)。族 (v4/v6) が違うアドレスは
+ * 一致しないものとして扱い、信号なしになる */
+function sameLinePlayerIds(ipMap) {
+  var byAddr = {}, out = {};
+  for (var pid in ipMap) {
+    (ipMap[pid] || []).forEach(function (a) {
+      (byAddr[a] = byAddr[a] || []).push(pid);
+    });
+  }
+  for (var a in byAddr)
+    if (byAddr[a].length > 1) byAddr[a].forEach(function (pid) { out[pid] = true; });
+  return out;
+}
+
+/* ホスト復帰の本人証明 (HOST_RECLAIM_DESIGN §3): 部屋専用の ECDSA P-256
+ * 鍵ペア。秘密鍵はホストのブラウザから出ず、ゲストは公開鍵で署名を
+ * 検証する。トークンの提示と違い、シグナリングを盗聴しても使い回せない */
+function subtleCrypto() {
+  var c = null;
+  if (typeof window !== 'undefined' && window.crypto) c = window.crypto;
+  else if (typeof globalThis !== 'undefined') c = globalThis.crypto;
+  return (c && c.subtle) ? c : null;
+}
+function generateHostKeyPair() {
+  var c = subtleCrypto();
+  if (!c) return Promise.reject(new Error('WebCrypto が使えません'));
+  return c.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+    .then(function (kp) {
+      return Promise.all([
+        c.subtle.exportKey('jwk', kp.privateKey),
+        c.subtle.exportKey('jwk', kp.publicKey)
+      ]).then(function (jwks) { return { privateJwk: jwks[0], publicJwk: jwks[1] }; });
+    });
+}
+function signHostClaim(privateJwk, text) {
+  var c = subtleCrypto();
+  if (!c) return Promise.reject(new Error('WebCrypto が使えません'));
+  return c.subtle.importKey('jwk', privateJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign'])
+    .then(function (key) {
+      return c.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, utf8Encode(text));
+    })
+    .then(function (sig) { return bytesToB64url(new Uint8Array(sig)); });
+}
+function verifyHostClaim(publicJwk, text, sigB64) {
+  var c = subtleCrypto();
+  if (!c || !publicJwk || !sigB64) return Promise.resolve(false);
+  return c.subtle.importKey('jwk', publicJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+    .then(function (key) {
+      return c.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64urlToBytes(sigB64), utf8Encode(text));
+    })
+    .catch(function () { return false; });
 }
 
 /* onPeers / roster で配る1人分の形に整える (色は調停済みの最終色)。
@@ -314,7 +386,12 @@ function fingerprintCode(sdp) {
  *   now: () => ms (省略時 Date.now),
  *   rateLimit: { max, windowMs } (省略時 30件/1秒),
  *   leaseTimeoutMs, snapReqMinIntervalMs,
- *   onReject(rej), onEvent(ev, meta), onError(err), onBegin(), onPeersChange()
+ *   barrierTimeoutMs (ready バリアの期限、省略時 30秒),
+ *   pruneMs (無応答の prune 判定、省略時 60秒),
+ *   onReject(rej), onEvent(ev, meta), onError(err), onBegin(), onPeersChange(),
+ *   onPlayerPruned(playerId, reason): バリア期限 ('barrier') / 無応答
+ *     ('stale') でエンジンが参加者を外した通知。台帳からの除去は済んで
+ *     いるので、セッション層は接続を閉じるために使う
  * })
  *
  * ワイヤ形式:
@@ -340,6 +417,8 @@ function createEngine(opts) {
   var rateWindow = (opts.rateLimit && opts.rateLimit.windowMs) || 1000;
   var leaseTimeout = opts.leaseTimeoutMs || LEASE_TIMEOUT_MS;
   var snapMinInterval = opts.snapReqMinIntervalMs || SNAPREQ_MIN_INTERVAL_MS;
+  var barrierTimeout = opts.barrierTimeoutMs || BARRIER_TIMEOUT_MS;
+  var pruneMs = opts.pruneMs || PRUNE_MS;
   var isHost = opts.role === 'host';
   var selfId = opts.selfId || (isHost ? HOST_ID : null);
 
@@ -347,6 +426,7 @@ function createEngine(opts) {
   var lastSeq = 0;               // ホスト: 採番済み最大 seq / ゲスト: 適用済み watermark
   var begun = false;
   var started = false;
+  var barrierStartAt = 0;        // ready バリアの期限の起点 (start の seq 時刻。0 = 期限なし)
   var racePieces = null;         // レースのハンデ: 確定した start の piecesMap (playerId -> 実効ピース数)
 
   /* プレイヤー台帳 (ホストが権威) */
@@ -366,6 +446,7 @@ function createEngine(opts) {
   var onError = opts.onError || noop;
   var onBegin = opts.onBegin || noop;
   var onPeersChange = opts.onPeersChange || noop;
+  var onPlayerPruned = opts.onPlayerPruned || noop; // バリア期限/無応答で外した通知 (セッション層が接続を閉じる)
 
   function hookVal(v) { return typeof v === 'function' ? v() : v; }
   function clusterExists(id) {
@@ -562,8 +643,8 @@ function createEngine(opts) {
       var s = stateHash();
       if (s !== undefined) msg.sum = s;
     }
-    if (out.t === 'start') { started = true; resetBarrier(); }
-    if (out.t === 'next') { resetBarrier(); }
+    if (out.t === 'start') { started = true; resetBarrier(true); }
+    if (out.t === 'next') { resetBarrier(false); }
     trackRacePieces(out);
     if (out.t === 'begin') begun = true;
     if (net.broadcast) net.broadcast(msg);
@@ -589,9 +670,13 @@ function createEngine(opts) {
     copy.from = fromId;
     return copy;
   }
-  function resetBarrier() {
+  function resetBarrier(arm) {
     begun = false;
     for (var id in players) players[id].ready = false;
+    // バリア期限は start から begin までの間だけ武装する。next (ロビー
+    // 復帰) で武装すると、ロビーで次の対戦を選んでいる間に未 ready と
+    // して全員外れてしまう
+    barrierStartAt = arm ? now() : 0;
   }
 
   function reject(toId, mid, reason, evType) {
@@ -821,6 +906,7 @@ function createEngine(opts) {
     getWatermark: function () { return lastSeq; },
     isBegun: function () { return begun; },
     isStarted: function () { return started; },
+    isBegun: function () { return begun; }, // begin 済みで next 前 = 対戦中 (ホスト復帰の対象判定に使う)
     getLease: function (cluster) { return leases[cluster] || null; },
     getLeases: function () {
       var out = [];
@@ -850,6 +936,30 @@ function createEngine(opts) {
         try { sequence(HOST_ID, { t: 'lease-expire', cluster: isNaN(+cluster) ? cluster : +cluster, epoch: leases[cluster].epoch, by: leases[cluster].holder }); }
         catch (e) { delete leases[cluster]; }
       });
+      // 準備バリアの期限 (GHOST_DESIGN §5.1): 期限までに ready が揃わ
+      // ない参加者を外し、揃っている面子だけで begin する。外すのは
+      // エンジンの台帳からだけで、セッション層の台帳 (book) は残る
+      // ため、外された側が生きていれば途中参加で同じ playerId に戻れる
+      if (started && !begun && barrierStartAt && t - barrierStartAt >= barrierTimeout) {
+        var unready = [];
+        for (var bi = 0; bi < joinOrder.length; bi++) {
+          var bp = players[joinOrder[bi]];
+          if (joinOrder[bi] !== selfId && bp && !bp.ready) unready.push(joinOrder[bi]);
+        }
+        unready.forEach(function (id) { removePlayer(id); onPlayerPruned(id, 'barrier'); });
+      }
+      // 無応答 prune (GHOST_DESIGN §5.3): ハートビート (lastSeen) が
+      // 長く止まった参加者を退出扱いにする。removePlayer が player-left
+      // を seq するので、ターン制の自動スキップ・レースのリタイア
+      // 除外・リース解放といった既存の退出処理がそのまま効く。
+      // ホスト自身は対象外 (tick が回ること自体が生存証明)
+      var stale = [];
+      for (var si = 0; si < joinOrder.length; si++) {
+        var sp2 = players[joinOrder[si]];
+        if (joinOrder[si] !== selfId && sp2 && t - (sp2.lastSeen || 0) > pruneMs)
+          stale.push(joinOrder[si]);
+      }
+      stale.forEach(function (id) { removePlayer(id); onPlayerPruned(id, 'stale'); });
     }
   };
   if (isHost) addPlayer(HOST_ID, 0);
@@ -1017,9 +1127,30 @@ function createRoom(hooks, callbacks, options) {
     var list = peerListWithProfiles(engine.getPlayers(), profiles, function (p) {
       return p.isHost ? true : !!(findPeerByPlayer(p.playerId) || {}).open;
     }, handicaps);
+    // 同じ回線 (公開アドレス) から接続中の参加者に印を付ける
+    // (GHOST_DESIGN §7.3a)。アドレス自体は出さず、印はホストの画面
+    // だけが使うので、ゲストへ配る roster からは取り除く
+    var ipMap = {};
+    for (var gid0 in peers)
+      if (peers[gid0].srflx) ipMap[peers[gid0].playerId] = Object.keys(peers[gid0].srflx);
+    var same = sameLinePlayerIds(ipMap);
+    list.forEach(function (it) { if (same[it.playerId]) it.sameLine = true; });
     if (callbacks.onPeers) callbacks.onPeers(list);
     // ゲストにも在室一覧を配る
-    for (var gid in peers) sendEv(peers[gid], { t: 'roster', peers: list });
+    var guestList = list.map(function (it) {
+      var c = {}; for (var k in it) if (k !== 'sameLine') c[k] = it[k];
+      return c;
+    });
+    for (var gid in peers) sendEv(peers[gid], { t: 'roster', peers: guestList });
+  }
+  /* ゲストの ICE candidate から srflx (公開) アドレスを控える。追加の
+   * 通信はなく、届いた candidate を見るだけ。メモリ内だけに保持し、
+   * roster 等で他の参加者へは配らない (GHOST_DESIGN §7.2) */
+  function noteSrflx(peer, cand) {
+    var addr = parseSrflxAddress(cand && cand.candidate);
+    if (!addr) return;
+    peer.srflx = peer.srflx || {};
+    peer.srflx[addr] = 1;
   }
   function findPeerByPlayer(playerId) {
     for (var gid in peers) if (peers[gid].playerId === playerId) return peers[gid];
@@ -1035,7 +1166,16 @@ function createRoom(hooks, callbacks, options) {
     onReject: callbacks.onReject, onError: callbacks.onError,
     onEvent: function (ev, meta) { if (callbacks.onEvent) callbacks.onEvent(ev, meta); },
     onBegin: function () { setStatus('open'); },
-    onPeersChange: function () { notifyPeers(); }
+    onPeersChange: function () { notifyPeers(); },
+    onPlayerPruned: function (playerId, reason) {
+      // バリア期限/無応答でエンジンが外した参加者: 接続だけ閉じる。
+      // 台帳 (book) は残すので、同じ guestId で戻れば同じ playerId に
+      // 復帰できる (キックとの違いはここ)
+      var peer = findPeerByPlayer(playerId);
+      if (peer) closePeer(peer.guestId);
+      if (callbacks.onPeerLost) callbacks.onPeerLost(playerId, reason);
+      notifyPeers();
+    }
   });
 
   function sendEv(peer, msg) {
@@ -1047,7 +1187,15 @@ function createRoom(hooks, callbacks, options) {
 
   var sig = createSignaling({
     topic: SIGNAL_TOPIC_PREFIX + code,
-    onOpen: function (first) { if (first) setStatus('waiting', { code: code }); },
+    onOpen: function (first) {
+      if (!first) return;
+      setStatus('waiting', { code: code });
+      // 復帰セッションでは、シグナリングがつながった時点で名乗りを
+      // 送る (作成直後に claimHost を呼んでも接続前で消えうるため、
+      // 確実に届くのはこのタイミング)
+      if (options.reclaim && options.hostPrivateJwk)
+        sig.send({ kind: 'host-claim', from: 'host', to: null });
+    },
     onPayload: function (p) {
       if (closed || !p || !p.kind) return;
       if (p.kind === 'want') handleWant(p);
@@ -1057,8 +1205,11 @@ function createRoom(hooks, callbacks, options) {
         if (peer && peer.pc) peer.pc.setRemoteDescription({ type: 'answer', sdp: p.sdp }).catch(function () {});
       } else if (p.kind === 'ice') {
         var peer2 = peers[p.from];
+        if (peer2) noteSrflx(peer2, p.candidate);
         if (peer2 && peer2.pc && p.candidate)
           peer2.pc.addIceCandidate(p.candidate).catch(function () {});
+      } else if (p.kind === 'host-challenge') {
+        handleHostChallenge(p);
       } else if (p.kind === 'bye') {
         closePeer(p.from);
         var bk = book[p.from];
@@ -1082,19 +1233,76 @@ function createRoom(hooks, callbacks, options) {
     if (engine.isStarted() && !bk) return; // 開始後は既知の guestId 以外締める (§2-5)
     if (peers[gid]) closePeer(gid);        // 再入室: 旧接続を捨てて作り直す
     if (!bk) {
-      bookSeq++;
-      bk = book[gid] = { playerId: 'g' + bookSeq, color: bookSeq, epoch: 0 };
+      // 復帰ホストの部屋では台帳が空なので、want に添えられた以前の
+      // playerId (prevPlayerId) が未使用なら引き継ぎ、席と色を維持
+      // する (HOST_RECLAIM_DESIGN §5.1)。証明 (host-proof) を通過した
+      // 相手にしか want の機会が来ない経路で使う
+      var prev = null;
+      var pm = /^g(\d{1,2})$/.exec(typeof p.prevPlayerId === 'string' ? p.prevPlayerId : '');
+      if (pm) {
+        var pn = parseInt(pm[1], 10);
+        if (pn >= 1) {
+          var used = false;
+          for (var bg in book) if (book[bg].playerId === p.prevPlayerId) used = true;
+          if (!used) prev = { playerId: p.prevPlayerId, color: pn };
+        }
+      }
+      if (prev) {
+        bk = book[gid] = { playerId: prev.playerId, color: prev.color, epoch: 0 };
+        if (prev.color > bookSeq) bookSeq = prev.color;
+      } else {
+        bookSeq++;
+        bk = book[gid] = { playerId: 'g' + bookSeq, color: bookSeq, epoch: 0 };
+      }
     }
     bk.epoch++;
     var peer = {
       guestId: gid, playerId: bk.playerId, color: bk.color, epoch: bk.epoch,
       pc: null, evCh: null, ephCh: null, open: false,
-      restartTried: false, timer: null, verify: null
+      restartTried: false, timer: null, verify: null, srflx: null
     };
     peers[gid] = peer;
     engine.addPlayer(bk.playerId, bk.color, bk.epoch);
     startPeerConnection(peer);
     setStatus('connecting', { playerId: bk.playerId });
+  }
+
+  /* 復帰ホストの証明への応答 (HOST_RECLAIM_DESIGN §3.1)。秘密鍵を
+   * 持つセッション (復帰導線で作り直した部屋) だけが応じる。
+   * 対戦が始まっていた部屋は Phase 1 では復帰対象外: 終了を伝えて
+   * 畳み、アプリ側へも知らせる (安全側に倒す) */
+  var claimAbortNotified = false;
+  function handleHostChallenge(p) {
+    if (!options.hostPrivateJwk || !p.from || !p.nonce) return;
+    if (p.started) {
+      sig.send({ kind: 'bye', from: 'host', to: p.from, reason: 'host-lost' });
+      if (!claimAbortNotified) {
+        claimAbortNotified = true;
+        if (callbacks.onClaimMidgame) callbacks.onClaimMidgame();
+      }
+      return;
+    }
+    signHostClaim(options.hostPrivateJwk, code + '|' + String(p.nonce)).then(function (sigv) {
+      if (closed) return;
+      sig.send({ kind: 'host-proof', from: 'host', to: p.from, sig: sigv });
+    }).catch(function () { /* 署名できなければ応じない (ゲストは猶予明けに終了する) */ });
+  }
+
+  /* ホストによる手動キック (GHOST_DESIGN §5.2)。対象へシグナリングで
+   * 知らせ、接続を閉じ、台帳 (book) からも消す (prune との違い)。
+   * 再入室は禁止しない: 入り直せば新しい playerId で通常参加になる */
+  function kickPlayer(playerId) {
+    if (closed) return;
+    var peer = findPeerByPlayer(playerId);
+    var gid = peer ? peer.guestId : null;
+    if (!gid) for (var g in book) if (book[g].playerId === playerId) { gid = g; break; }
+    if (gid) sig.send({ kind: 'kicked', from: 'host', to: gid });
+    if (gid) closePeer(gid);
+    if (gid) delete book[gid];
+    delete profiles[playerId];
+    delete handicaps[playerId];
+    engine.removePlayer(playerId); // バリア中なら ack 待ちから外れて進む
+    notifyPeers();
   }
 
   function startPeerConnection(peer) {
@@ -1137,7 +1345,13 @@ function createRoom(hooks, callbacks, options) {
     };
     pc.oniceconnectionstatechange = function () {
       var st = pc.iceConnectionState;
-      if (st === 'failed') onPeerIceFailed(peer);
+      if (st === 'failed') { setPeerOpen(peer, false); onPeerIceFailed(peer); }
+      else if (st === 'disconnected') setPeerOpen(peer, false);
+      else if (st === 'connected' || st === 'completed') {
+        // ICE が戻れば「接続中」表示も戻す (チャンネルが開いている時だけ)
+        if (peer.evCh && peer.evCh.readyState === 'open' &&
+            peer.ephCh && peer.ephCh.readyState === 'open') setPeerOpen(peer, true);
+      }
       else if (st === 'closed') { /* closePeer 側で処理 */ }
     };
     pc.createOffer().then(function (offer) {
@@ -1148,15 +1362,25 @@ function createRoom(hooks, callbacks, options) {
       armConnectTimer(peer);
     }).catch(function () { failPeer(peer, 'offer-error'); });
   }
+  /* peer.open は名簿の「接続中」表示の実態 (GHOST_DESIGN §5.3 の是正)。
+   * 開いた後に接続が死んでも true のまま残らないよう、ICE の状態変化で
+   * 追随させる。除去には使わない (除去は failPeer / prune の経路) */
+  function setPeerOpen(peer, open) {
+    if (peer.open === open) return;
+    peer.open = open;
+    notifyPeers();
+  }
   function maybePeerOpen(peer, evOpen, ephOpen) {
     if (!evOpen || !ephOpen || peer.open) return;
     peer.open = true;
+    peer.everOpen = true;
     if (peer.timer) { clearTimeout(peer.timer); peer.timer = null; }
     sendEv(peer, {
       t: 'welcome', playerId: peer.playerId, color: peer.color,
       started: engine.isStarted(), lastSeq: engine.getWatermark(), verify: peer.verify,
       profiles: profiles, // 途中参加者にも既知のプロフィール一式を同梱する (MP改善#4)
-      handicaps: handicaps // ハンデも同様に同梱する
+      handicaps: handicaps, // ハンデも同様に同梱する
+      hostPub: options.hostPublicJwk || null // ホスト復帰の検証用 公開鍵 (HOST_RECLAIM_DESIGN §3.1)
     });
     if (callbacks.onVerifyCode && peer.verify) callbacks.onVerifyCode(peer.verify);
     notifyPeers();
@@ -1187,7 +1411,7 @@ function createRoom(hooks, callbacks, options) {
   }
   function failPeer(peer, reason) {
     var playerId = peer.playerId;
-    var wasOpen = peer.open;
+    var wasOpen = peer.everOpen || peer.open;
     closePeer(peer.guestId);
     engine.removePlayer(playerId);
     if (callbacks.onPeerLost) callbacks.onPeerLost(playerId, reason);
@@ -1243,6 +1467,12 @@ function createRoom(hooks, callbacks, options) {
       handicaps[HOST_ID] = sh == null ? 0 : sh;
       notifyPeers(); // roster で全ゲストへ再配信する
     },
+    kickPlayer: kickPlayer,
+    claimHost: function () {
+      // 復帰の名乗り (HOST_RECLAIM_DESIGN §3.1)。ゲストが猶予中なら
+      // challenge が返り、署名 (host-proof) で応じる
+      sig.send({ kind: 'host-claim', from: 'host', to: null });
+    },
     leave: function () {
       if (closed) return;
       closed = true;
@@ -1273,6 +1503,11 @@ function joinRoom(code, hooks, callbacks, options) {
    * 一度だけ決め、armConnectTimer は残り時間しか張らない */
   var connectDeadline = Date.now() + CONNECT_TIMEOUT_MS;
   var everOpened = false;
+  var hostPub = null;      // welcome で受け取るホスト復帰の公開鍵 (HOST_RECLAIM_DESIGN §3.1)
+  var hostVerify = null;   // 最初の offer のフィンガープリント (同一ホストの判定)
+  var inGrace = false;     // ホスト復帰の猶予中か
+  var graceTimer = null;
+  var claimNonce = null;   // 提示中の challenge の nonce (ワンタイム)
 
   function setStatus(s, info) { if (callbacks.onStatus) callbacks.onStatus(s, info); }
 
@@ -1291,25 +1526,40 @@ function joinRoom(code, hooks, callbacks, options) {
   var sig = createSignaling({
     topic: SIGNAL_TOPIC_PREFIX + code,
     onOpen: function (first) { if (first) sendWant(); },
-    onReopen: function () { if (!closed && !isOpen) sendWant(); },
+    onReopen: function () { if (!closed && !isOpen && !inGrace) sendWant(); },
     onPayload: function (p) {
-      if (closed || !p || p.to !== guestId) return;
+      if (closed || !p) return;
+      // 全員宛て (to: null) は宛先フィルタより先に処理する。ホストの
+      // bye は to: null で送られるため、フィルタの後では届かなかった
+      if (p.to == null) {
+        if (p.kind === 'bye' && p.from === 'host') {
+          setStatus('room-ended', { reason: p.reason || undefined });
+          teardown();
+        } else if (p.kind === 'host-claim' && p.from === 'host') handleHostClaim();
+        return;
+      }
+      if (p.to !== guestId) return;
       if (p.kind === 'offer') handleOffer(p.sdp);
       else if (p.kind === 'ice') { if (pc && p.candidate) pc.addIceCandidate(p.candidate).catch(function () {}); }
       else if (p.kind === 'deny') { failed = true; setStatus('failed', { reason: p.reason || 'denied' }); }
-      else if (p.kind === 'bye') { setStatus('room-ended'); teardown(); }
+      else if (p.kind === 'bye') { setStatus('room-ended', { reason: p.reason || undefined }); teardown(); }
+      else if (p.kind === 'kicked') { failed = true; setStatus('kicked'); teardown(); }
+      else if (p.kind === 'host-proof') handleHostProof(p);
     }
   });
   setStatus('signaling', { code: code });
   armConnectTimer(); // シグナリング自体がつながらない場合も期限で failed にする
 
   function sendWant() {
-    if (closed || failed) return;
+    if (closed || failed || inGrace) return; // 猶予中は死んだホストへの want を止める (§4.3)
     setStatus('connecting', { code: code });
     sig.send({
       kind: 'want', from: guestId, to: 'host',
       logicVersion: hookVal(hooks, 'logicVersion'),
-      poolFingerprint: hookVal(hooks, 'poolFingerprint')
+      poolFingerprint: hookVal(hooks, 'poolFingerprint'),
+      // 復帰ホストへの再入室では以前の playerId を添え、席と色を維持
+      // してもらう (初回参加では playerId は null)
+      prevPlayerId: playerId || undefined
     });
     armConnectTimer();
   }
@@ -1335,6 +1585,7 @@ function joinRoom(code, hooks, callbacks, options) {
     pc.oniceconnectionstatechange = function () {
       var st = pc.iceConnectionState;
       if (st !== 'failed') return;
+      if (everOpened) { enterHostWait(); return; } // 一度開いた接続の死はホスト復帰の猶予へ (HOST_RECLAIM_DESIGN §4)
       if (!restartTried) {
         // ホスト側の ICE restart offer を待つ
         restartTried = true;
@@ -1348,6 +1599,7 @@ function joinRoom(code, hooks, callbacks, options) {
       if (msg.t === 'welcome') {
         playerId = msg.playerId;
         session.playerId = playerId;
+        if (msg.hostPub) hostPub = msg.hostPub; // ホスト復帰の検証用 公開鍵を保持する
         if (callbacks.onVerifyCode && msg.verify) callbacks.onVerifyCode(msg.verify);
         if (msg.profiles && typeof msg.profiles === 'object') welcomeProfiles = msg.profiles;
         if (msg.handicaps && typeof msg.handicaps === 'object') welcomeHandicaps = msg.handicaps;
@@ -1395,6 +1647,7 @@ function joinRoom(code, hooks, callbacks, options) {
         isOpen = true; everOpened = true; restartTried = false; rejoinCount = 0;
         if (connectTimer) clearTimeout(connectTimer);
         if (restartTimer) clearTimeout(restartTimer);
+        if (inGrace) exitHostWait(); // 同一ホストの restart で戻れた場合も猶予を抜ける
         setStatus('open', { code: code });
       }
     };
@@ -1402,9 +1655,13 @@ function joinRoom(code, hooks, callbacks, options) {
   }
   function handleOffer(sdp) {
     if (closed || failed) return;
+    var verify = fingerprintCode(sdp);
+    // 猶予中に受け付けるのは、同じホスト (同一フィンガープリント) の
+    // ICE restart offer だけ。それ以外は claim の証明を経てから
+    if (inGrace && (!hostVerify || verify !== hostVerify)) return;
+    if (verify && !hostVerify) hostVerify = verify;
     if (!pc) createPc();
     if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
-    var verify = fingerprintCode(sdp);
     if (verify && callbacks.onVerifyCode) callbacks.onVerifyCode(verify);
     pc.setRemoteDescription({ type: 'offer', sdp: sdp }).then(function () {
       return pc.createAnswer();
@@ -1414,8 +1671,63 @@ function joinRoom(code, hooks, callbacks, options) {
       sig.send({ kind: 'answer', from: guestId, to: 'host', sdp: answer.sdp });
     }).catch(function () { rejoin(); });
   }
+  /* ホスト復帰の猶予 (HOST_RECLAIM_DESIGN §4): bye のない切断でのみ
+   * 入る。再入室ループは止め、復帰の名乗り (host-claim) を待つ */
+  function enterHostWait() {
+    if (inGrace || closed) return;
+    inGrace = true;
+    if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+    if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+    teardownPc();
+    setStatus('host-wait', { until: Date.now() + HOST_WAIT_MS, ms: HOST_WAIT_MS });
+    graceTimer = setTimeout(function () {
+      graceTimer = null;
+      if (closed) return;
+      inGrace = false;
+      failed = true;
+      setStatus('room-ended', { reason: 'host-lost' });
+      teardown();
+    }, HOST_WAIT_MS);
+  }
+  function exitHostWait() {
+    inGrace = false;
+    claimNonce = null;
+    if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
+  }
+  /* 復帰の名乗りへの応答: 猶予中かつ公開鍵がある時だけ challenge を
+   * 返す。対戦中 (begin 済み) かどうかを started で申告する */
+  function handleHostClaim() {
+    if (!inGrace || !hostPub || closed) return;
+    var c = subtleCrypto();
+    if (c && c.getRandomValues) {
+      var rb = new Uint8Array(16);
+      c.getRandomValues(rb);
+      claimNonce = bytesToB64url(rb);
+    } else {
+      claimNonce = 'n' + Date.now().toString(36) +
+        Math.floor(Math.random() * 1e12).toString(36) +
+        Math.floor(Math.random() * 1e12).toString(36);
+    }
+    sig.send({
+      kind: 'host-challenge', from: guestId, to: 'host',
+      nonce: claimNonce, started: engine.isBegun()
+    });
+  }
+  /* 署名の検証: 通った時だけ猶予を抜けて通常の want を送る。nonce は
+   * 成否にかかわらず消費する (使い回し防止) */
+  function handleHostProof(p) {
+    if (!inGrace || !hostPub || !claimNonce) return;
+    var nonce = claimNonce;
+    claimNonce = null;
+    verifyHostClaim(hostPub, code + '|' + nonce, p.sig).then(function (ok) {
+      if (!ok || closed || !inGrace) return;
+      exitHostWait();
+      connectDeadline = Date.now() + CONNECT_TIMEOUT_MS; // 復帰接続に新しい期限を与える
+      sendWant();
+    }).catch(function () {});
+  }
   function rejoin() {
-    if (closed || failed) return;
+    if (closed || failed || inGrace) return;
     if (rejoinCount >= 3) { failed = true; setStatus('failed', { reason: 'ice' }); return; }
     rejoinCount++;
     if (everOpened) connectDeadline = Date.now() + CONNECT_TIMEOUT_MS; // 一度つながった後の復帰には新しい期限を与える
@@ -1431,6 +1743,7 @@ function joinRoom(code, hooks, callbacks, options) {
     closed = true;
     if (connectTimer) clearTimeout(connectTimer);
     if (restartTimer) clearTimeout(restartTimer);
+    if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
     teardownPc();
     sig.close();
   }
@@ -1659,6 +1972,8 @@ function makeSessionFacade(o) {
     sendEphemeral: o.sendEphemeral,
     setProfile: function (p) { if (o.setProfile) o.setProfile(p); },
     setHandicap: function (level) { if (o.setHandicap) o.setHandicap(level); },
+    kickPlayer: function (playerId) { if (o.kickPlayer) o.kickPlayer(playerId); },
+    claimHost: function () { if (o.claimHost) o.claimHost(); },
     hostStart: function (payload) {
       var ev = { t: 'start' }; for (var k in (payload || {})) ev[k] = payload[k];
       o.engine.hostControl(ev);
@@ -1690,8 +2005,16 @@ var api = {
   sanitizeHandicap: sanitizeHandicap,
   resolveProfileColors: resolveProfileColors,
   peerListWithProfiles: peerListWithProfiles,
+  parseSrflxAddress: parseSrflxAddress,
+  sameLinePlayerIds: sameLinePlayerIds,
+  generateHostKeyPair: generateHostKeyPair,
+  signHostClaim: signHostClaim,
+  verifyHostClaim: verifyHostClaim,
   PROFILE_COLOR_COUNT: PROFILE_COLOR_COUNT,
   GROUP_GRAB_MAX: GROUP_GRAB_MAX,
+  BARRIER_TIMEOUT_MS: BARRIER_TIMEOUT_MS,
+  PRUNE_MS: PRUNE_MS,
+  HOST_WAIT_MS: HOST_WAIT_MS,
   EPH_COALESCE_MS: EPH_COALESCE_MS,
   createEphCoalescer: createEphCoalescer,
   _internals: { createSignaling: createSignaling, SUPABASE_URL: SUPABASE_URL }

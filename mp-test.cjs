@@ -76,6 +76,8 @@ function makeRig(opts) {
   hostEngine = MP.createEngine({
     role: 'host', hooks: hostGame.hooks, now: opts.now,
     rateLimit: opts.rateLimit, leaseTimeoutMs: opts.leaseTimeoutMs,
+    barrierTimeoutMs: opts.barrierTimeoutMs, pruneMs: opts.pruneMs,
+    onPlayerPruned: opts.onPlayerPruned,
     net: {
       broadcast: m => { deliver('g1', m); deliver('g2', m); },
       sendTo: (id, m) => deliver(id, m)
@@ -1150,12 +1152,243 @@ console.log('[14] BGM 同期 (start / snapshot の規範リスト配布)');
      'BGM同期: 規範リストの無い start はそのまま通る (旧端末は無視できる追加型)');
 }
 
+/* ================= 15. 準備バリアの期限 (GHOST_DESIGN §5.1) ======== */
+console.log('[15] 準備バリアの期限');
+{
+  let fakeNow = 5000000;
+  const pruned = [];
+  const rig = makeRig({ now: () => fakeNow, onPlayerPruned: (id, r) => pruned.push(id + ':' + r) });
+  rig.hostEngine.hostControl({ t: 'start', stage: 1 });
+  rig.hostEngine.setReady();
+  rig.g1Engine.setReady(); // g2 は応答なし (凍結した二重接続を想定)
+  fakeNow += 29000;
+  rig.hostEngine.tick();
+  ok(!rig.hostEngine.isBegun(), '29秒では begin しない');
+  eq(rig.hostEngine.getPlayers().length, 3, '29秒では全員残っている');
+  fakeNow += 1000;
+  rig.hostEngine.tick();
+  ok(rig.hostEngine.isBegun(), '30秒で未 ready を外して begin する');
+  eq(pruned.join(','), 'g2:barrier', '外されたのは g2 で理由は barrier');
+  eq(rig.hostEngine.getPlayers().map(p => p.playerId).join(','), 'host,g1', '名簿は host と g1 だけ');
+  rig.hostEngine.addPlayer('g2', 2, 9); // セッション層の台帳が残る前提の復帰
+  ok(rig.hostEngine.getPlayers().some(p => p.playerId === 'g2'), '同じ playerId で途中参加できる');
+}
+
+/* ================= 16. キックでバリアが進む (GHOST_DESIGN §5.2) ===== */
+console.log('[16] キック相当の除去でバリアが進む');
+{
+  const rig = makeRig();
+  rig.hostEngine.hostControl({ t: 'start', stage: 1 });
+  rig.hostEngine.setReady();
+  rig.g1Engine.setReady();
+  ok(!rig.hostEngine.isBegun(), 'g2 の ready 待ちで begin しない');
+  rig.hostEngine.removePlayer('g2'); // セッション層 kickPlayer が使う除去経路
+  ok(rig.hostEngine.isBegun(), '未 ready を外すと begin する');
+  eq(rig.hostEngine.getPlayers().map(p => p.playerId).join(','), 'host,g1', '面子は host と g1');
+}
+
+/* ================= 17. 無応答 prune (GHOST_DESIGN §5.3) ============= */
+console.log('[17] 無応答 prune');
+{
+  let fakeNow = 9000000;
+  const pruned = [];
+  const rig = makeRig({
+    now: () => fakeNow, leaseTimeoutMs: 120000,
+    onPlayerPruned: (id, r) => pruned.push(id + ':' + r)
+  });
+  const g1Types = [];
+  const origApply = rig.g1Game.hooks.applyEvent;
+  rig.g1Game.hooks.applyEvent = ev => { g1Types.push(ev.t); origApply(ev); };
+  rig.hostEngine.hostControl({ t: 'start', stage: 1 });
+  rig.hostEngine.setReady(); rig.g1Engine.setReady(); rig.g2Engine.setReady();
+  ok(rig.hostEngine.isBegun(), '全員 ready で begin');
+  const eg2 = grabOk(rig.g2Engine, 5);
+  ok(!!eg2 && !!rig.hostEngine.getLease(5), 'g2 が塊を掴んでいる');
+  fakeNow += 30000;
+  rig.hostEngine.noteActivity('g1'); // g1 は生存報告を続ける
+  rig.hostEngine.tick();
+  eq(pruned.length, 0, '30秒の無音では外れない');
+  fakeNow += 31000; // g2 の無音が61秒に
+  rig.hostEngine.noteActivity('g1');
+  rig.hostEngine.tick();
+  eq(pruned.join(','), 'g2:stale', '61秒無音の g2 が stale で外される');
+  ok(!rig.hostEngine.getLease(5), 'prune でリースが解放される');
+  ok(g1Types.includes('player-left'), 'g1 に player-left が届く (退出と同じ経路)');
+  ok(g1Types.includes('lease-expire'), 'g1 に lease-expire が届く');
+  fakeNow += 3600000;
+  rig.hostEngine.tick();
+  ok(rig.hostEngine.getPlayers().some(p => p.playerId === 'host'), 'ホストは prune 対象外');
+}
+
+/* ================= 18. srflx パースと同一回線判定 (§7) ============== */
+console.log('[18] srflx パースと同一回線判定');
+{
+  eq(MP.parseSrflxAddress('candidate:1 1 udp 2122260223 203.0.113.7 54321 typ srflx raddr 192.168.0.2 rport 54321'),
+    '203.0.113.7', 'srflx のアドレスを取り出す');
+  eq(MP.parseSrflxAddress('candidate:2 1 udp 1686052607 192.168.0.2 50000 typ host'), null, 'host candidate は対象外');
+  eq(MP.parseSrflxAddress('candidate:3 1 udp 41885439 198.51.100.3 3478 typ relay'), null, 'relay は対象外');
+  eq(MP.parseSrflxAddress(''), null, '空文字は null');
+  eq(MP.parseSrflxAddress(null), null, 'null は null');
+  const same = MP.sameLinePlayerIds({ g1: ['203.0.113.7'], g2: ['203.0.113.7'], g3: ['198.51.100.9'] });
+  ok(same.g1 === true && same.g2 === true && !same.g3, '同じアドレスの2人だけ印が付く');
+  const none = MP.sameLinePlayerIds({ g1: ['203.0.113.7'], g2: ['203.0.113.8'] });
+  ok(!none.g1 && !none.g2, '別アドレスなら印なし');
+}
+
+/* ================= 19. 猶予フロー (セッション層スタブ) ============= */
+/* WebSocket / RTCPeerConnection / タイマーをスタブに差し替えて、
+ * joinRoom の猶予 (host-wait) → 期限切れ終了と、claim の証明検証
+ * (不正な署名は弾く / 正しい署名で prevPlayerId 付き want が送られる)
+ * を検証する */
+function makeFakeTimers() {
+  let nextId = 1;
+  const timers = new Map();
+  return {
+    setTimeout: (fn, ms) => { const id = nextId++; timers.set(id, { fn, ms, interval: false }); return id; },
+    clearTimeout: id => { timers.delete(id); },
+    setInterval: (fn, ms) => { const id = nextId++; timers.set(id, { fn, ms, interval: true }); return id; },
+    clearInterval: id => { timers.delete(id); },
+    fire: ms => {
+      [...timers.entries()].filter(([, t]) => !t.interval && t.ms <= ms)
+        .forEach(([id, t]) => { timers.delete(id); t.fn(); });
+    }
+  };
+}
+function FakeWS(url) { this.url = url; this.readyState = 1; this.sent = []; FakeWS.last = this; }
+FakeWS.prototype.send = function (s) { this.sent.push(JSON.parse(s)); };
+FakeWS.prototype.close = function () { this.readyState = 3; };
+function FakeChannel(label) { this.label = label; this.readyState = 'open'; }
+FakeChannel.prototype.send = function () {};
+FakeChannel.prototype.close = function () { this.readyState = 'closed'; };
+function FakePC() { this.iceConnectionState = 'connected'; FakePC.last = this; }
+FakePC.prototype.setRemoteDescription = function () { return Promise.resolve(); };
+FakePC.prototype.createAnswer = function () { return Promise.resolve({ type: 'answer', sdp: 'answer-sdp' }); };
+FakePC.prototype.setLocalDescription = function () { return Promise.resolve(); };
+FakePC.prototype.addIceCandidate = function () { return Promise.resolve(); };
+FakePC.prototype.close = function () { this.iceConnectionState = 'closed'; };
+const OFFER_SDP = 'v=0\r\na=fingerprint:sha-256 ' +
+  'AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB:AB\r\n';
+
+function sessionGraceTests() {
+  console.log('[19] 猶予フロー (セッション層スタブ)');
+  const real = {
+    setTimeout: global.setTimeout, clearTimeout: global.clearTimeout,
+    setInterval: global.setInterval, clearInterval: global.clearInterval,
+    WebSocket: global.WebSocket, RTCPeerConnection: global.RTCPeerConnection
+  };
+  const flush = () => new Promise(r => real.setTimeout(r, 0));
+  function install(timers) {
+    global.setTimeout = timers.setTimeout; global.clearTimeout = timers.clearTimeout;
+    global.setInterval = timers.setInterval; global.clearInterval = timers.clearInterval;
+    global.WebSocket = FakeWS; global.RTCPeerConnection = FakePC;
+  }
+  function restore() {
+    global.setTimeout = real.setTimeout; global.clearTimeout = real.clearTimeout;
+    global.setInterval = real.setInterval; global.clearInterval = real.clearInterval;
+    global.WebSocket = real.WebSocket; global.RTCPeerConnection = real.RTCPeerConnection;
+  }
+  function sigIn(ws, payload) {
+    ws.onmessage({ data: JSON.stringify([null, 'r', 'topic', 'broadcast', { type: 'broadcast', event: 'sig', payload }]) });
+  }
+  function joinOk(ws) {
+    const joinRef = ws.sent[0][0];
+    ws.onmessage({ data: JSON.stringify([joinRef, joinRef, 'topic', 'phx_reply', { status: 'ok' }]) });
+  }
+  function sentPayloads(ws, kind) {
+    return ws.sent.filter(f => f[3] === 'broadcast' && f[4] && f[4].payload && f[4].payload.kind === kind)
+      .map(f => f[4].payload);
+  }
+  function openGuestSession(guestId, hostPub) {
+    const statuses = [];
+    const game = makeMockGame(12);
+    const sess = MP.joinRoom('ABC123', game.hooks, {
+      onStatus: (s, info) => statuses.push([s, info]),
+      onPeers: () => {}, onVerifyCode: () => {}
+    }, { guestId });
+    const ws = FakeWS.last;
+    ws.onopen();
+    joinOk(ws);
+    sigIn(ws, { kind: 'offer', from: 'host', to: guestId, sdp: OFFER_SDP });
+    return flush().then(() => {
+      const pc = FakePC.last;
+      const evCh = new FakeChannel('ev'), ephCh = new FakeChannel('eph');
+      pc.ondatachannel({ channel: evCh });
+      pc.ondatachannel({ channel: ephCh });
+      evCh.onmessage({ data: JSON.stringify({ t: 'welcome', playerId: 'g1', color: 1, hostPub }) });
+      return { sess, ws, pc, statuses };
+    });
+  }
+
+  const timersA = makeFakeTimers();
+  install(timersA);
+  return MP.generateHostKeyPair().then(kp => {
+    // --- A: 猶予 → 期限切れで部屋終了 (文言は host-lost) ---
+    return openGuestSession('gtestA', kp.publicJwk).then(({ ws, pc, statuses }) => {
+      ok(statuses.some(([s]) => s === 'open'), '猶予A: 接続が開く');
+      pc.iceConnectionState = 'failed';
+      pc.oniceconnectionstatechange();
+      const hw = statuses.find(([s]) => s === 'host-wait');
+      ok(!!hw && hw[1] && hw[1].ms === 60000, '猶予A: ICE failed で host-wait (60秒) に入る');
+      ok(!statuses.some(([s]) => s === 'room-ended'), '猶予A: 猶予中はまだ終了しない');
+      timersA.fire(60000);
+      const re = statuses.find(([s]) => s === 'room-ended');
+      ok(!!re && re[1] && re[1].reason === 'host-lost', '猶予A: 期限切れで room-ended (host-lost)');
+    }).then(() => {
+      // --- B: 不正な証明は弾かれ、正しい証明で復帰する ---
+      const timersB = makeFakeTimers();
+      install(timersB);
+      return openGuestSession('gtestB', kp.publicJwk).then(({ sess, ws, pc, statuses }) => {
+        pc.iceConnectionState = 'failed';
+        pc.oniceconnectionstatechange();
+        ok(statuses.some(([s]) => s === 'host-wait'), '猶予B: host-wait に入る');
+        sigIn(ws, { kind: 'host-claim', from: 'host', to: null });
+        const ch1 = sentPayloads(ws, 'host-challenge');
+        eq(ch1.length, 1, '猶予B: claim に challenge を返す');
+        eq(ch1[0].started, false, '猶予B: ロビー段階なので started は false');
+        const wantsBefore = sentPayloads(ws, 'want').length;
+        sigIn(ws, { kind: 'host-proof', from: 'host', to: 'gtestB', sig: 'AAAA' });
+        return flush().then(() => {
+          eq(sentPayloads(ws, 'want').length, wantsBefore, '猶予B: 不正な署名では want を送らない');
+          sigIn(ws, { kind: 'host-claim', from: 'host', to: null });
+          const ch2 = sentPayloads(ws, 'host-challenge');
+          eq(ch2.length, 2, '猶予B: 再 claim で新しい challenge を返す');
+          return MP.signHostClaim(kp.privateJwk, 'ABC123|' + ch2[1].nonce);
+        }).then(sig => {
+          sigIn(ws, { kind: 'host-proof', from: 'host', to: 'gtestB', sig });
+          // WebCrypto の importKey + verify は実時間で数十ms かかる
+          return new Promise(r => real.setTimeout(r, 80));
+        }).then(() => {
+          const wants = sentPayloads(ws, 'want');
+          ok(wants.length > wantsBefore, '猶予B: 正しい署名で want が送られる');
+          eq(wants[wants.length - 1].prevPlayerId, 'g1', '猶予B: want に以前の playerId が添えられる');
+          sess.leave();
+        });
+      });
+    });
+  }).then(() => { restore(); }, err => { restore(); throw err; });
+}
+
 MP.encodeManualCode({ v: 1, kind: 'offer', sdp: 'dummy-sdp' }).then(codeStr => {
   ok(/^[gr]\./.test(codeStr), '手動コードに接頭辞が付く');
   return MP.decodeManualCode(codeStr);
 }).then(obj => {
   eq(obj.kind, 'offer', '手動コードの往復 (kind)');
   eq(obj.sdp, 'dummy-sdp', '手動コードの往復 (sdp)');
+  // ホスト復帰の鍵検証 (HOST_RECLAIM_DESIGN §3): 正しい鍵・正しい
+  // nonce の署名だけが通り、検証を通らない復帰は弾かれる
+  return MP.generateHostKeyPair().then(kp =>
+    MP.signHostClaim(kp.privateJwk, 'CODE|nonce1').then(sig =>
+      MP.verifyHostClaim(kp.publicJwk, 'CODE|nonce1', sig).then(ok1 => {
+        ok(ok1 === true, '鍵検証: 正しい署名は通る');
+        return MP.verifyHostClaim(kp.publicJwk, 'CODE|nonce2', sig);
+      }).then(ok2 => {
+        ok(ok2 === false, '鍵検証: nonce が違う署名は弾かれる');
+        return MP.generateHostKeyPair().then(kp2 =>
+          MP.verifyHostClaim(kp2.publicJwk, 'CODE|nonce1', sig));
+      }).then(ok3 => {
+        ok(ok3 === false, '鍵検証: 別の鍵では通らない');
+      })));
+}).then(() => sessionGraceTests()).then(() => {
   console.log('\n' + passed + ' passed / ' + failed + ' failed');
   process.exit(failed ? 1 : 0);
 }).catch(err => {
