@@ -221,6 +221,16 @@ function entryThumbUrl(entry) {
   if (entry.type === 'picsum') return 'https://picsum.photos/id/' + entry.id + '/400/400';
   return entry.thumbUrl || entry.fullUrl || null;
 }
+/* 壁表示用 (額・帯・壁共有画像) の写真 URL: URL エントリは web サイズ
+ * (thumbUrl、Cleveland の _web.jpg 等) を優先する。原寸 (印刷用
+ * _print.jpg は数MB級) は壁のような小さい表示では画質差が出ないのに、
+ * ダウンロードとデコードが iPhone で重い。プレイ用と詳細モーダルは
+ * 原寸のまま (entryPhotoUrl)。picsum はサイズ指定が効くので同じ流儀 */
+function wallPhotoUrl(entry, size) {
+  if (!entry) return null;
+  if (entry.type === 'url') return entry.thumbUrl || entry.fullUrl || null;
+  return entryPhotoUrl(entry, size);
+}
 function imageSizeFor(pieces) {
   if (pieces <= 225) return 1080;
   if (pieces <= 784) return 1600;
@@ -989,6 +999,34 @@ function detailRenderPlan(pieces) {
     n: n,
     sizePx: n >= 45 ? 736 : n >= 28 ? 864 : 960,
     perSeg: n >= 28 ? 6 : 10
+  };
+}
+/* ---- 壁の額・帯用の「標準ピース模様」オーバーレイ ----
+ * 壁の額は実盤面の継ぎ目を毎回全ピース描画していたため、額が増える
+ * ほど再描画が重かった (iPhone で顕著)。壁表示では、写真の上に
+ * 「ピース数ごとに決まる標準パターンの継ぎ目+立体感 (透過レイヤー)」
+ * を重ねる方式に変える (ユーザー承認済み 2026-11-18: どの絵も同じ
+ * ピース数なら同じピース模様でよい)。オーバーレイはピース数×描画
+ * サイズごとに1回だけ生成してキャッシュで使い回す。コレクションの
+ * タイルと詳細モーダルは従来どおり実レンダラーで描く */
+var WALL_OVERLAY_SEED = 'wall-overlay';
+function wallOverlayEdges(pieces) { return generateEdges(WALL_OVERLAY_SEED, pieces); }
+function wallOverlayKey(pieces, sizePx) { return pieces + ':' + sizePx; }
+/* 上限付きキャッシュ (上限を超えたら古いものから捨てる FIFO)。
+ * 値は透過 Canvas (ブラウザ側) だが、キャッシュ自体は値に依存しない */
+function createWallOverlayCache(maxEntries) {
+  var map = new Map();
+  var cap = Math.max(1, maxEntries || 8);
+  return {
+    get: function (key) { return map.get(key); },
+    set: function (key, val) {
+      if (map.has(key)) map.delete(key); // 再登録は新しい扱い (追い出しを後回しに)
+      else if (map.size >= cap) map.delete(map.keys().next().value);
+      map.set(key, val);
+      return val;
+    },
+    has: function (key) { return map.has(key); },
+    size: function () { return map.size; }
   };
 }
 /* ---- 机テクスチャのタイル敷き (描画オフセット計算) ----
@@ -2167,7 +2205,9 @@ var PureLogic = {
   clearedStages: clearedStages, nextStage: nextStage, unlockedImageKeys: unlockedImageKeys,
   topDifficultyRecord: topDifficultyRecord, collectionTilePlan: collectionTilePlan,
   stageBoxPatternIndex: stageBoxPatternIndex,
-  entryPhotoUrl: entryPhotoUrl, entryThumbUrl: entryThumbUrl,
+  entryPhotoUrl: entryPhotoUrl, entryThumbUrl: entryThumbUrl, wallPhotoUrl: wallPhotoUrl,
+  WALL_OVERLAY_SEED: WALL_OVERLAY_SEED, wallOverlayEdges: wallOverlayEdges,
+  wallOverlayKey: wallOverlayKey, createWallOverlayCache: createWallOverlayCache,
   genEdge: genEdge, edgeSegments: edgeSegments, sampleEdge: sampleEdge,
   generateEdges: generateEdges, sideSamples: sideSamples, pieceOutlinePoints: pieceOutlinePoints,
   pieceHome: pieceHome, clusterAnchorId: clusterAnchorId, piecePositions: piecePositions,
@@ -4752,6 +4792,29 @@ function showToast(text) {
   if (appToastTimer) clearTimeout(appToastTimer);
   appToastTimer = setTimeout(function () { el.classList.remove('show'); }, 3800);
 }
+/* 「つづきから再開しました」バナー: 汎用トーストと違いタイマーのない
+ * 固定バナーだったため、× を押すまで残り続けた。机に入った瞬間から
+ * 約4秒で自動で消えるようにし、MP の対戦中は出さない (起動時にソロの
+ * 進行中セーブを見て表示状態にしたものが、消されずに対戦画面へ残留
+ * していた)。表示の起点は起動時ではなく机に入った瞬間にする (起動
+ * 直後はスタート画面にいるので、そこで出し始めると見られない) */
+var resumeBannerTimer = null;
+function showResumeBanner() {
+  var b = $('resumeBanner');
+  if (!b) return;
+  if (mpInRoom()) { hideResumeBanner(); return; } // MP 中は出さない
+  b.hidden = false;
+  if (resumeBannerTimer) clearTimeout(resumeBannerTimer);
+  resumeBannerTimer = setTimeout(function () {
+    resumeBannerTimer = null;
+    b.hidden = true;
+  }, 4000);
+}
+function hideResumeBanner() {
+  var b = $('resumeBanner');
+  if (b) b.hidden = true;
+  if (resumeBannerTimer) { clearTimeout(resumeBannerTimer); resumeBannerTimer = null; }
+}
 /* 文字で共有: Web Share が使えればそれ、無ければクリップボードへ。
  * 文面は buildShareText (URL + #まいにちジグソー を必ず含む) */
 function shareResultText() {
@@ -5294,7 +5357,7 @@ function buildShareFrameCanvas(f, unitW, boardPx) {
     paintFrameUnit(ctx, st, U, null, 'missing', f.recordKey, upper);
     return Promise.resolve({ cv: cv, size: geo.size });
   }
-  return (boardPx ? renderBoardCanvasAt(rec, boardPx) : renderWallBoardCanvas(rec)).then(function (board) {
+  return renderWallBoardFast(rec, boardPx).then(function (board) {
     paintFrameUnit(ctx, st, U, board, 'ready', f.recordKey, upper);
     return { cv: cv, size: geo.size };
   });
@@ -6257,7 +6320,7 @@ function paintWallFrameUnit(cv, f, rec, st) {
   paintFrameUnit(ctx, st, U, null, rec ? 'loading' : 'missing', f.recordKey, upperPieces);
   if (!rec) return;
   var reveal = function () { if (cv.parentElement) cv.parentElement.style.opacity = ''; };
-  renderWallBoardCanvas(rec).then(function (board) {
+  renderWallBoardFast(rec).then(function (board) {
     if (!cv.isConnected) return; // 壁を作り直していたら古い描画は捨てる
     var c2 = cv.getContext('2d');
     c2.setTransform(scale, 0, 0, scale, 0, 0);
@@ -6266,11 +6329,49 @@ function paintWallFrameUnit(cv, f, rec, st) {
     reveal();
   }).catch(function () { reveal(); });
 }
-/* 壁の額装パズル: コレクション詳細 (paintDetailBoard) と同じ辺生成・
- * 輪郭パスで、完成盤面をオフスクリーン Canvas に描く。ピースの形と数は
- * レコードの日付×難易度で決まる実物と一致する。 */
+/* 完成盤面を実ピース形状で描く (コレクション詳細 paintDetailBoard と
+ * 同じ辺生成・輪郭パス。ピースの形と数はレコードの日付×難易度で決まる
+ * 実物と一致する)。重いので、残すのはクリア結果の共有画像だけにして、
+ * 壁の額・帯・壁共有画像は下の高速版 (標準模様オーバーレイ) に替えた */
 function renderWallBoardCanvas(rec) {
   return renderBoardCanvasAt(rec, detailRenderPlan(rec.pieces).sizePx);
+}
+/* 壁用の高速盤面: 写真を全面に1回描き、ピース数ごとの標準模様
+ * オーバーレイ (継ぎ目+ベベル、透過) を重ねる。オーバーレイは
+ * ピース数×サイズごとに1回だけ生成してキャッシュから使い回すため、
+ * 額の追加や壁の再描画では新規分以外は生成が走らない */
+var wallOverlayCache = createWallOverlayCache(8);
+function wallSeamOverlay(pieces, sizePx) {
+  var key = wallOverlayKey(pieces, sizePx);
+  var hit = wallOverlayCache.get(key);
+  if (hit) return hit;
+  var plan = detailRenderPlan(pieces);
+  var cv = document.createElement('canvas');
+  cv.width = sizePx; cv.height = sizePx;
+  var ctx = cv.getContext('2d');
+  var layout = { n: plan.n, cellPx: sizePx / plan.n, ox: 0, oy: 0, boardPx: sizePx };
+  var edges = wallOverlayEdges(pieces);
+  for (var id = 0; id < plan.n * plan.n; id++) {
+    var home = pieceHome(id, plan.n);
+    var path = detailPiecePath(edges, home.col, home.row, layout, plan.perSeg);
+    strokePieceBevel(ctx, path, pieceRelief(layout.cellPx).bevel); // 実盤面と同じ部品・同じ濃さ
+    ctx.strokeStyle = 'rgba(30,30,30,0.35)';
+    ctx.lineWidth = Math.max(1, layout.cellPx * 0.02);
+    ctx.stroke(path);
+  }
+  return wallOverlayCache.set(key, cv);
+}
+function renderWallBoardFast(rec, sizePx) {
+  var px = sizePx || detailRenderPlan(rec.pieces).sizePx;
+  return loadWallSource(rec).then(function (src) {
+    var bcv = document.createElement('canvas');
+    bcv.width = px; bcv.height = px;
+    var ctx = bcv.getContext('2d');
+    ctx.drawImage(src, 0, 0, px, px);
+    var ov = wallSeamOverlay(rec.pieces, px);
+    if (ov) ctx.drawImage(ov, 0, 0);
+    return bcv;
+  });
 }
 /* 完成盤面を指定サイズで描く。額装は詳細サイズ、額装ピッカーの
  * サムネイルは小サイズで、どちらも同じ実ピース形状の見た目にする。 */
@@ -7344,6 +7445,18 @@ function startReplayFromDetail() {
 function loadDetailSource(r) {
   var size = Math.min(1080, imageSizeFor(r.pieces));
   var url = entryPhotoUrl(entryForRecord(r), size);
+  return loadSquareSource(r, url, size);
+}
+/* 壁用 (額・帯・壁共有画像) の写真: URL エントリは web サイズを優先
+ * して読む (wallPhotoUrl)。詳細モーダルは画質優先で原寸のまま
+ * (loadDetailSource) — 切り分けは URL の選択だけで、切り抜きと
+ * デコード待ちの手順は共通 (loadSquareSource) */
+function loadWallSource(r) {
+  var size = Math.min(1080, imageSizeFor(r.pieces));
+  var url = wallPhotoUrl(entryForRecord(r), size);
+  return loadSquareSource(r, url, size);
+}
+function loadSquareSource(r, url, size) {
   if (!url) return Promise.resolve(makeFallbackCanvas(r.date));
   return loadImgCorsFallback(url).then(function (img) {
     var draw = function () {
@@ -7792,7 +7905,7 @@ function wireControls() {
   });
   $('detailPlayBtn').addEventListener('click', startReplayFromDetail);
   $('collectionBack').addEventListener('click', function () { navBack(); });
-  $('resumeClose').addEventListener('click', function () { $('resumeBanner').hidden = true; });
+  $('resumeClose').addEventListener('click', function () { hideResumeBanner(); });
   document.querySelectorAll('[data-close]').forEach(function (el) {
     el.addEventListener('click', function () { navBack(); });
   });
@@ -8170,6 +8283,7 @@ function openBox() {
     updateProgressUI();
     draw();
     bgmTryPlay(); // 机に入ったので BGM を開始 (初回) / 再開する (id 19)
+    if (state.resumed) showResumeBanner(); // 続きからの時だけ、机に入った瞬間から約4秒出す
     veil.classList.remove('on');
     fadeSwapPending = false;
     box.classList.remove('opening'); // 次に箱を出すとき (やりなおし後) は閉じた状態から
@@ -8633,6 +8747,7 @@ function mpOnReject(rej) {
     var a2 = mp.lastDropAnchor;
     mp.lastDropAnchor = null;
     if (a2 != null) {
+      delete mp.myLeases[a2]; // 却下された drop のリースはホスト側で解放される。自分の記録も消す
       var c2 = mpClusterByAnchor(a2), hh = mp.grabHome[a2];
       if (c2 && hh) { c2.gx = hh.gx; c2.gy = hh.gy; draw(); }
     }
@@ -8660,6 +8775,7 @@ function mpOnReject(rej) {
     var gdAnchors = mp.lastGroupDropAnchors || [];
     mp.lastGroupDropAnchors = null;
     gdAnchors.forEach(function (a) {
+      delete mp.myLeases[a]; // drop の却下と同じ掃除
       var cl = mpClusterByAnchor(a), h = mp.grabHome[a];
       if (cl && h) { cl.gx = h.gx; cl.gy = h.gy; }
     });
@@ -9322,6 +9438,7 @@ function mpLoadPuzzle(stage, pieces) {
   navPush('play');
   applyVisibility();
   $('loadingOverlay').style.display = 'flex';
+  hideResumeBanner(); // MP では出さない (ソロ再開バナーの残留防止)
   $('mpWaitVeil').hidden = false;
   $('mpWaitText').textContent = 'みんなの準備を待っています…';
   mpStartWaitVeilTimer(); // ホストは「誰待ちか」+ 外すボタンを出す
@@ -9532,6 +9649,10 @@ function mpLeaseBlocked(cl) {
   return !!lease && lease.holder !== mpMyId();
 }
 function mpOnDrop(ev) {
+  // 確定した drop で自分のリースは終わっている。myLeases に残すと、
+  // 次に同じ塊を掴んだ時に古い epoch を「確定済み」と誤認して
+  // group-drop の epoch 事故の温床になるので、エコーで消す
+  if (ev.from === mpMyId()) delete mp.myLeases[ev.cluster];
   var cl = mpClusterByAnchor(ev.cluster);
   if (!cl) throw new Error('mp: drop 先の塊がありません');
   var clustersBefore = state.clusters.length;
@@ -9610,6 +9731,7 @@ function mpOnGrabGroup(ev) {
 function mpOnGroupDrop(ev) {
   var n = state.n;
   var items = ev.items || [];
+  if (ev.from === mpMyId()) items.forEach(function (it) { delete mp.myLeases[it.cluster]; }); // drop と同じ掃除
   var itemByAnchor = {};
   items.forEach(function (it) { itemByAnchor[it.cluster] = it; });
   var leaderItem = itemByAnchor[ev.leader];
@@ -9684,7 +9806,20 @@ function mpTurnPlayerId() {
   return mp.turnOrder.length ? mp.turnOrder[mpResolveTurnIdx()] : null;
 }
 function mpAdvanceTurn() {
+  var prev = mpTurnPlayerId();
   mp.turnIdx = nextTurnIndex(mp.turnOrder, mp.leftPlayers, mpResolveTurnIdx());
+  /* ターン制の構造的な担保: 手番が移ったら、前の手番者の残リースを
+   * ホストが全解放する。却下された drop 等で宙に浮いたリースは、
+   * 保持者が接続中の限り自動失効しないため、この掃除がないと
+   * 「自分の手番なのに相手が掴んだまま」になる。ここは確定イベントの
+   * 適用中 (エンジンの採番の中) なので、直接採番すると seq が衝突
+   * する。確定が終わってから流すよう setTimeout で逃がす */
+  var next = mpTurnPlayerId();
+  if (prev && next && prev !== next && mpIsHost() && mp.session && mp.session.engine &&
+      typeof mp.session.engine.releasePlayerLeases === 'function') {
+    var eng = mp.session.engine, pid = prev;
+    setTimeout(function () { eng.releasePlayerLeases(pid); }, 0);
+  }
 }
 function mpOnPlayerLeft(ev) {
   if (!ev.player) return;
@@ -10439,7 +10574,7 @@ function startGame(pool) {
     .map(function (e) { return '<li>' + escapeHtml(e.title || '') + ' — ' + escapeHtml(e.attribution) + '</li>'; })
     .join('');
   $('loadingOverlay').style.display = 'flex';
-  $('resumeBanner').hidden = !state.resumed;
+  hideResumeBanner(); // 起動時は出さない。机に入った時に showResumeBanner が約4秒だけ出す
   applyVisibility();
   loadSourceImage().then(function (res) {
     var src = res.img;

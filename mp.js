@@ -435,6 +435,11 @@ function createEngine(opts) {
   /* リース台帳 (ホストが権威、ゲストは確定イベントから写す) */
   var leases = {};               // anchorId -> { holder, epoch }
   var leaseEpochs = {};          // anchorId -> 最後に使った epoch
+  /* 却下された drop のリース解放予約 (anchorId -> { holder, epoch })。
+   * 解放自体は lease-expire の採番で行うが、採番 (sequence) の適用処理
+   * の中から直接採番すると seq が衝突するため、適用の外で流す */
+  var pendingLeaseReleases = {};
+  var applyDepth = 0;            // hooks.applyEvent の実行中かどうか
 
   /* ゲスト側: 欠番バッファと snapshot 要求の抑制 */
   var buffer = {};               // seq -> msg
@@ -486,6 +491,47 @@ function createEngine(opts) {
     } else if (ev.t === 'start' || ev.t === 'next') {
       leases = {}; // 新規盤面ではリースは全て消える
     }
+  }
+
+  /* ---------------- 却下された drop のリース解放 --------------------
+   * drop / group-drop が却下されると、送った側はドラッグを畳んで
+   * 「置けなかった」と表示するだけで、二度と離す操作を送らない。
+   * リースの自動失効は保持者の無音ベースなので、接続中の保持者の
+   * 宙に浮いたリースはこのままだと永遠に残る。却下は「離す意思表示」
+   * として扱い、ホスト側で lease-expire として確定解放する。
+   * 対象は epoch が一致するリースだけ (失効→再掴みで世代が進んだ
+   * リースを、古い drop の却下で巻き込まないため) */
+  function queueLeaseReleaseOnReject(fromId, ev) {
+    if (!ev) return;
+    if (ev.t === 'drop') {
+      var L = leases[ev.cluster];
+      if (L && L.holder === fromId && L.epoch === ev.epoch)
+        pendingLeaseReleases[ev.cluster] = { holder: fromId, epoch: ev.epoch };
+    } else if (ev.t === 'group-drop') {
+      (ev.items || []).forEach(function (it) {
+        var L2 = leases[it.cluster];
+        var ep = ev.epochs ? ev.epochs[it.cluster] : undefined;
+        if (L2 && L2.holder === fromId && (ep === undefined || L2.epoch === ep))
+          pendingLeaseReleases[it.cluster] = { holder: fromId, epoch: L2.epoch };
+      });
+    }
+  }
+  /* 予約された解放を lease-expire として採番する。適用処理の中
+   * (applyDepth > 0) では採番が seq 衝突を起こすので流さず、次の
+   * 受信か tick の機会に回す */
+  function flushLeaseReleases() {
+    if (applyDepth > 0) return;
+    var keys = Object.keys(pendingLeaseReleases);
+    if (!keys.length) return;
+    var pend = pendingLeaseReleases;
+    pendingLeaseReleases = {};
+    keys.forEach(function (key) {
+      var want = pend[key];
+      var cur = leases[key];
+      if (!cur || cur.holder !== want.holder || cur.epoch !== want.epoch) return;
+      try { sequence(HOST_ID, { t: 'lease-expire', cluster: isNaN(+key) ? key : +key, epoch: cur.epoch, by: want.holder }); }
+      catch (e) { delete leases[key]; }
+    });
   }
 
   /* ---------------- ホスト: 検証 ---------------------------------- */
@@ -634,8 +680,13 @@ function createEngine(opts) {
     var msg = { t: 'ev', seq: seq, from: fromId, ev: out };
     // 自端末で適用できないイベントは確定しない (seq も消費しない)。
     // ep はセッション層が送信先ごとに捺す (接続 epoch はプレイヤー単位)。
-    if (typeof hooks.applyEvent === 'function')
-      hooks.applyEvent(out, { seq: seq, from: fromId });
+    // 適用中であることは applyDepth で数える (適用の中から送られた
+    // イベントの却下に伴うリース解放を、採番の外へ逃がす判定に使う)
+    if (typeof hooks.applyEvent === 'function') {
+      applyDepth++;
+      try { hooks.applyEvent(out, { seq: seq, from: fromId }); }
+      finally { applyDepth--; }
+    }
     lastSeq = seq;
     if (fromId === selfId && players[fromId]) players[fromId].lastSeen = now();
     leaseMirrorApply(out);
@@ -688,6 +739,7 @@ function createEngine(opts) {
   /* ---------------- ホスト: 受信 ---------------------------------- */
   function hostReceive(fromId, msg) {
     if (!msg || typeof msg !== 'object') return;
+    flushLeaseReleases(); // 適用中に予約された解放は、採番の外である受信の冒頭で流す
     if (players[fromId]) players[fromId].lastSeen = now();
     // 旧接続 (再接続前の epoch) から届いた残りは捨てる
     var expectedEp = players[fromId] && players[fromId].ep;
@@ -696,9 +748,18 @@ function createEngine(opts) {
     if (msg.t !== 'req') return;
     var ev = msg.ev || {};
     var reason = validate(fromId, ev);
-    if (reason) { reject(fromId, msg.mid, reason, ev.t); return; }
+    if (reason) {
+      reject(fromId, msg.mid, reason, ev.t);
+      queueLeaseReleaseOnReject(fromId, ev); // 却下された drop は離す意思表示として解放する
+      flushLeaseReleases();
+      return;
+    }
     try { sequence(fromId, ev); }
-    catch (e) { reject(fromId, msg.mid, 'apply-error', ev.t); }
+    catch (e) {
+      reject(fromId, msg.mid, 'apply-error', ev.t);
+      queueLeaseReleaseOnReject(fromId, ev);
+      flushLeaseReleases();
+    }
   }
   function hostControl(fromId, ctl) {
     if (!players[fromId]) return;
@@ -733,15 +794,21 @@ function createEngine(opts) {
     onPeersChange();
     return players[id];
   }
-  function removePlayer(id) {
-    if (!players[id]) return;
-    // 保持中リースを確定イベントで解放してから台帳を消す
+  /* 指定プレイヤーの保持リースを全て lease-expire として確定解放する。
+   * 退出 (removePlayer)・再入室 (handleWant)・ターン交代 (アプリ側) で
+   * 共通の掃除。解放はイベントとして全端末に行き渡る */
+  function releaseAllLeasesOf(id) {
     var held = [];
     for (var c in leases) if (leases[c].holder === id) held.push(c);
     held.forEach(function (cluster) {
-      try { sequence(HOST_ID, { t: 'lease-expire', cluster: cluster, epoch: leases[cluster].epoch, by: id }); }
+      try { sequence(HOST_ID, { t: 'lease-expire', cluster: isNaN(+cluster) ? cluster : +cluster, epoch: leases[cluster].epoch, by: id }); }
       catch (e) { delete leases[cluster]; }
     });
+  }
+  function removePlayer(id) {
+    if (!players[id]) return;
+    // 保持中リースを確定イベントで解放してから台帳を消す
+    releaseAllLeasesOf(id);
     // 対戦中の退出は seq 付きで全端末へ知らせる (ターン制の手番スキップ
     // などを全端末で同一に導出するため。ロビー段階では送らない)
     if (started) {
@@ -872,9 +939,18 @@ function createEngine(opts) {
       var mid = makeId('m');
       if (isHost) {
         var reason = validate(selfId, ev);
-        if (reason) { onReject({ t: 'reject', mid: mid, reason: reason, evType: ev && ev.t }); return mid; }
+        if (reason) {
+          onReject({ t: 'reject', mid: mid, reason: reason, evType: ev && ev.t });
+          queueLeaseReleaseOnReject(selfId, ev); // ゲスト経路と同じく、却下された drop は解放する
+          flushLeaseReleases(); // 適用中なら流さず予約のまま残る (tick/受信で流れる)
+          return mid;
+        }
         try { sequence(selfId, ev); }
-        catch (e) { onReject({ t: 'reject', mid: mid, reason: 'apply-error', evType: ev && ev.t }); }
+        catch (e) {
+          onReject({ t: 'reject', mid: mid, reason: 'apply-error', evType: ev && ev.t });
+          queueLeaseReleaseOnReject(selfId, ev);
+          flushLeaseReleases();
+        }
       } else if (net.sendToHost) {
         net.sendToHost({ t: 'req', ep: epoch, mid: mid, ev: ev });
       }
@@ -897,6 +973,7 @@ function createEngine(opts) {
     sendSnapshotTo: sendSnapshotTo,
     requestSnapshot: function () { requestSnapshot(true); },
     addPlayer: addPlayer,
+    releasePlayerLeases: releaseAllLeasesOf,
     setPlayerEpoch: function (id, ep) { if (players[id]) players[id].ep = ep; },
     getPlayerEpoch: function (id) { return players[id] ? players[id].ep : undefined; },
     removePlayer: removePlayer,
@@ -921,6 +998,7 @@ function createEngine(opts) {
     // リースのタイムアウト検査 (セッション層が定期的に呼ぶ)
     tick: function () {
       if (!isHost) return;
+      flushLeaseReleases(); // 却下に伴う解放予約の流し残しをここでも流す
       var t = now(), expired = [];
       for (var c in leases) {
         var holder = leases[c].holder;
@@ -1232,6 +1310,10 @@ function createRoom(hooks, callbacks, options) {
     var bk = book[gid];
     if (engine.isStarted() && !bk) return; // 開始後は既知の guestId 以外締める (§2-5)
     if (peers[gid]) closePeer(gid);        // 再入室: 旧接続を捨てて作り直す
+    // 再入室: 前の接続で掴んだままのリースは台帳に残っているが、入り
+    // 直した本人は自分が保持者だと知らず二度と解放を送らない。再登録
+    // の前に全解放する (再接続直後に掴み中であることはあり得ない)
+    if (bk) engine.releasePlayerLeases(bk.playerId);
     if (!bk) {
       // 復帰ホストの部屋では台帳が空なので、want に添えられた以前の
       // playerId (prevPlayerId) が未使用なら引き継ぎ、席と色を維持

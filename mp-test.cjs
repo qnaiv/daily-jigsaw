@@ -143,16 +143,29 @@ console.log('[2] リースと検証');
 
   rig.g1Engine.request({ t: 'drop', cluster: 10, epoch: e1, x: 9999, y: 0 });
   eq(rig.rejects.g1[0].reason, 'coords', '範囲外座標の drop が coords で却下');
-  rig.g1Engine.request({ t: 'drop', cluster: 10, epoch: e1, x: NaN, y: 0 });
+  // 却下された drop は「離す意思表示」: リースは lease-expire で解放
+  // される (却下そのものは seq を消費しないが、解放イベントは消費する)
+  eq(rig.hostEngine.getLease(10), null, '却下された drop のリースは解放される');
+  eq(rig.g1Engine.getLease(10), null, '解放はゲスト側の台帳にも行き渡る');
+  eq(rig.hostEngine.getWatermark(), wmBefore + 1, '解放イベント (lease-expire) が1つ確定する');
+
+  const e1b = grabOk(rig.g1Engine, 10);
+  rig.g1Engine.request({ t: 'drop', cluster: 10, epoch: e1b, x: NaN, y: 0 });
   eq(rig.rejects.g1[1].reason, 'coords', 'NaN 座標の drop が coords で却下');
+  eq(rig.hostEngine.getLease(10), null, 'NaN で却下された drop のリースも解放される');
   rig.g1Engine.request({ t: 'grab-req', cluster: 999 });
   eq(rig.rejects.g1[2].reason, 'no-cluster', '存在しない塊への grab が no-cluster で却下');
-  rig.g1Engine.request({ t: 'drop', cluster: 10, epoch: e1 + 99, x: 0, y: 0 });
-  eq(rig.rejects.g1[3].reason, 'epoch', 'epoch 不一致の drop が epoch で却下');
-  eq(rig.hostEngine.getWatermark(), wmBefore, '不正イベントはどれも seq を消費しない');
 
-  rig.g1Engine.request({ t: 'drop', cluster: 10, epoch: e1, x: 5, y: 5 });
-  eq(rig.hostEngine.getWatermark(), wmBefore + 1, '正規の drop は確定する');
+  const e1c = grabOk(rig.g1Engine, 10);
+  const wmEpoch = rig.hostEngine.getWatermark();
+  rig.g1Engine.request({ t: 'drop', cluster: 10, epoch: e1c + 99, x: 0, y: 0 });
+  eq(rig.rejects.g1[3].reason, 'epoch', 'epoch 不一致の drop が epoch で却下');
+  // 世代が違う drop の却下では、現在のリースを巻き込まない
+  eq(rig.hostEngine.getLease(10).epoch, e1c, 'epoch 不一致の却下では現在のリースは解放されない');
+  eq(rig.hostEngine.getWatermark(), wmEpoch, 'epoch 不一致の却下は seq を消費しない');
+
+  rig.g1Engine.request({ t: 'drop', cluster: 10, epoch: e1c, x: 5, y: 5 });
+  eq(rig.hostEngine.getWatermark(), wmEpoch + 1, '正規の drop は確定する');
   const h = allHashes(rig);
   eq(h[1], h[0], '検証テスト後もゲスト1が一致');
   eq(h[2], h[0], '検証テスト後もゲスト2が一致');
@@ -887,7 +900,9 @@ function extendGroupMock(game) {
   });
   eq(rig.rejects.g2[rig.rejects.g2.length - 1].reason, 'not-holder', '一括: リースしていない塊の group-drop は not-holder');
 
-  // 検証: epoch 不一致は epoch、順列でない order は bad-order
+  // 検証: epoch 不一致は epoch、順列でない order は bad-order。
+  // 却下された group-drop は「離す意思表示」として、epoch が一致した
+  // 塊のリースから解放される (却下のたびに掴み直して検証する)
   rig.g1Engine.request({ t: 'grab-group-req', clusters: [6, 7], leader: 6 });
   const M6 = rig.g1Engine.getLease(6), M7 = rig.g1Engine.getLease(7);
   rig.g1Engine.request({
@@ -896,16 +911,23 @@ function extendGroupMock(game) {
     order: order, epochs: { 6: M6.epoch + 9, 7: M7.epoch }
   });
   eq(rig.rejects.g1[rig.rejects.g1.length - 1].reason, 'epoch', '一括: epoch 不一致の group-drop は epoch で却下');
+  eq(rig.hostEngine.getLease(6).epoch, M6.epoch, '一括: 世代が違う塊のリースは却下でも解放されない');
+  eq(rig.hostEngine.getLease(7), null, '一括: 世代が一致した塊のリースは却下で解放される');
+  rig.g1Engine.request({ t: 'grab-group-req', clusters: [6, 7], leader: 6 });
+  const N6 = rig.g1Engine.getLease(6), N7 = rig.g1Engine.getLease(7);
   rig.g1Engine.request({
     t: 'group-drop', leader: 6,
     items: [{ cluster: 6, x: 1, y: 1 }, { cluster: 7, x: 2, y: 1 }],
-    order: order.slice(1), epochs: { 6: M6.epoch, 7: M7.epoch }
+    order: order.slice(1), epochs: { 6: N6.epoch, 7: N7.epoch }
   });
   eq(rig.rejects.g1[rig.rejects.g1.length - 1].reason, 'bad-order', '一括: 全塊の順列でない order は bad-order');
+  ok(!rig.hostEngine.getLease(6) && !rig.hostEngine.getLease(7), '一括: bad-order の却下でも全リースが解放される');
+  rig.g1Engine.request({ t: 'grab-group-req', clusters: [6, 7], leader: 6 });
+  const P6 = rig.g1Engine.getLease(6), P7 = rig.g1Engine.getLease(7);
   rig.g1Engine.request({
     t: 'group-drop', leader: 6,
     items: [{ cluster: 6, x: 1, y: 1 }, { cluster: 7, x: 2, y: 1 }],
-    order: order, epochs: { 6: M6.epoch, 7: M7.epoch }
+    order: order, epochs: { 6: P6.epoch, 7: P7.epoch }
   });
   const h2 = allHashes(rig);
   eq(h2[1], h2[0], '一括: 正しい group-drop では収束する');
@@ -1233,6 +1255,90 @@ console.log('[18] srflx パースと同一回線判定');
   ok(same.g1 === true && same.g2 === true && !same.g3, '同じアドレスの2人だけ印が付く');
   const none = MP.sameLinePlayerIds({ g1: ['203.0.113.7'], g2: ['203.0.113.8'] });
   ok(!none.g1 && !none.g2, '別アドレスなら印なし');
+}
+
+/* ================= 20. リース残留の修正 =================
+ * リースに年齢がなく失効は保持者の生存ベースのため、接続中の保持者の
+ * 宙に浮いたリースは自動では消えない。発生経路ごとにホスト権威側で
+ * 解放する: (a) drop / group-drop の却下 = 離す意思表示として解放、
+ * (b) 再入室時は再登録前に全解放、(c) ターン交代で前の手番者を全解放 */
+console.log('[20] リース残留 (却下・再入室・手番交代)');
+{
+  // (a) 却下された group-drop の後は全リースが解放される
+  const rig = makeRig();
+  [rig.hostGame, rig.g1Game, rig.g2Game].forEach(extendGroupMock);
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 12 });
+  rig.g1Engine.request({ t: 'grab-group-req', clusters: [1, 2, 3], leader: 1 });
+  const G1 = rig.g1Engine.getLease(1), G2 = rig.g1Engine.getLease(2), G3 = rig.g1Engine.getLease(3);
+  ok(G1 && G2 && G3, '残留: 一括掴みで3塊のリースが付く');
+  const order = rig.g1Game.hooks.getClusters().map(c => c.anchorId);
+  rig.g1Engine.request({
+    t: 'group-drop', leader: 1,
+    items: [{ cluster: 1, x: 30, y: 30 }, { cluster: 2, x: 9999, y: 30 }, { cluster: 3, x: 32, y: 30 }],
+    order: order,
+    epochs: { 1: G1.epoch, 2: G2.epoch, 3: G3.epoch }
+  });
+  eq(rig.rejects.g1[rig.rejects.g1.length - 1].reason, 'coords', '残留: 座標不正の group-drop は coords で却下');
+  ok(!rig.hostEngine.getLease(1) && !rig.hostEngine.getLease(2) && !rig.hostEngine.getLease(3),
+    '残留: 却下された group-drop の後は全リースが解放される');
+  ok(!rig.g2Engine.getLease(1) && !rig.g1Engine.getLease(3), '残留: 解放は全端末の台帳に行き渡る');
+}
+{
+  // (a) ホスト自身の drop が却下されても解放される (engine.request 経路)
+  const rig = makeRig();
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 12 });
+  const eH = grabOk(rig.hostEngine, 4);
+  ok(!!eH, '残留: ホストが塊4を掴んだ');
+  rig.hostEngine.request({ t: 'drop', cluster: 4, epoch: eH, x: 9999, y: 0 });
+  eq(rig.rejects.host[rig.rejects.host.length - 1].reason, 'coords', '残留: ホストの範囲外 drop も coords で却下');
+  eq(rig.hostEngine.getLease(4), null, '残留: ホスト自身の却下 drop でもリースは解放される');
+  eq(rig.g1Engine.getLease(4), null, '残留: ホスト分の解放もゲストへ行き渡る');
+}
+{
+  // (b) 再入室時の全解放 (セッション層 handleWant が再登録前に呼ぶ)
+  const rig = makeRig();
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 12 });
+  grabOk(rig.g1Engine, 2);
+  grabOk(rig.g1Engine, 6);
+  const eOther = grabOk(rig.g2Engine, 8);
+  rig.hostEngine.releasePlayerLeases('g1');
+  ok(!rig.hostEngine.getLease(2) && !rig.hostEngine.getLease(6), '残留: 再入室時の全解放で本人のリースが消える');
+  ok(!rig.g1Engine.getLease(2) && !rig.g2Engine.getLease(6), '残留: 全解放は全端末に行き渡る');
+  eq(rig.hostEngine.getLease(8).epoch, eOther, '残留: 他人のリースは全解放で消えない');
+}
+{
+  // (c) 手番交代時の全解放 (アプリ側 mpAdvanceTurn がホストで呼ぶ)
+  const rig = makeRig();
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 12 });
+  grabOk(rig.g1Engine, 3); // 前の手番者が掴んだまま手番が移った状況
+  const eNext = grabOk(rig.g2Engine, 5);
+  rig.hostEngine.releasePlayerLeases('g1');
+  eq(rig.hostEngine.getLease(3), null, '残留: 手番交代で前の手番者のリースが消える');
+  eq(rig.hostEngine.getLease(5).epoch, eNext, '残留: 次の手番者のリースは残る');
+}
+{
+  // (a) 適用中 (applyEvent の中) から送られた drop の却下は、その場では
+  // 採番せず (seq 衝突回避)、tick で流れて解放される
+  const rig = makeRig();
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 12 });
+  const eH = grabOk(rig.hostEngine, 9); // ホストが塊9を保持
+  let fired = false;
+  const origApply = rig.hostGame.hooks.applyEvent;
+  rig.hostGame.hooks.applyEvent = function (ev) {
+    origApply(ev);
+    if (!fired && ev.t === 'grab' && ev.from === 'g1') {
+      fired = true;
+      // mpOnGrab のエコー待ち drop と同じ: 適用中にホスト自身の drop を送る
+      rig.hostEngine.request({ t: 'drop', cluster: 9, epoch: eH, x: 9999, y: 0 });
+    }
+  };
+  grabOk(rig.g1Engine, 7); // ゲストの grab 適用が引き金になる
+  ok(fired, '残留: 適用中の drop 送信が再現できた');
+  ok(!!rig.hostEngine.getLease(9), '残留: 適用中の却下では即時解放しない (seq 衝突回避)');
+  eq(rig.g1Engine.getWatermark(), rig.hostEngine.getWatermark(), '残留: 適用中の却下でも seq は欠けずゲストが追随する');
+  rig.hostEngine.tick();
+  eq(rig.hostEngine.getLease(9), null, '残留: 予約された解放は tick で流れて解放される');
+  eq(rig.g2Engine.getWatermark(), rig.hostEngine.getWatermark(), '残留: 解放後も全端末の watermark が一致');
 }
 
 /* ================= 19. 猶予フロー (セッション層スタブ) ============= */

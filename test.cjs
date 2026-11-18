@@ -1467,7 +1467,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appSrc2.indexOf('function snapRisk(') !== -1 && appSrc2.indexOf('Math.round(q.x) - rx === dc') !== -1, '初期散布: 隣同士が開始直後のドロップで吸着する配置 (グリッド丸め後一致 + 生距離) を候補から外す');
   var wallN = L.normalizeWall({ catsOwned: ['c01', 'c02', 'c03'], catsPlaced: [{ id: 'c02', x: 0.3 }, { id: 'c03', x: 0.6 }, { id: 'c01', x: 0.8 }] });
   ok(wallN.catsPlaced.length === 1 && wallN.catsPlaced[0].id === 'c02', '猫は同時に1匹だけ: 複数配置の旧セーブは先頭の1匹を残す');
-  ok(appSrc2.indexOf("renderBoardCanvasAt(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
+  ok(appSrc2.indexOf("renderWallBoardFast(rec, boardPx)") !== -1 && appSrc2.indexOf('buildShareFrameCanvas(f, unit * k, 288)') !== -1, '壁帯プレビュー: 額の盤面は小サイズ描画で軽くする');
   ok(appSrc2.indexOf('renderWallPreviewCanvas(aspect)') !== -1 && appSrc2.indexOf('padX + f.x * W') !== -1 && appSrc2.indexOf('padX + p.x * W') !== -1, '壁帯プレビュー: 帯が横長な分は下地を左右延長し、額と小物と猫は壁座標のまま描く (横の切れ目なし)');
   ok(appSrc2.indexOf('wallPreviewAspect()') !== -1, '壁帯プレビュー: 帯のアスペクトで延長量を決める');
   ok(appSrc2.indexOf("wallPreviewKey() + '@'") === -1 && appSrc2.indexOf('wallPreviewCache = { key: key, cv: full }') !== -1, '壁帯プレビュー: キャッシュキーは壁の内容だけ (アスペクトを混ぜると起動直後のレイアウト揺れで装飾が出ないバグになる)');
@@ -1595,7 +1595,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v51'") !== -1, 'sw: VERSION は v51');
+  ok(swSB.indexOf("VERSION = 'v52'") !== -1, 'sw: VERSION は v52');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -2435,6 +2435,83 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // MP_LOGIC_VERSION は据え置き (追加型プロトコルで旧端末と混在安全なため)
   ok(appR.indexOf('var MP_LOGIC_VERSION = 5;') !== -1,
      '堅牢化: MP_LOGIC_VERSION は 5 のまま (上げる必要なし)');
+}
+
+/* ============ v52: 壁の高速化 / リース残留 / 再開バナー ============ */
+{
+  const fsV = require('fs'), pathV = require('path');
+  const appV = fsV.readFileSync(pathV.join(__dirname, 'app.js'), 'utf8');
+  const mpV = fsV.readFileSync(pathV.join(__dirname, 'mp.js'), 'utf8');
+  const bodyOf = (src, start, end) => src.slice(src.indexOf(start), src.indexOf(end));
+
+  // 壁用 URL: URL エントリは web サイズ (thumbUrl) 優先、picsum はサイズ指定
+  const clev = { type: 'url', fullUrl: 'https://x/_print.jpg', thumbUrl: 'https://x/_web.jpg' };
+  ok(L.wallPhotoUrl(clev, 1080) === 'https://x/_web.jpg', '壁写真: URL エントリは web サイズを優先する');
+  ok(L.wallPhotoUrl({ type: 'url', fullUrl: 'https://x/f.jpg' }, 1080) === 'https://x/f.jpg', '壁写真: thumbUrl が無ければ fullUrl');
+  ok(L.wallPhotoUrl({ type: 'picsum', id: 237 }, 1080) === 'https://picsum.photos/id/237/1080/1080', '壁写真: picsum はサイズ指定 URL');
+  ok(L.wallPhotoUrl(null, 1080) === null, '壁写真: エントリが無ければ null');
+
+  // 標準模様オーバーレイ: 決定的で、レコード固有のパターンとは別物
+  const oe1 = L.wallOverlayEdges(36), oe2 = L.wallOverlayEdges(36);
+  ok(eq(oe1.h, oe2.h) && eq(oe1.v, oe2.v), '標準模様: 同じピース数なら決定的に一致する');
+  const recE = L.generateEdges('2026-11-08', 36);
+  ok(!eq(oe1.h, recE.h), '標準模様: レコード (日付シード) の模様とは別パターン');
+  ok(L.wallOverlayKey(36, 288) === '36:288' && L.wallOverlayKey(36, 960) !== L.wallOverlayKey(36, 288), '標準模様: キーはピース数×サイズ');
+
+  // オーバーレイキャッシュ: 同じキーは使い回し (再生成されない)、上限で古いものから捨てる
+  const oc = L.createWallOverlayCache(2);
+  oc.set('a', 1); oc.set('b', 2);
+  ok(oc.get('a') === 1 && oc.size() === 2, '標準模様キャッシュ: 入れたものが返る');
+  oc.set('a', 3);
+  ok(oc.size() === 2 && oc.get('a') === 3, '標準模様キャッシュ: 同じキーの再登録では件数が増えない');
+  oc.set('c', 4);
+  ok(oc.size() === 2 && !oc.has('b') && oc.has('c'), '標準模様キャッシュ: 上限で古いものから捨てる');
+
+  // 壁の配線: 額と帯と壁共有は高速版、詳細とコレクションは実レンダラーのまま
+  const paintWallBody = bodyOf(appV, 'function paintWallFrameUnit(', 'function renderWallBoardCanvas(');
+  ok(paintWallBody.indexOf('renderWallBoardFast(rec)') !== -1, '壁高速化: 壁の額は高速盤面で描く');
+  const overlayBody = bodyOf(appV, 'function wallSeamOverlay(', 'function renderWallBoardFast(');
+  ok(overlayBody.indexOf('wallOverlayCache.get(key)') !== -1 && overlayBody.indexOf('wallOverlayEdges(pieces)') !== -1 &&
+     overlayBody.indexOf('detailPiecePath(') !== -1 && overlayBody.indexOf('strokePieceBevel(') !== -1,
+     '壁高速化: オーバーレイはキャッシュ優先で、実レンダラーと同じ部品 (輪郭パス+ベベル) で作る');
+  const fastBody = bodyOf(appV, 'function renderWallBoardFast(', '/* 完成盤面を指定サイズで描く');
+  ok(fastBody.indexOf('loadWallSource(rec)') !== -1 && fastBody.indexOf('wallSeamOverlay(rec.pieces, px)') !== -1,
+     '壁高速化: 高速盤面は写真1回描画 + オーバーレイ重ね');
+  const shareFrameBody = bodyOf(appV, 'function buildShareFrameCanvas(', 'function buildWallShareImage()');
+  ok(shareFrameBody.indexOf('renderWallBoardFast(rec, boardPx)') !== -1, '壁高速化: 帯と壁共有画像も高速盤面');
+  const detailSrcBody = bodyOf(appV, 'function loadDetailSource(', 'function loadWallSource(');
+  ok(detailSrcBody.indexOf('entryPhotoUrl(') !== -1, '壁高速化: 詳細モーダルの写真は原寸のまま (画質を落とさない)');
+  const wallSrcBody = bodyOf(appV, 'function loadWallSource(', 'function loadSquareSource(');
+  ok(wallSrcBody.indexOf('wallPhotoUrl(') !== -1, '壁高速化: 壁の写真は web サイズ優先で読む');
+  const detailBoardBody = bodyOf(appV, 'function paintDetailBoard(', 'function renderDetailPuzzle(');
+  ok(detailBoardBody.indexOf('generateEdges(r.date, r.pieces)') !== -1, '壁高速化: 詳細モーダルの盤面は実レンダラーのまま変えない');
+
+  // リース残留: アプリ側の配線 (エンジン側の挙動は mp-test [20])
+  const advBody = bodyOf(appV, 'function mpAdvanceTurn()', 'function mpOnPlayerLeft(');
+  ok(advBody.indexOf('releasePlayerLeases') !== -1 && advBody.indexOf('setTimeout(') !== -1 && advBody.indexOf('mpIsHost()') !== -1,
+     'リース残留: 手番交代でホストが前の手番者のリースを全解放する (適用中を避けて遅延実行)');
+  const onDropBody = bodyOf(appV, 'function mpOnDrop(ev)', '/* grab-group の適用');
+  ok(onDropBody.indexOf('delete mp.myLeases[ev.cluster]') !== -1, 'リース残留: drop 確定エコーで myLeases を消す');
+  const onGroupDropBody = bodyOf(appV, 'function mpOnGroupDrop(ev)', '/* ---------- ターン制 ---------- */');
+  ok(onGroupDropBody.indexOf('delete mp.myLeases[it.cluster]') !== -1, 'リース残留: group-drop 確定エコーで myLeases を消す');
+  const onRejectBody = bodyOf(appV, 'function mpOnReject(rej)', 'function mpOnEphemeral(');
+  ok(onRejectBody.indexOf('delete mp.myLeases[a2]') !== -1 && onRejectBody.indexOf('delete mp.myLeases[a]') !== -1,
+     'リース残留: drop / group-drop の却下でも myLeases を消す');
+  ok(mpV.indexOf('function queueLeaseReleaseOnReject(') !== -1 && mpV.indexOf('function flushLeaseReleases(') !== -1 &&
+     mpV.indexOf('function releaseAllLeasesOf(') !== -1 && mpV.indexOf('releasePlayerLeases: releaseAllLeasesOf') !== -1 &&
+     mpV.indexOf('engine.releasePlayerLeases(bk.playerId)') !== -1,
+     'リース残留: エンジンの却下時解放・一括解放・再入室時解放が配線されている');
+
+  // 再開バナー: 起動時に出さず、机に入って約4秒だけ。MP では出さない
+  ok(appV.indexOf("$('resumeBanner').hidden = !state.resumed;") === -1 && appV.indexOf('hideResumeBanner(); // 起動時は出さない') !== -1,
+     '再開バナー: 起動時の表示状態セットは廃止');
+  const showBannerBody = bodyOf(appV, 'function showResumeBanner()', 'function hideResumeBanner()');
+  ok(showBannerBody.indexOf('mpInRoom()') !== -1 && showBannerBody.indexOf('}, 4000);') !== -1,
+     '再開バナー: MP 中は出さず、約4秒で自動で消える');
+  const openBoxBody = bodyOf(appV, 'function openBox()', '/* スタート画面の表示内容');
+  ok(openBoxBody.indexOf('if (state.resumed) showResumeBanner();') !== -1, '再開バナー: 机に入った瞬間にだけ出す');
+  const loadPuzzleBody = bodyOf(appV, 'function mpLoadPuzzle(', 'function mpOnBegin()');
+  ok(loadPuzzleBody.indexOf('hideResumeBanner();') !== -1, '再開バナー: MP の盤面ロードで隠す');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
