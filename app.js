@@ -3179,8 +3179,9 @@ document.addEventListener('visibilitychange', function () {
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
- * 基準 SE_MASTER_BASE × seVolume。既定の基準は 0.22 → 0.26 に微増 (2026-11-10 ユーザー指示) */
-var SE_MASTER_BASE = 0.26;
+ * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) を経て、
+ * Max でも小さいという実機報告を受け 0.52 へ倍増 (2026-11-21 ユーザー指示) */
+var SE_MASTER_BASE = 0.52;
 var seVolume = (typeof store.seVolume === 'number' && isFinite(store.seVolume))
   ? Math.min(1, Math.max(0, store.seVolume)) : 1;
 function seMasterGain() { return SE_MASTER_BASE * seVolume; }
@@ -3196,7 +3197,7 @@ function ensureSeContext() {
   try {
     seCtx = new AC();
     seMaster = seCtx.createGain();
-    seMaster.gain.value = seMasterGain(); // 基準 0.26 × ユーザーの SE音量 (既定 1)
+    seMaster.gain.value = seMasterGain(); // 基準 0.52 × ユーザーの SE音量 (既定 1)
     seMaster.connect(seCtx.destination);
   } catch (e) { seCtx = null; }
 }
