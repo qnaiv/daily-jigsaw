@@ -48,6 +48,16 @@
       <p id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</p>
     </header>
 
+    <!-- ランク表示: タップでランク詳細ダイアログ -->
+    <button id="rankRow" class="rank-row" type="button">
+      <span id="rankBadge" class="rank-badge">1</span>
+      <span class="rank-main">
+        <span id="rankName" class="rank-name">ランク1 ・ かけだし</span>
+        <span class="rank-bar"><span id="rankFill" class="rank-fill" style="width:0%"></span></span>
+      </span>
+      <span id="rankNext" class="rank-next"></span>
+    </button>
+
     <!-- 遊びの設定はセレクトボックス2つで切り替える。モードの説明は
          ⓘ から開くダイアログの中だけに置く -->
     <div class="start-selects">
@@ -310,6 +320,25 @@
 </div>
 
 <!-- スタート画面の「はじめから」専用の確認 (設定シート側の confirmModal とは別) -->
+<div id="rankModal" class="modal" hidden>
+  <div class="modal-backdrop" id="rankBackdrop"></div>
+  <div class="modal-body rank-body">
+    <h3 class="mode-info-title">ランク</h3>
+    <div class="rank-hero">
+      <span id="rankHeroBadge" class="rank-badge big">1</span>
+      <div class="rank-hero-text">
+        <p id="rankHeroName" class="rank-hero-name">ランク1 ・ かけだし</p>
+        <p id="rankHeroXp" class="rank-hero-xp">合計 0 XP</p>
+      </div>
+    </div>
+    <span class="rank-bar"><span id="rankHeroFill" class="rank-fill" style="width:0%"></span></span>
+    <p id="rankNextLine" class="rank-next-line"></p>
+    <p id="rankNextReward" class="rank-next-reward"></p>
+    <div id="rankLadder" class="rank-ladder"></div>
+    <button id="rankCloseBtn" class="btn mode-info-close" type="button">閉じる</button>
+  </div>
+</div>
+
 <div id="modeInfoModal" class="modal" hidden>
   <div class="modal-backdrop" id="modeInfoBackdrop"></div>
   <div class="modal-body mode-info-body">
@@ -358,6 +387,15 @@
     </div>
     <p id="resultBadge" class="cert-badge" hidden>完成図を見ずにクリア</p>
     <p id="resultUpperBadge" class="cert-badge cert-badge-upper" hidden>上級クリア</p>
+    <div id="resultXp" class="cert-xp" hidden>
+      <p id="resultXpRankup" class="cert-xp-rankup" hidden></p>
+      <div class="cert-xp-row">
+        <span id="resultXpGain" class="cert-xp-gain"></span>
+        <span class="rank-bar cert-xp-bar"><span id="resultXpFill" class="rank-fill"></span></span>
+        <span id="resultXpNext" class="cert-xp-next"></span>
+      </div>
+      <p id="resultXpReward" class="cert-xp-reward" hidden></p>
+    </div>
     <div id="resultRewardItems" class="cert-rewards" hidden></div>
     <div id="resultContrib" class="cert-contrib" hidden></div>
     <p id="resultCoopNote" class="cert-coop-note" hidden></p>

@@ -1170,6 +1170,49 @@ button { font: inherit; cursor: pointer; }
 .mode-info-text { margin: 0; font-size: 13.5px; line-height: 1.75; color: var(--paper-dim); letter-spacing: .02em; }
 .mode-info-close { width: 100%; margin-top: 2px; }
 
+/* ランク表示 (v57) */
+.rank-row {
+  width: 100%; margin-top: 12px; padding: 2px 2px; display: flex; align-items: center; gap: 11px;
+  background: none; border: 0; cursor: pointer; text-align: left;
+  -webkit-tap-highlight-color: transparent; font-family: inherit;
+}
+.rank-badge {
+  flex: none; width: 35px; height: 35px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--panel); border: 2px solid var(--brass);
+  font-size: 16px; font-weight: 800; color: var(--paper-ink);
+  box-shadow: 0 1px 3px rgba(120, 96, 50, .18);
+}
+.rank-badge.big { width: 48px; height: 48px; font-size: 22px; }
+.rank-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.rank-name { font-size: 13.5px; font-weight: 800; letter-spacing: .04em; color: var(--paper-ink); }
+.rank-bar { display: block; height: 6px; border-radius: 3px; background: #e7ddc8; overflow: hidden; }
+.rank-fill { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #d9b64a, var(--brass)); }
+.rank-next { flex: none; font-size: 11px; font-weight: 700; color: var(--paper-dim); letter-spacing: .03em; }
+.rank-body { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.rank-hero { display: flex; align-items: center; gap: 13px; }
+.rank-hero-text { display: flex; flex-direction: column; gap: 2px; }
+.rank-hero-name { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: .04em; }
+.rank-hero-xp { margin: 0; font-size: 12px; font-weight: 700; color: var(--paper-dim); }
+.rank-next-line { margin: 0; font-size: 12.5px; color: var(--paper-dim); }
+.rank-next-reward { margin: 0; font-size: 13.5px; font-weight: 800; color: var(--accent); }
+.rank-ladder { display: flex; flex-direction: column; border-top: 1px solid var(--line); max-height: 36vh; overflow-y: auto; }
+.rank-ladder-row {
+  display: grid; grid-template-columns: 58px 1fr 18px; gap: 8px; align-items: center;
+  padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 12.5px;
+}
+.rank-ladder-row.done { color: var(--paper-dim); }
+.rank-ladder-row.next { font-weight: 800; background: rgba(201, 162, 39, .08); border-radius: 6px; }
+.rank-check { color: var(--accent); font-weight: 800; text-align: center; }
+.cert-xp { width: 100%; margin-top: 10px; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.cert-xp[hidden] { display: none; }
+.cert-xp-rankup { margin: 0; text-align: center; font-size: 15px; font-weight: 800; color: var(--brass); letter-spacing: .05em; }
+.cert-xp-row { display: flex; align-items: center; gap: 10px; }
+.cert-xp-gain { flex: none; font-size: 15px; font-weight: 800; color: var(--paper-ink); }
+.cert-xp-bar { flex: 1; }
+.cert-xp-next { flex: none; font-size: 11px; font-weight: 700; color: var(--paper-dim); }
+.cert-xp-reward { margin: 0; text-align: center; font-size: 12.5px; font-weight: 700; color: var(--accent); }
+
 /* ---------- 協力プレイ (マルチ) ---------- */
 /* プレイ画面: 接続バッジ (右上・設定ボタンの下) と合図ピンボタン (右下) */
 #mpBadge {

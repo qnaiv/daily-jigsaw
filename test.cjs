@@ -1036,13 +1036,13 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(geoB.matW === 0 && Math.abs(geoB.board - 180) < 1e-9, 'フレーム描画: マットなしは盤面が帯の内側いっぱい');
   const fw = L.emptyWall();
   ok(eq(fw.frameUnlocks, ['oak', 'walnut']), 'フレーム: 初期解放は oak / walnut の 2 種');
-  ok(eq(L.newFrameUnlocks(fw, 2), []) && eq(L.newFrameUnlocks(fw, 3), ['black']), 'フレーム: 3 回で ブラック 解放');
-  ok(eq(L.newFrameUnlocks(fw, 5), ['black', 'ribbon']) && eq(L.newFrameUnlocks(fw, 12), ['black', 'ribbon', 'white', 'circle']), 'フレーム: 序盤に 色/装飾/形 が散らばって解放される');
-  ok(L.newFrameUnlocks(fw, 209).length === 17 && L.newFrameUnlocks(fw, 210).length === 18, 'フレーム: 210 回で全 18 種解放');
+  ok(eq(L.newFrameUnlocks(fw, 2), []) && eq(L.newFrameUnlocks(fw, 3), ['black']), 'フレーム: ランク3で ブラック 解放');
+  ok(eq(L.newFrameUnlocks(fw, 5), ['black', 'ribbon']) && eq(L.newFrameUnlocks(fw, 9), ['black', 'ribbon', 'white', 'circle']), 'フレーム: 序盤に 色/装飾/形 が散らばって解放される');
+  ok(L.newFrameUnlocks(fw, 27).length === 17 && L.newFrameUnlocks(fw, 28).length === 18, 'フレーム: ランク28で全 18 種解放');
   const fw2 = L.emptyWall();
-  const added = L.applyFrameUnlocks(fw2, 12);
+  const added = L.applyFrameUnlocks(fw2, 9);
   ok(eq(added, ['black', 'ribbon', 'white', 'circle']) && eq(fw2.pendingUnlocks, added) && fw2.frameUnlocks.length === 6, 'フレーム: 解放が frameUnlocks と通知待ち (pendingUnlocks) に反映');
-  ok(eq(L.applyFrameUnlocks(fw2, 12), []) && eq(L.applyFrameUnlocks(fw2, 4), []), 'フレーム: 解放は冪等 (再適用・巻き戻しなし)');
+  ok(eq(L.applyFrameUnlocks(fw2, 9), []) && eq(L.applyFrameUnlocks(fw2, 4), []), 'フレーム: 解放は冪等 (再適用・巻き戻しなし)');
 
   // 保存形式の正規化 (壊れた/未知のデータを読んでも落ちない)
   const norm = L.normalizeWall({
@@ -1183,24 +1183,24 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // カタログの健全性と解放順
   ok(L.WALLPAPERS.length === 20, '壁紙: 20 種');
   ok(eq(L.WALLPAPERS.map(p => p.id), ['kinari', 'sage', 'pink', 'stripe', 'blue', 'dot', 'mint', 'floral', 'lemon', 'gingham', 'wood', 'lavender', 'brick', 'terracotta', 'starry', 'forest', 'gray', 'wine', 'gold', 'moonlit']), '壁紙: 解放順が仕様どおり');
-  ok(eq(L.WALLPAPERS.map(p => p.unlockAt), [0, 0, 3, 5, 8, 12, 16, 20, 25, 30, 40, 50, 60, 75, 90, 110, 130, 155, 180, 210]), '壁紙: 解放回数が仕様どおり');
+  ok(eq(L.WALLPAPERS.map(p => p.unlockAt), [0, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 21, 22, 23, 24, 25, 26, 27, 28]), '壁紙: 解放ランクが仕様どおり (v57 ランク制)');
   ok(L.WALLPAPERS.every(p => p.name && /^#[0-9a-f]{6}$/i.test(p.base)), '壁紙: 全種に名前と地色がある');
   ok(L.WALLPAPERS.every(p => ['solid', 'stripe', 'dot', 'floral', 'gingham', 'wood', 'brick', 'starry', 'moonlit', 'microdot'].includes(p.kind)), '壁紙: 種別は定義済みのものだけ');
   ok(L.WALLPAPERS.filter(p => p.kind === 'solid').length === 11, '壁紙: 無地は 11 種');
   ok(L.WALLPAPERS.filter(p => p.kind !== 'solid').every(p => !!p.accent), '壁紙: 柄物には柄色 (accent) がある');
-  ok(L.wallpaperById('moonlit').unlockAt === 210 && L.wallpaperById('nope') === null, '壁紙: wallpaperById は実在のみ・未知は null');
+  ok(L.wallpaperById('moonlit').unlockAt === 28 && L.wallpaperById('nope') === null, '壁紙: wallpaperById は実在のみ・未知は null');
   ok(L.wallpaperById('kinari').base === '#F3E9D3', '壁紙: 生成りは現行の壁色 #F3E9D3');
 
   // 初期状態と解放判定
   const pw = L.emptyWall();
   ok(pw.paper === 'kinari' && eq(pw.paperUnlocks, ['kinari', 'sage']) && eq(pw.pendingPaperUnlocks, []), '壁紙: 初期は 生成り 適用・kinari/sage 解放・通知なし');
-  ok(eq(L.newPaperUnlocks(pw, 2), []) && eq(L.newPaperUnlocks(pw, 3), ['pink']), '壁紙: 3 回で ダスティピンク 解放');
-  ok(eq(L.newPaperUnlocks(pw, 12), ['pink', 'stripe', 'blue', 'dot']), '壁紙: 12 回までの解放が表順に並ぶ');
-  ok(L.newPaperUnlocks(pw, 210).length === 18, '壁紙: 210 回で全 18 種解放');
+  ok(eq(L.newPaperUnlocks(pw, 1), []) && eq(L.newPaperUnlocks(pw, 2), ['pink']), '壁紙: ランク2で ダスティピンク 解放');
+  ok(eq(L.newPaperUnlocks(pw, 8), ['pink', 'stripe', 'blue', 'dot']), '壁紙: ランク8までの解放が表順に並ぶ');
+  ok(L.newPaperUnlocks(pw, 28).length === 18, '壁紙: ランク28で全 18 種解放');
   const pw2 = L.emptyWall();
-  const addedP = L.applyPaperUnlocks(pw2, 30);
+  const addedP = L.applyPaperUnlocks(pw2, 16);
   ok(addedP.length === 8 && eq(pw2.pendingPaperUnlocks, addedP) && pw2.paperUnlocks.length === 10, '壁紙: 解放が paperUnlocks と通知待ち (pendingPaperUnlocks) に反映');
-  ok(eq(L.applyPaperUnlocks(pw2, 30), []) && eq(L.applyPaperUnlocks(pw2, 5), []), '壁紙: 解放は冪等 (再適用・巻き戻しなし)');
+  ok(eq(L.applyPaperUnlocks(pw2, 16), []) && eq(L.applyPaperUnlocks(pw2, 5), []), '壁紙: 解放は冪等 (再適用・巻き戻しなし)');
 
   // 保存形式の移行: 壁紙フィールドを持たない旧セーブは初期値で補完される
   const legacy = L.normalizeWall({ owned: ['w001'], placed: [], frames: [] });
@@ -1595,7 +1595,36 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v56'") !== -1, 'sw: VERSION は v56');
+  ok(swSB.indexOf("VERSION = 'v57'") !== -1, 'sw: VERSION は v57');
+  // ランクシステム (v57): XP 表と補間、倍率、ランク導出、称号、報酬表、移行
+  ok(L.xpForPieces(16) === 15 && L.xpForPieces(36) === 30 && L.xpForPieces(64) === 50 && L.xpForPieces(100) === 75 && L.xpForPieces(225) === 130 && L.xpForPieces(400) === 200 && L.xpForPieces(1024) === 420, 'ランク: XP 表が仕様どおり');
+  ok(L.xpForPieces(49) === 39 && L.xpForPieces(81) === 62 && L.xpForPieces(144) === 94, 'ランク: 表に無いピース数 (ハンデ等) は線形補間');
+  ok(L.clearXp(100, false, false) === 75 && L.clearXp(100, true, false) === 113 && L.clearXp(100, false, true) === 90 && L.clearXp(225, true, true) === 234, 'ランク: 初クリア 1.5 倍・現像 1.2 倍');
+  {
+    const r0 = L.rankFromXp(0);
+    ok(r0.rank === 1 && r0.into === 0 && r0.needed === 60 && r0.toNext === 60, 'ランク: 0 XP はランク1・次まで60');
+    const r7 = L.rankFromXp(1575);
+    ok(r7.rank === 7 && r7.into === 315 && r7.needed === 420 && r7.toNext === 105, 'ランク: 1575 XP はランク7 (あと105)');
+    ok(L.rankFromXp(60).rank === 2 && L.rankFromXp(59).rank === 1 && L.rankFromXp(180).rank === 3, 'ランク: 境界 (60→2, 180→3)');
+    const rMax = L.rankFromXp(999999);
+    ok(rMax.rank === 30 && rMax.needed === 0 && rMax.toNext === 0, 'ランク: 上限は30で MAX');
+  }
+  ok(L.rankTitle(1) === 'かけだし' && L.rankTitle(4) === 'かけだし' && L.rankTitle(5) === 'ピース使い' && L.rankTitle(10) === '組み立て職人' && L.rankTitle(15) === 'パズル名人' && L.rankTitle(20) === '壁かざりマスター' && L.rankTitle(25) === 'レジェンド' && L.rankTitle(30) === 'レジェンド', 'ランク: 称号は5ランクごとの帯');
+  {
+    const all = [];
+    for (let r = 2; r <= 28; r++) L.rankRewardsAt(r).forEach(x => all.push(x.kind + ':' + x.id));
+    ok(all.length === 36 && new Set(all).size === 36, 'ランク: 報酬はランク2〜28に壁紙18+額縁18が重複なく並ぶ');
+    ok(eq(L.rankRewardsAt(2).map(x => x.id), ['pink']) && eq(L.rankRewardsAt(20).map(x => x.id), ['lavender', 'silver']) && eq(L.rankRewardsAt(28).map(x => x.id), ['moonlit', 'royal']), 'ランク: 報酬内訳 (2=壁紙ピンク, 20=両方, 28=最終)');
+    ok(L.rankRewardsAt(1).length === 0 && L.rankRewardsAt(29).length === 0, 'ランク: ランク1と29以降に報酬なし');
+  }
+  ok(L.migratedXp([{ stage: 1, pieces: 36 }, { stage: 1, pieces: 36 }, { stage: 2, pieces: 100, dev: true }]) === 45 + 30 + 135, 'ランク移行: ステージ初出のみ初クリア倍率 (45+30+135)');
+  ok(L.migratedXp([]) === 0 && L.migratedXp(null) === 0, 'ランク移行: 記録なしは 0');
+  // ランク配線: スタート行・ダイアログ・結果画面 XP ブロック・解放はランク判定
+  ok(htmlSB.indexOf('id="rankRow"') !== -1 && htmlSB.indexOf('id="rankModal"') !== -1 && htmlSB.indexOf('id="rankLadder"') !== -1, 'ランク配線: スタート画面にランク行と詳細ダイアログがある');
+  ok(htmlSB.indexOf('id="resultXp"') !== -1 && htmlSB.indexOf('id="resultXpRankup"') !== -1 && htmlSB.indexOf('id="resultXpReward"') !== -1, 'ランク配線: 結果画面に XP ブロックがある');
+  ok(appSB.indexOf('store.xp += xpGain') !== -1 && appSB.indexOf('rankMigrated') !== -1 && appSB.indexOf('applyFrameUnlocks(wall, rankFromXp(store.xp).rank)') !== -1, 'ランク配線: クリアで XP 付与・移行・解放はランクで判定');
+  ok(appSB.indexOf('paintRankRow();') !== -1 && appSB.indexOf('buildRankModal();') !== -1, 'ランク配線: ランク行の描画とダイアログ構築が呼ばれる');
+  ok(appSB.indexOf("ランク ' + st.unlockAt + ' で解放") !== -1 && appSB.indexOf("ランク ' + p.unlockAt + ' で解放") !== -1 && appSB.indexOf("st.unlockAt + ' 回クリアで解放'") === -1 && appSB.indexOf("p.unlockAt + ' 回クリアで解放'") === -1 && appSB.indexOf("p.unlockAt + '回クリアで解放'") === -1, 'ランク配線: 解放条件の表記はランク制に替わり、旧・回数表記は残っていない');
 
   // hidden 属性 / JS の hidden 切替が CSS の display 指定に打ち消されないこと。
   // (v55: .cert-sub-actions の display:flex が #resultMpActions の hidden を

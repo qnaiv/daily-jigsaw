@@ -1535,29 +1535,30 @@ var WALL_CATALOG = [
  * material (wood | metal | enamel | rainbow: 帯の質感表現)。
  * line は「内側の細線」の色 (lineDouble は二重線)。rainbow は color の
  * 代わりに RAINBOW_COLORS で帯を塗り、gradient はスウォッチ用の代表色。
- * 解放は unlockAt (累計クリア回数) で、初期は oak / walnut の 2 種。 */
+ * 解放は unlockAt (到達ランク) で、初期は oak / walnut の 2 種。
+ * v57 で累計クリア回数制からランク制へ移行した (値はランク番号)。 */
 var FRAME_STYLES = [
   { id: 'oak',     name: 'ナチュラルオーク',    unlockAt: 0,   color: '#C8A165', width: 0.06, mat: '#F7F1E2', ornament: 'none',    shape: 'rect',   material: 'wood' },
   { id: 'walnut',  name: 'ウォルナット',        unlockAt: 0,   color: '#6E4C2C', width: 0.06, mat: '#F7F1E2', ornament: 'none',    shape: 'rect',   material: 'wood' },
   { id: 'black',   name: 'ブラック',            unlockAt: 3,   color: '#33302C', width: 0.05, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
   { id: 'ribbon',  name: 'リボンフレーム',      unlockAt: 5,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'ribbon',  shape: 'rect',   material: 'enamel' },
-  { id: 'white',   name: 'ホワイト',            unlockAt: 8,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect',   material: 'enamel', line: '#BEB6A8', lineDouble: true },
-  { id: 'circle',  name: 'まるフレーム',        unlockAt: 12,  color: '#6E4C2C', width: 0.06, mat: null,       ornament: 'none',    shape: 'circle', material: 'wood' },
-  { id: 'pink',    name: 'パステルピンク',      unlockAt: 16,  color: '#E7B7C5', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
-  { id: 'gold',    name: 'ゴールド',            unlockAt: 20,  color: '#C4A24B', width: 0.06, mat: '#F7F1E2', ornament: 'line',    shape: 'rect',   material: 'metal',  line: '#F0D68C' },
-  { id: 'flower',  name: 'お花フレーム',        unlockAt: 25,  color: '#F6F0DE', width: 0.07, mat: null,       ornament: 'flowers', shape: 'rect',   material: 'enamel' },
-  { id: 'sky',     name: 'スカイブルー',        unlockAt: 30,  color: '#A8C6D8', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
-  { id: 'antique', name: 'アンティークゴールド', unlockAt: 40,  color: '#A67C2E', width: 0.07, mat: null,       ornament: 'corners', shape: 'rect',   material: 'metal' },
-  { id: 'silver',  name: 'シルバー',            unlockAt: 50,  color: '#B9BDC4', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect',   material: 'metal',  line: '#EBEEF2' },
-  { id: 'cherry',  name: 'チェリーウッド',      unlockAt: 60,  color: '#8A4A38', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'wood' },
-  { id: 'starry',  name: '星空フレーム',        unlockAt: 75,  color: '#26314E', width: 0.07, mat: null,       ornament: 'stars',   shape: 'rect',   material: 'enamel' },
-  { id: 'green',   name: 'ディープグリーン',    unlockAt: 90,  color: '#3E5C4B', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
-  { id: 'bronze',  name: 'ブロンズ',            unlockAt: 110, color: '#8C6A3F', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'metal' },
-  { id: 'navy',    name: 'ネイビー',            unlockAt: 130, color: '#2F4057', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
-  { id: 'rainbow', name: 'レインボーフレーム',  unlockAt: 155, color: '#D9A7A0', width: 0.07, mat: null,       ornament: 'none',    shape: 'rect',   material: 'rainbow',
+  { id: 'white',   name: 'ホワイト',            unlockAt: 7,   color: '#F4F1EA', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect',   material: 'enamel', line: '#BEB6A8', lineDouble: true },
+  { id: 'circle',  name: 'まるフレーム',        unlockAt: 9,  color: '#6E4C2C', width: 0.06, mat: null,       ornament: 'none',    shape: 'circle', material: 'wood' },
+  { id: 'pink',    name: 'パステルピンク',      unlockAt: 11,  color: '#E7B7C5', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'gold',    name: 'ゴールド',            unlockAt: 13,  color: '#C4A24B', width: 0.06, mat: '#F7F1E2', ornament: 'line',    shape: 'rect',   material: 'metal',  line: '#F0D68C' },
+  { id: 'flower',  name: 'お花フレーム',        unlockAt: 15,  color: '#F6F0DE', width: 0.07, mat: null,       ornament: 'flowers', shape: 'rect',   material: 'enamel' },
+  { id: 'sky',     name: 'スカイブルー',        unlockAt: 17,  color: '#A8C6D8', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'antique', name: 'アンティークゴールド', unlockAt: 19,  color: '#A67C2E', width: 0.07, mat: null,       ornament: 'corners', shape: 'rect',   material: 'metal' },
+  { id: 'silver',  name: 'シルバー',            unlockAt: 20,  color: '#B9BDC4', width: 0.06, mat: null,       ornament: 'line',    shape: 'rect',   material: 'metal',  line: '#EBEEF2' },
+  { id: 'cherry',  name: 'チェリーウッド',      unlockAt: 21,  color: '#8A4A38', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'wood' },
+  { id: 'starry',  name: '星空フレーム',        unlockAt: 22,  color: '#26314E', width: 0.07, mat: null,       ornament: 'stars',   shape: 'rect',   material: 'enamel' },
+  { id: 'green',   name: 'ディープグリーン',    unlockAt: 23,  color: '#3E5C4B', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'bronze',  name: 'ブロンズ',            unlockAt: 24, color: '#8C6A3F', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'metal' },
+  { id: 'navy',    name: 'ネイビー',            unlockAt: 25, color: '#2F4057', width: 0.06, mat: null,       ornament: 'none',    shape: 'rect',   material: 'enamel' },
+  { id: 'rainbow', name: 'レインボーフレーム',  unlockAt: 26, color: '#D9A7A0', width: 0.07, mat: null,       ornament: 'none',    shape: 'rect',   material: 'rainbow',
     gradient: 'linear-gradient(135deg, #D9A7A0, #E5C39A, #B5C49A, #9AB8C4, #B0A3C4)' },
-  { id: 'pearl',   name: 'パールフレーム',      unlockAt: 180, color: '#F3F0EB', width: 0.07, mat: null,       ornament: 'pearl',   shape: 'rect',   material: 'enamel' },
-  { id: 'royal',   name: 'ロイヤルゴールド',    unlockAt: 210, color: '#B28A2C', width: 0.09, mat: null,       ornament: 'crown',   shape: 'rect',   material: 'metal',  line: '#F0D68C' }
+  { id: 'pearl',   name: 'パールフレーム',      unlockAt: 27, color: '#F3F0EB', width: 0.07, mat: null,       ornament: 'pearl',   shape: 'rect',   material: 'enamel' },
+  { id: 'royal',   name: 'ロイヤルゴールド',    unlockAt: 28, color: '#B28A2C', width: 0.09, mat: null,       ornament: 'crown',   shape: 'rect',   material: 'metal',  line: '#F0D68C' }
 ];
 function frameStyleById(id) {
   for (var i = 0; i < FRAME_STYLES.length; i++) if (FRAME_STYLES[i].id === id) return FRAME_STYLES[i];
@@ -1668,31 +1669,31 @@ function applyFrameUnlocks(wall, totalClears) {
   return ids;
 }
 /* 壁紙 (wallpaper-design.md の 20 種)。フレームと並ぶ解放報酬の第 2 系統で、
- * 解放は unlockAt (累計クリア回数)、初期は kinari / sage の 2 種。
+ * 解放は unlockAt (到達ランク)、初期は kinari / sage の 2 種 (v57 ランク制)。
  * 描画はデータ駆動: kind ごとに UI 側のペインター (paintWallpaperRegion)
  * が小さな描画関数で描く。base は地色、accent は柄色 (必要な種別だけ)。
  * 柄はすべてトーンオントーンで弱く付け、飾りの邪魔をしない。 */
 var WALLPAPERS = [
   { id: 'kinari',     name: '生成り',              unlockAt: 0,   kind: 'solid',    base: '#F3E9D3' },
   { id: 'sage',       name: 'セージグリーン',      unlockAt: 0,   kind: 'solid',    base: '#CBD4C0' },
-  { id: 'pink',       name: 'ダスティピンク',      unlockAt: 3,   kind: 'solid',    base: '#ECD5CD' },
-  { id: 'stripe',     name: '細ストライプ',        unlockAt: 5,   kind: 'stripe',   base: '#F3E9D3', accent: '#D6C6A8' },
-  { id: 'blue',       name: 'ダスティブルー',      unlockAt: 8,   kind: 'solid',    base: '#C5D1DC' },
-  { id: 'dot',        name: '小さなドット',        unlockAt: 12,  kind: 'dot',      base: '#F3E9D3', accent: '#CEBA94' },
-  { id: 'mint',       name: 'ミントグリーン',      unlockAt: 16,  kind: 'solid',    base: '#C4DED2' },
-  { id: 'floral',     name: '小花柄',              unlockAt: 20,  kind: 'floral',   base: '#F6ECDC', accent: '#E9B7BE', leaf: '#A9BE9C' },
-  { id: 'lemon',      name: 'レモンイエロー',      unlockAt: 25,  kind: 'solid',    base: '#F2E3B3' },
-  { id: 'gingham',    name: 'ギンガムチェック',    unlockAt: 30,  kind: 'gingham',  base: '#F3E9D3', accent: '#B9C6A9' },
-  { id: 'wood',       name: '木目パネル',          unlockAt: 40,  kind: 'wood',     base: '#D2AC80', accent: '#96703F' },
-  { id: 'lavender',   name: 'ラベンダー',          unlockAt: 50,  kind: 'solid',    base: '#D5CBE4' },
-  { id: 'brick',      name: 'レンガ',              unlockAt: 60,  kind: 'brick',    base: '#EFE4CE', accent: '#D9A58C' },
-  { id: 'terracotta', name: 'テラコッタ',          unlockAt: 75,  kind: 'solid',    base: '#DCA98C' },
-  { id: 'starry',     name: '星空',                unlockAt: 90,  kind: 'starry',   base: '#2C3954', accent: '#F0D68C' },
-  { id: 'forest',     name: 'ディープフォレスト',  unlockAt: 110, kind: 'solid',    base: '#47624F' },
-  { id: 'gray',       name: 'ウォームグレー',      unlockAt: 130, kind: 'solid',    base: '#CFC8BC' },
-  { id: 'wine',       name: 'ワインレッド',        unlockAt: 155, kind: 'solid',    base: '#9E5B5B' },
-  { id: 'gold',       name: 'アンティークゴールド', unlockAt: 180, kind: 'microdot', base: '#BE9E57', accent: '#D8BE82' },
-  { id: 'moonlit',    name: '月夜',                unlockAt: 210, kind: 'moonlit',  base: '#232F4A', sub: '#3A4A6B', accent: '#F0D68C' }
+  { id: 'pink',       name: 'ダスティピンク',      unlockAt: 2,   kind: 'solid',    base: '#ECD5CD' },
+  { id: 'stripe',     name: '細ストライプ',        unlockAt: 4,   kind: 'stripe',   base: '#F3E9D3', accent: '#D6C6A8' },
+  { id: 'blue',       name: 'ダスティブルー',      unlockAt: 6,   kind: 'solid',    base: '#C5D1DC' },
+  { id: 'dot',        name: '小さなドット',        unlockAt: 8,  kind: 'dot',      base: '#F3E9D3', accent: '#CEBA94' },
+  { id: 'mint',       name: 'ミントグリーン',      unlockAt: 10,  kind: 'solid',    base: '#C4DED2' },
+  { id: 'floral',     name: '小花柄',              unlockAt: 12,  kind: 'floral',   base: '#F6ECDC', accent: '#E9B7BE', leaf: '#A9BE9C' },
+  { id: 'lemon',      name: 'レモンイエロー',      unlockAt: 14,  kind: 'solid',    base: '#F2E3B3' },
+  { id: 'gingham',    name: 'ギンガムチェック',    unlockAt: 16,  kind: 'gingham',  base: '#F3E9D3', accent: '#B9C6A9' },
+  { id: 'wood',       name: '木目パネル',          unlockAt: 18,  kind: 'wood',     base: '#D2AC80', accent: '#96703F' },
+  { id: 'lavender',   name: 'ラベンダー',          unlockAt: 20,  kind: 'solid',    base: '#D5CBE4' },
+  { id: 'brick',      name: 'レンガ',              unlockAt: 21,  kind: 'brick',    base: '#EFE4CE', accent: '#D9A58C' },
+  { id: 'terracotta', name: 'テラコッタ',          unlockAt: 22,  kind: 'solid',    base: '#DCA98C' },
+  { id: 'starry',     name: '星空',                unlockAt: 23,  kind: 'starry',   base: '#2C3954', accent: '#F0D68C' },
+  { id: 'forest',     name: 'ディープフォレスト',  unlockAt: 24, kind: 'solid',    base: '#47624F' },
+  { id: 'gray',       name: 'ウォームグレー',      unlockAt: 25, kind: 'solid',    base: '#CFC8BC' },
+  { id: 'wine',       name: 'ワインレッド',        unlockAt: 26, kind: 'solid',    base: '#9E5B5B' },
+  { id: 'gold',       name: 'アンティークゴールド', unlockAt: 27, kind: 'microdot', base: '#BE9E57', accent: '#D8BE82' },
+  { id: 'moonlit',    name: '月夜',                unlockAt: 28, kind: 'moonlit',  base: '#232F4A', sub: '#3A4A6B', accent: '#F0D68C' }
 ];
 function wallpaperById(id) {
   for (var i = 0; i < WALLPAPERS.length; i++) if (WALLPAPERS[i].id === id) return WALLPAPERS[i];
@@ -1713,6 +1714,70 @@ function applyPaperUnlocks(wall, totalClears) {
     if (wall.pendingPaperUnlocks.indexOf(id) < 0) wall.pendingPaperUnlocks.push(id);
   });
   return ids;
+}
+
+/* ---------- ランクシステム (v57) ----------
+ * クリアで XP がたまり、ランクが上がる。壁紙・額縁の解放は累計クリア
+ * 回数ではなくランクで決まる (カタログの unlockAt はランク番号に読み
+ * 替えた)。ランクは store.xp から都度導出する (真実は XP のみ)。
+ * 次ランクに必要な XP は 60 × 現在ランク (序盤は早く、後半は重い)。
+ * 称号は 5 ランクごとの帯。報酬ランクの内訳は rankRewardsAt が返す。 */
+var RANK_MAX = 30;
+var XP_TABLE = [[16, 15], [36, 30], [64, 50], [100, 75], [225, 130], [400, 200], [1024, 420]];
+/* ピース数 → 基本 XP。表に無い数 (レースのハンデ等) は線形補間する */
+function xpForPieces(n) {
+  n = Math.max(1, Math.round(Number(n) || 0));
+  if (n <= XP_TABLE[0][0]) return Math.max(1, Math.round(XP_TABLE[0][1] * n / XP_TABLE[0][0]));
+  for (var i = 1; i < XP_TABLE.length; i++) {
+    if (n <= XP_TABLE[i][0]) {
+      var a = XP_TABLE[i - 1], b = XP_TABLE[i];
+      return Math.round(a[1] + (b[1] - a[1]) * (n - a[0]) / (b[0] - a[0]));
+    }
+  }
+  var last = XP_TABLE[XP_TABLE.length - 1];
+  return Math.round(last[1] * Math.sqrt(n / last[0]));
+}
+/* 1クリア分の XP: ステージ初クリアは 1.5 倍、現像モードは 1.2 倍 */
+function clearXp(pieces, firstClear, dev) {
+  var xp = xpForPieces(pieces);
+  if (firstClear) xp *= 1.5;
+  if (dev) xp *= 1.2;
+  return Math.round(xp);
+}
+/* XP → { rank, into (現ランク内の進み), needed (次まで総量), toNext (残り) } */
+function rankFromXp(xp) {
+  xp = Math.max(0, Math.floor(Number(xp) || 0));
+  var rank = 1, rest = xp;
+  while (rank < RANK_MAX && rest >= 60 * rank) { rest -= 60 * rank; rank++; }
+  var needed = rank >= RANK_MAX ? 0 : 60 * rank;
+  return { rank: rank, into: needed ? rest : 0, needed: needed, toNext: needed ? needed - rest : 0, total: xp };
+}
+function rankTitle(rank) {
+  if (rank >= 25) return 'レジェンド';
+  if (rank >= 20) return '壁かざりマスター';
+  if (rank >= 15) return 'パズル名人';
+  if (rank >= 10) return '組み立て職人';
+  if (rank >= 5) return 'ピース使い';
+  return 'かけだし';
+}
+/* そのランクに到達した時の報酬 (壁紙・額縁)。カタログの unlockAt が情報源 */
+function rankRewardsAt(rank) {
+  var out = [];
+  WALLPAPERS.forEach(function (p) { if (p.unlockAt === rank) out.push({ kind: 'paper', id: p.id, name: p.name }); });
+  FRAME_STYLES.forEach(function (st) { if (st.unlockAt === rank) out.push({ kind: 'frame', id: st.id, name: st.name }); });
+  return out;
+}
+/* 移行用: 過去のクリア記録から XP をさかのぼって合算する。
+ * 記録は時系列順に並んでいる前提で、ステージの最初の記録を初クリア扱い
+ * にする (stage の無い旧記録はすべて初クリア扱いの概算でよい)。 */
+function migratedXp(records) {
+  var seen = {}, total = 0;
+  (records || []).forEach(function (r) {
+    var first = true;
+    if (r && r.stage != null) { first = !seen[r.stage]; seen[r.stage] = true; }
+    total += clearXp(r && r.pieces ? r.pieces : 36, first, !!(r && r.dev));
+  });
+  return total;
 }
 /* 壁の広さは段階制 (2026-11-08 ユーザー決定): 無限には広げず2段階まで。
  * 段階0 = 横1.5倍・縦1.2倍 (最初から)、段階1 = 横3.0倍・縦1.4倍
@@ -2285,6 +2350,8 @@ var PureLogic = {
   frameStyleById: frameStyleById, newFrameUnlocks: newFrameUnlocks, applyFrameUnlocks: applyFrameUnlocks,
   WALLPAPERS: WALLPAPERS, wallpaperById: wallpaperById,
   newPaperUnlocks: newPaperUnlocks, applyPaperUnlocks: applyPaperUnlocks,
+  xpForPieces: xpForPieces, clearXp: clearXp, rankFromXp: rankFromXp, rankTitle: rankTitle,
+  rankRewardsAt: rankRewardsAt, migratedXp: migratedXp, RANK_MAX: RANK_MAX,
   WALL_SIZE_STAGES: WALL_SIZE_STAGES, WALL_EXPAND_CLEARS: WALL_EXPAND_CLEARS,
   WALL_FIXED_SIZE: WALL_FIXED_SIZE, WALL_STAGE_ASPECT: WALL_STAGE_ASPECT, WALL_H_PER_W: WALL_H_PER_W, WALL_BAND_CAP: WALL_BAND_CAP,
   wallSizeOf: wallSizeOf, spreadWallX: spreadWallX, spreadWallY: spreadWallY,
@@ -2344,6 +2411,18 @@ store.wall = normalizeWall(store.wall); // 壁インテリア (旧データに�
 store.profile = normalizeProfile(store.profile); // プレイヤープロフィール (MP改善#4。旧データには無いので null)
 store.mpHandicap = normalizeHandicap(store.mpHandicap); // レースのハンデ段階 0..+4 (旧データには無いので 0)
 store.playMode = normalizePlayMode(store.playMode); // プレイスタイル 'normal' | 'develop' (v53 現像モード。旧データには無いので 'normal')
+store.xp = (typeof store.xp === 'number' && isFinite(store.xp) && store.xp > 0) ? Math.floor(store.xp) : 0;
+if (!store.rankMigrated) {
+  /* ランク制への移行 (v57): 過去のクリア記録から XP をさかのぼって付け、
+   * 到達ランク分の壁紙・額縁を解放する。旧制度で解放済みのものは
+   * apply 側が「追加のみ」なので失われない */
+  store.xp = migratedXp(store.records);
+  store.rankMigrated = true;
+  var migratedRank = rankFromXp(store.xp).rank;
+  applyFrameUnlocks(store.wall, migratedRank);
+  applyPaperUnlocks(store.wall, migratedRank);
+  saveStore();
+}
 /* ラウンド制 (第N回) は廃止 (2026-11-09 ステージ制へ転換)。store.round は旧セーブに残っていても読まない */
 function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
@@ -4990,6 +5069,8 @@ function updateProgressUI() {
 
 /* ---------- クリア処理 ---------- */
 var lastClearResult = null; // 共有 (文字/画像) 用に直近のクリア結果を保持
+var lastClearXp = null; // 直近クリアの XP 内訳 (結果画面の表示用)
+var lastUnlockedOnClear = { frames: [], papers: [] }; // 直近クリアで解放された壁紙・額縁
 function onClear() {
   seClear(); // クリアのオルゴール風アルペジオ
   /* ★ 順序が重要 (実機バグ修正): 以前は state.cleared = true を立ててから
@@ -5042,6 +5123,14 @@ function onClear() {
    * 「確定した記録は書く」責務はここに置く */
   saveStore();
   persistProgress();
+  /* ランク XP (v57): 記録が確定したこのタイミングで付与する。結果画面の
+   * 報酬判定 (processRewardsOnClear) は、この後のランクで解放を決める */
+  var xpGain = clearXp(difficulty, isFirstStageClear, !!state.devMode);
+  var rankBefore = rankFromXp(store.xp);
+  store.xp += xpGain;
+  var rankAfter = rankFromXp(store.xp);
+  lastClearXp = { gain: xpGain, before: rankBefore, after: rankAfter };
+  saveStore();
   runConfetti();
   /* 完成の余韻 (v53): レース以外は、完成盤面を光の帯が横切る約1秒を
    * 見せてから記録証を出す。レースは順位表示が続くので即時 */
@@ -5082,6 +5171,25 @@ function onClear() {
   } else {
     $('resultRewardItems').hidden = true;
     $('resultRewardItems').innerHTML = '';
+  }
+  // ランク XP 表示 (v57): 獲得 XP と進捗バー、ランクアップ時は報酬も
+  var xpBox = $('resultXp');
+  if (lastClearXp && lastClearXp.gain > 0) {
+    var ra = lastClearXp.after;
+    xpBox.hidden = false;
+    $('resultXpGain').textContent = '+' + lastClearXp.gain + ' XP';
+    $('resultXpFill').style.width = (ra.needed ? Math.round(ra.into / ra.needed * 100) : 100) + '%';
+    $('resultXpNext').textContent = ra.needed ? 'あと ' + ra.toNext + ' XP' : 'MAX';
+    var rankedUp = ra.rank > lastClearXp.before.rank;
+    $('resultXpRankup').hidden = !rankedUp;
+    if (rankedUp) $('resultXpRankup').textContent = 'ランクアップ！ ランク' + ra.rank + ' ・ ' + rankTitle(ra.rank);
+    var newNames = [];
+    lastUnlockedOnClear.papers.forEach(function (id) { var p = wallpaperById(id); if (p) newNames.push('壁紙「' + p.name + '」'); });
+    lastUnlockedOnClear.frames.forEach(function (id) { var f = frameStyleById(id); if (f) newNames.push('額縁「' + f.name + '」'); });
+    $('resultXpReward').hidden = !newNames.length;
+    if (newNames.length) $('resultXpReward').textContent = 'ランク報酬： ' + newNames.join('・') + ' が解放されました';
+  } else {
+    xpBox.hidden = true;
   }
   $('resultModal').hidden = false;
   navPush('result');
@@ -5351,7 +5459,7 @@ function runConfetti() {
  * プレイ中の机にはインテリアを一切描かない (旧・装飾レイヤーは廃止)。 */
 /* クリア時に報酬を確定させる。ごほうび抽選はステージの初クリア時のみ
  * (再プレイでは出ない)。季節アイテムの月判定は実カレンダーの月を使う。
- * フレーム解放は累計クリア回数 (records 数) の到達で判定する。
+ * フレーム・壁紙の解放は現在のランク到達で判定する (v57)。
  * 戻り値: 今回届いたアイテム id の配列 (結果画面の表示用) */
 function processRewardsOnClear(firstClear) {
   var wall = store.wall;
@@ -5365,8 +5473,9 @@ function processRewardsOnClear(firstClear) {
     }
     wall.lastDate = playDate;
   }
-  var unlocked = applyFrameUnlocks(wall, store.records.length);
-  var paperUnlocked = applyPaperUnlocks(wall, store.records.length);
+  var unlocked = applyFrameUnlocks(wall, rankFromXp(store.xp).rank);
+  var paperUnlocked = applyPaperUnlocks(wall, rankFromXp(store.xp).rank);
+  lastUnlockedOnClear = { frames: unlocked, papers: paperUnlocked };
   var expanded = applyWallExpand(wall, store.records.length);
   if (grants.length) {
     recordWallHistory(wall, playDate, grants);
@@ -5446,7 +5555,7 @@ function showUnlockNotice() {
     row.className = 'unlock-row';
     row.innerHTML = '<span class="unlock-swatch" style="background:' + (st.gradient || st.color) + '"></span>' +
       '<span class="unlock-name">' + st.name + '</span>' +
-      '<span class="unlock-cond">累計 ' + st.unlockAt + ' 回クリアで解放</span>';
+      '<span class="unlock-cond">ランク ' + st.unlockAt + ' で解放</span>';
     list.appendChild(row);
   });
   store.wall.pendingPaperUnlocks.forEach(function (id) {
@@ -5464,7 +5573,7 @@ function showUnlockNotice() {
     row.appendChild(nm);
     var cond = document.createElement('span');
     cond.className = 'unlock-cond';
-    cond.textContent = '累計 ' + p.unlockAt + ' 回クリアで解放';
+    cond.textContent = 'ランク ' + p.unlockAt + ' で解放';
     row.appendChild(cond);
     list.appendChild(row);
     paintPaperPreview(cv, p, 104, 80);
@@ -7213,7 +7322,7 @@ function openPaperPicker() {
     cell.type = 'button';
     cell.className = 'paper-cell' + (unlocked ? '' : ' locked') + (applied ? ' applied' : '');
     cell.disabled = !unlocked;
-    cell.setAttribute('aria-label', unlocked ? p.name + ' の壁紙にする' : p.name + ' (' + p.unlockAt + '回クリアで解放)');
+    cell.setAttribute('aria-label', unlocked ? p.name + ' の壁紙にする' : p.name + ' (ランク' + p.unlockAt + 'で解放)');
     var cv = document.createElement('canvas');
     cv.className = 'paper-cell-canvas';
     cell.appendChild(cv);
@@ -7223,7 +7332,7 @@ function openPaperPicker() {
     cell.appendChild(nm);
     var st = document.createElement('span');
     st.className = 'paper-cell-state';
-    st.textContent = applied ? '使用中' : (!unlocked ? p.unlockAt + '回クリアで解放' : '');
+    st.textContent = applied ? '使用中' : (!unlocked ? 'ランク' + p.unlockAt + 'で解放' : '');
     cell.appendChild(st);
     paintPaperPreview(cv, p, 264, 330);
     if (unlocked) {
@@ -7895,6 +8004,45 @@ function onPlayModeSelect() {
   onPlayModeChip($('playModeSel').value === 'develop' ? 'develop' : 'normal');
   buildPlayModeSeg(); // 確認モーダルで止まった場合などに表示を実態へ戻す
 }
+/* ランク行 (スタート画面) とランク詳細ダイアログの描画 (v57) */
+function paintRankRow() {
+  var info = rankFromXp(store.xp);
+  var badge = $('rankBadge');
+  if (!badge) return;
+  badge.textContent = info.rank;
+  $('rankName').textContent = 'ランク' + info.rank + ' ・ ' + rankTitle(info.rank);
+  $('rankFill').style.width = (info.needed ? Math.round(info.into / info.needed * 100) : 100) + '%';
+  $('rankNext').textContent = info.needed ? 'あと ' + info.toNext + ' XP' : 'MAX';
+}
+function buildRankModal() {
+  var info = rankFromXp(store.xp);
+  $('rankHeroBadge').textContent = info.rank;
+  $('rankHeroName').textContent = 'ランク' + info.rank + ' ・ ' + rankTitle(info.rank);
+  $('rankHeroXp').textContent = '合計 ' + info.total + ' XP';
+  $('rankHeroFill').style.width = (info.needed ? Math.round(info.into / info.needed * 100) : 100) + '%';
+  $('rankNextLine').textContent = info.needed ? '次のランクまで あと ' + info.toNext + ' XP' : '最高ランクに到達しました';
+  var nextRewards = info.rank < RANK_MAX ? rankRewardsAt(info.rank + 1) : [];
+  var nextTitle = info.rank < RANK_MAX && rankTitle(info.rank + 1) !== rankTitle(info.rank) ? rankTitle(info.rank + 1) : null;
+  var nextParts = nextRewards.map(function (r) { return (r.kind === 'paper' ? '壁紙' : '額縁') + '「' + r.name + '」'; });
+  if (nextTitle) nextParts.push('称号「' + nextTitle + '」');
+  $('rankNextReward').textContent = nextParts.length ? 'ランク' + (info.rank + 1) + 'の報酬： ' + nextParts.join('・') : '';
+  var ladder = $('rankLadder');
+  ladder.innerHTML = '';
+  for (var r = 2; r <= 28; r++) {
+    var rewards = rankRewardsAt(r);
+    if (!rewards.length && rankTitle(r) === rankTitle(r - 1)) continue;
+    var row = document.createElement('div');
+    var cls = 'rank-ladder-row';
+    if (r <= info.rank) cls += ' done';
+    else if (r === info.rank + 1) cls += ' next';
+    row.className = cls;
+    var parts = rewards.map(function (rw) { return (rw.kind === 'paper' ? '壁紙' : '額縁') + '「' + rw.name + '」'; });
+    if (rankTitle(r) !== rankTitle(r - 1)) parts.push('称号「' + rankTitle(r) + '」');
+    row.innerHTML = '<span>ランク' + r + '</span><span></span><span class="rank-check">' + (r <= info.rank ? '✓' : '') + '</span>';
+    row.children[1].textContent = parts.join('・');
+    ladder.appendChild(row);
+  }
+}
 function onPlayModeChip(mode) {
   if (mode === effectivePlayMode()) return;
   if (state && freshStartNeedsConfirm({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters })) {
@@ -8196,6 +8344,9 @@ function wireControls() {
   });
   $('difficultySel').addEventListener('change', onDifficultySelect);
   $('playModeSel').addEventListener('change', onPlayModeSelect);
+  $('rankRow').addEventListener('click', function () { buildRankModal(); $('rankModal').hidden = false; });
+  $('rankCloseBtn').addEventListener('click', function () { $('rankModal').hidden = true; });
+  $('rankBackdrop').addEventListener('click', function () { $('rankModal').hidden = true; });
   $('modeInfoBtn').addEventListener('click', function () { $('modeInfoModal').hidden = false; });
   $('modeInfoCloseBtn').addEventListener('click', function () { $('modeInfoModal').hidden = true; });
   $('modeInfoBackdrop').addEventListener('click', function () { $('modeInfoModal').hidden = true; });
@@ -10911,6 +11062,7 @@ function startGame(pool) {
   cancelPressAndRect();
   buildDifficultySeg();
   buildPlayModeSeg();
+  paintRankRow();
   if (firstStart) { uiHome = true; firstStart = false; } // ページを開き直したら必ずスタート画面から
   // スタート画面: 未開封なら包装された箱 (柄は日付×難易度グループで決定的)、開始済みなら続きからパネル
   renderStartScreen();
