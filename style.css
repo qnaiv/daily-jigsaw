@@ -371,6 +371,20 @@ button { font: inherit; cursor: pointer; }
 .diff-chip.active { background: var(--mat); color: var(--mat-ink); border-color: transparent; }
 .diff-chip.active .diff-star.silver { color: #cfd6da; }
 .diff-chip.active .diff-star.bronze { color: #e0aa72; }
+/* プレイスタイル (v53 現像モード): ふつう / 現像 の2チップ。難易度より
+ * 一段静かな小さいピルにして、主役はピース数チップのままにする */
+.start-mode { display: flex; justify-content: center; margin-top: 8px; width: 100%; }
+.mode-chips { display: flex; gap: 6px; }
+.mode-chip {
+  min-height: 30px; padding: 3px 18px;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 999px;
+  box-shadow: 0 1px 2px var(--shadow-soft);
+  font-size: 13px; font-weight: 700; letter-spacing: .04em;
+  transition: background .15s ease, color .15s ease;
+  -webkit-tap-highlight-color: transparent; cursor: pointer;
+}
+.mode-chip.active { background: var(--mat); color: var(--mat-ink); border-color: transparent; }
 /* 次のラウンドまでの目安 (ラウンド制) */
 .round-note { margin: 2px 0 0; min-height: 15px; width: 100%; text-align: center; color: var(--paper-dim); font-size: 11.5px; font-weight: 600; letter-spacing: .08em; }
 

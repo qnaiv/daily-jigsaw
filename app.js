@@ -2190,6 +2190,31 @@ function nextWallItemUid(placed) {
  * ステップの文面と対象要素はブラウザ側の TOUR_STEP_DEFS が持つ */
 var TOUR_SEGMENTS = { start: [0, 1], play: [2, 3], settings: [4, 5], wall: [6, 7] };
 var TOUR_STEP_COUNT = 8;
+/* ---------- v53: 現像モード + 手触り (純ロジック) ---------- */
+/* プレイスタイル: 'develop' (現像) 以外はすべて 'normal' に落とす */
+function normalizePlayMode(v) { return v === 'develop' ? 'develop' : 'normal'; }
+/* 合体音の音階ラダー (C メジャーペンタトニック)。短時間に続けて
+ * 合体させるほど段階が上がり、間が空くと最初に戻る */
+var MERGE_LADDER_FREQS = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51, 1567.98, 1760];
+var MERGE_LADDER_RESET_MS = 3000;
+function mergeLadderStep(step, lastAt, now) {
+  if (!lastAt || !(now >= lastAt) || now - lastAt > MERGE_LADDER_RESET_MS) return 0;
+  return Math.min((step | 0) + 1, 99);
+}
+function easeOutCubic(p) { p = Math.min(1, Math.max(0, p)); return 1 - Math.pow(1 - p, 3); }
+function fxProgress(start, dur, now) {
+  if (!start || !(dur > 0)) return 1;
+  return Math.min(1, Math.max(0, (now - start) / dur));
+}
+/* 現像モード: 2ピース以上の塊に入っているピースは「現像済み」。
+ * セーブ再開時はアニメーションなしでこの集合を復元する */
+function developRevealedFromClusters(clusters) {
+  var out = [];
+  (clusters || []).forEach(function (c) {
+    if (c.pieces.length >= 2) c.pieces.forEach(function (id) { out.push(id); });
+  });
+  return out;
+}
 var PureLogic = {
   BASE_DATE_FALLBACK: BASE_DATE_FALLBACK, DIFFICULTIES: DIFFICULTIES,
   TABSIZE: TABSIZE, JITTER: JITTER, SNAP_DIST: SNAP_DIST,
@@ -2235,6 +2260,10 @@ var PureLogic = {
   UI_THEME_IDS: UI_THEME_IDS, normalizeUiTheme: normalizeUiTheme,
   progressIsStarted: progressIsStarted, startPanelMode: startPanelMode, freshStartNeedsConfirm: freshStartNeedsConfirm,
   boxTapAction: boxTapAction,
+  normalizePlayMode: normalizePlayMode, MERGE_LADDER_FREQS: MERGE_LADDER_FREQS,
+  MERGE_LADDER_RESET_MS: MERGE_LADDER_RESET_MS, mergeLadderStep: mergeLadderStep,
+  easeOutCubic: easeOutCubic, fxProgress: fxProgress,
+  developRevealedFromClusters: developRevealedFromClusters,
   WALL_CATALOG: WALL_CATALOG,
   FRAME_STYLES: FRAME_STYLES, WALL_SIZE_RATIO: WALL_SIZE_RATIO,
   FRAME_PAD_RATIO: FRAME_PAD_RATIO, RAINBOW_COLORS: RAINBOW_COLORS,
@@ -2295,13 +2324,14 @@ function loadStore() {
     var raw = localStorage.getItem(STORE_KEY);
     if (raw) { var s = JSON.parse(raw); if (s && s.progress && s.records) return s; }
   } catch (e) { /* ignore */ }
-  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true, seVolume: 1, profile: null };
+  return { records: [], progress: {}, lastDifficulty: 36, uiTheme: 'walnut', bgmOn: true, bgmVolume: 0.7, seOn: true, seVolume: 1, profile: null, playMode: 'normal' };
 }
 var store = loadStore();
 store.uiTheme = normalizeUiTheme(store.uiTheme); // 旧テーマ値は無効値として既定 'walnut' に落とす
 store.wall = normalizeWall(store.wall); // 壁インテリア (旧データには無いので空で作る。旧 store.rewards は読み捨て)
 store.profile = normalizeProfile(store.profile); // プレイヤープロフィール (MP改善#4。旧データには無いので null)
 store.mpHandicap = normalizeHandicap(store.mpHandicap); // レースのハンデ段階 0..+4 (旧データには無いので 0)
+store.playMode = normalizePlayMode(store.playMode); // プレイスタイル 'normal' | 'develop' (v53 現像モード。旧データには無いので 'normal')
 /* ラウンド制 (第N回) は廃止 (2026-11-09 ステージ制へ転換)。store.round は旧セーブに残っていても読まない */
 function saveStoreDeferred() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } }
 function saveStore() {
@@ -3097,12 +3127,13 @@ function seNoise(dur, type, freq, peak, delay) {
   src.loop = true;
   var f = seCtx.createBiquadFilter();
   f.type = type;
-  f.frequency.setValueAtTime(freq[0], t0);
-  f.frequency.exponentialRampToValueAtTime(Math.max(20, freq[1]), t0 + dur);
+  var jf = 1 + (Math.random() * 0.04 - 0.02); // 音の揺らぎ (v53): 毎回わずかに変えて機械っぽさを消す
+  f.frequency.setValueAtTime(freq[0] * jf, t0);
+  f.frequency.exponentialRampToValueAtTime(Math.max(20, freq[1] * jf), t0 + dur);
   f.Q.value = 1.1;
   var g = seCtx.createGain();
   g.gain.setValueAtTime(0, t0);
-  g.gain.linearRampToValueAtTime(peak, t0 + 0.012);
+  g.gain.linearRampToValueAtTime(peak * (0.94 + Math.random() * 0.12), t0 + 0.012);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
   src.connect(f); f.connect(g); g.connect(seMaster);
   src.start(t0); src.stop(t0 + dur + 0.05);
@@ -3115,6 +3146,9 @@ function seTone(freq, dur, peak, type, delay) {
   o.type = type || 'sine';
   var f0 = Array.isArray(freq) ? freq[0] : freq;
   var f1 = Array.isArray(freq) ? freq[1] : freq;
+  var jf2 = 1 + (Math.random() * 0.03 - 0.015); // 音の揺らぎ (v53)
+  f0 *= jf2; f1 *= jf2;
+  peak *= 0.94 + Math.random() * 0.12;
   o.frequency.setValueAtTime(f0, t0);
   if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t0 + dur * 0.8);
   var g = seCtx.createGain();
@@ -3133,23 +3167,31 @@ function seGrab() { // 紙の「サッ」: ノイズのバンドパスを 1200�
   if (!seInGame()) return;
   seNoise(0.1, 'bandpass', [1200, 2400], 0.5);
 }
-function seDrop() { // 木の「トッ」: サインのピッチドロップ + ローパスの木の当たり
+function seDrop() { // 紙の「トスッ」: 柔らかい低音の沈み + ローパスノイズの当たり (v53 で木の「トッ」から変更)
   if (!seInGame()) return;
-  seTone([180, 70], 0.12, 0.6);
-  seNoise(0.05, 'lowpass', [900, 500], 0.22);
+  seTone([150, 58], 0.1, 0.34);
+  seNoise(0.09, 'lowpass', [820, 300], 0.3);
 }
-function seMerge() { // クリック + G5→C6 の 2 音チャイム
+var mergeStep = 0, lastMergeAt = 0;
+function seMerge() { // クリック + 音階ラダー: 続けて合体させるほど音が上がる (v53)
   if (!seInGame()) return;
+  var now = Date.now();
+  mergeStep = mergeLadderStep(mergeStep, lastMergeAt, now);
+  lastMergeAt = now;
+  var i = Math.min(mergeStep, MERGE_LADDER_FREQS.length - 2);
   seNoise(0.03, 'highpass', [3000, 3000], 0.3);
-  seTone(784, 0.22, 0.22);
-  seTone(1046.5, 0.3, 0.22, 'sine', 0.07);
+  seTone(MERGE_LADDER_FREQS[i], 0.22, 0.22);
+  seTone(MERGE_LADDER_FREQS[i + 1], 0.3, 0.2, 'sine', 0.06);
 }
-function seClear() { // オルゴール風アルペジオ C5-E5-G5-C6 (倍音を薄く重ねる)
+function seClear() { // オルゴール風アルペジオ C5-E5-G5-C6 (倍音を薄く重ねる) + 余韻の温かい和音 (v53)
   if (!seInGame()) return;
   [523.25, 659.25, 783.99, 1046.5].forEach(function (fq, i) {
     seTone(fq, 0.55, 0.26, 'sine', i * 0.13);
     seTone(fq * 2, 0.3, 0.06, 'sine', i * 0.13);
   });
+  seTone(261.63, 1.1, 0.09, 'sine', 0.52);
+  seTone(329.63, 1.1, 0.07, 'sine', 0.52);
+  seTone(392, 1.1, 0.07, 'sine', 0.52);
 }
 function seLid() { // 紙の擦れ (バンドパス 400→1400Hz, 0.25s) + 小さなノック
   if (!seReady()) return;
@@ -3292,10 +3334,14 @@ function newGameState(pool) {
     previewViewed: !!prog.previewViewed,
     previewCount: prog.previewCount || 0,
     mergeFlash: null,                 // { ids:Set, start:ms } 合体フィードバック
+    devMode: gameStarted ? !!prog.dev : normalizePlayMode(store.playMode) === 'develop', // 現像モード (v53): 開始済みはセーブの dev が正
+    devRevealed: new Set(developRevealedFromClusters(gameStarted ? prog.clusters : [])),
+    devAnim: null, mergeAnim: null, dropAnim: null, clearGloss: null, // 手触り演出 (v53、描画専用)
     cleared: !!prog.cleared,
     started: false, paused: false, timerStart: 0,
     views: { desk: null }, // {scale, tx, ty} scaleFit も保持
     bitmaps: new Map(),               // pieceId -> {canvas, path, cellPx, marginPx}
+    bitmapsPaper: new Map(),          // 現像モード用「白ピース」ビットマップ
     bitmapFailures: new Map(),        // pieceId -> プローブ連続失敗回数 (作り直しポリシー用)
     srcCanvas: null, boardPx: 0,
     resumed: prog.clusters.length > 0
@@ -3311,6 +3357,7 @@ function persistProgress() {
   prog.previewViewed = state.previewViewed;
   prog.previewCount = state.previewCount;
   prog.cleared = state.cleared;
+  prog.dev = !!state.devMode; // 現像モードのランは再開時も現像のまま (v53)
   prog.started = state.gameStarted;
   /* ゲーム開始が確定したら、そのときのお題キーを progress に固定する
    * (以後の再開ではこのキーが最優先になり、お題が途中で変わらない) */
@@ -3544,6 +3591,60 @@ function renderPieceBitmap(id) {
   ctx.stroke(path);
   return { canvas: cv, path: path, cellPx: cellPx, marginPx: marginPx, createdAt: Date.now() };
 }
+/* 現像モード用「白ピース」ビットマップ (v53): 写真の代わりに生成りの
+ * 紙面を塗る。側面・ベベル・輪郭は通常ピースと同じにして、形と厚み
+ * だけが手がかりとして読めるようにする */
+function renderPieceBitmapPaper(id) {
+  var cellPx = state.boardPx / state.n;
+  var marginPx = Math.ceil(cellPx * 0.34);
+  var sizePx = Math.ceil(cellPx + marginPx * 2);
+  var cv = document.createElement('canvas');
+  cv.width = sizePx; cv.height = sizePx;
+  var ctx = cv.getContext('2d');
+  var path = buildPiecePath(id, cellPx, marginPx);
+  var relief = pieceRelief(cellPx);
+  if (relief.thickness > 0) {
+    ctx.fillStyle = '#cfc2a4'; // 紙の側面 (厚紙の断面)
+    for (var yy = relief.thickness; yy > 0; yy -= 1) {
+      ctx.save();
+      ctx.translate(0, yy);
+      ctx.fill(path);
+      ctx.restore();
+    }
+  }
+  ctx.save();
+  ctx.clip(path);
+  var g = ctx.createLinearGradient(0, 0, 0, sizePx);
+  g.addColorStop(0, '#faf6ec');
+  g.addColorStop(1, '#efe7d3');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, sizePx, sizePx);
+  ctx.restore();
+  strokePieceBevel(ctx, path, relief.bevel);
+  ctx.strokeStyle = 'rgba(30,30,30,0.35)';
+  ctx.lineWidth = Math.max(1, cellPx * 0.02);
+  ctx.stroke(path);
+  return { canvas: cv, path: path, cellPx: cellPx, marginPx: marginPx, createdAt: Date.now() };
+}
+function pieceBitmapPaper(id) {
+  var cached = state.bitmapsPaper.get(id);
+  if (cached) return cached;
+  var bmp = renderPieceBitmapPaper(id);
+  state.bitmapsPaper.set(id, bmp);
+  return bmp;
+}
+/* 現像モードのピース別不透明度: バラピースは 0 (真っ白)、現像済みは 1、
+ * 現像アニメーション中のピースはその中間 (約1.5秒で浮かび上がる) */
+var DEV_ANIM_MS = 1500;
+function devPieceAlpha(id, cl) {
+  if (cl.pieces.length < 2) return 0;
+  if (!state.devRevealed.has(id)) return 0;
+  if (state.devAnim && state.devAnim.ids.has(id)) {
+    var p = fxProgress(state.devAnim.start, DEV_ANIM_MS, Date.now());
+    return p * p * (3 - 2 * p); // 現像らしく、ゆっくり滲んでから浮かぶ (smoothstep)
+  }
+  return 1;
+}
 /* ピース輪郭を Path2D で作る (bitmap ピクセル座標, 原点はマージン分ずらす) */
 function buildPiecePath(id, cellPx, marginPx) {
   var n = state.n, home = pieceHome(id, n);
@@ -3579,7 +3680,7 @@ function resizeStage() {
   // リサイズはブラウザがオフスクリーン canvas の実体を落とす契機にもなる
   // (向き変更・ツールバー伸縮)。ビットマップは遅延再生成されるので、
   // ここで全捨てして「透明なまま固定」を防ぐ (失敗カウントもリセット)。
-  if (state) { state.bitmaps.clear(); state.bitmapFailures.clear(); bmpIdList = null; }
+  if (state) { state.bitmaps.clear(); if (state.bitmapsPaper) state.bitmapsPaper.clear(); state.bitmapFailures.clear(); bmpIdList = null; }
   if (state && !state.views.desk) fitViews();
   if (state && state.views.desk) clampCamera();
   draw();
@@ -3826,13 +3927,26 @@ function draw() {
   // 表示範囲のカリング: 画面内にある塊だけ描く
   var wTl = screenToWorld(0, 0), wBr = screenToWorld(stageW, stageH);
   var ordered = state.clusters.slice();
+  var tops = [];
   if (drag && drag.cluster) {
     // ドラッグ中の塊 (範囲選択時はグループ全塊) を最前面に描く
-    var tops = drag.group ? drag.group.map(function (g) { return g.cluster; }) : [drag.cluster];
+    tops = drag.group ? drag.group.map(function (g) { return g.cluster; }) : [drag.cluster];
+  } else if (carry) {
+    tops = carry.group ? carry.group.map(function (g) { return g.cluster; }) : [carry.cluster];
+  }
+  if (tops.length) {
     ordered = ordered.filter(function (c) { return tops.indexOf(c) < 0; })
       .concat(ordered.filter(function (c) { return tops.indexOf(c) >= 0; }));
   }
-  ordered.forEach(function (cl) { drawCluster(cl, wTl, wBr); });
+  var liftP = tops.length ? liftProgress() : 0;
+  ordered.forEach(function (cl) {
+    if (tops.indexOf(cl) >= 0) {
+      drawHeldShadow(cl, v, liftP); // 持ち上げ中の影を下に敷いてから本体を浮かせて描く (v53)
+      drawCluster(cl, wTl, wBr, { liftPx: 9 * liftP });
+    } else {
+      drawCluster(cl, wTl, wBr);
+    }
+  });
   spotCheckBitmap(); // 失われたビットマップがあれば1つまで検出して捨てる (次回描画で回復)
   // 合体フィードバック: 合体した塊の輪郭が一瞬光る
   if (state.mergeFlash) {
@@ -3844,6 +3958,27 @@ function draw() {
         if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
         strokePiece(id, wx, wy, 'rgba(255,190,0,' + alpha.toFixed(3) + ')', 3.5, 'rgba(255,200,40,' + (alpha * 0.25).toFixed(3) + ')');
       });
+    }
+  }
+  // 完成時 (v53): 完成盤面を光の帯が一度だけ斜めに横切る
+  if (state.clearGloss) {
+    var glp = fxProgress(state.clearGloss.start, CLEAR_GLOSS_MS, Date.now());
+    if (glp >= 1) state.clearGloss = null;
+    else {
+      var gb = state.clearGloss.box;
+      var gx0 = gb.x0 * v.scale + v.tx, gy0 = gb.y0 * v.scale + v.ty;
+      var gw = (gb.x1 - gb.x0) * v.scale, gh = (gb.y1 - gb.y0) * v.scale;
+      var bandX = gx0 - gw * 0.25 + gw * 1.5 * glp;
+      sctx.save();
+      sctx.beginPath(); sctx.rect(gx0, gy0, gw, gh); sctx.clip();
+      sctx.translate(bandX, gy0 + gh / 2); sctx.rotate(-0.32);
+      var grad = sctx.createLinearGradient(-gw * 0.28, 0, gw * 0.28, 0);
+      grad.addColorStop(0, 'rgba(255,244,214,0)');
+      grad.addColorStop(0.5, 'rgba(255,244,214,' + (0.5 * Math.sin(glp * Math.PI)).toFixed(3) + ')');
+      grad.addColorStop(1, 'rgba(255,244,214,0)');
+      sctx.fillStyle = grad;
+      sctx.fillRect(-gw * 0.28, -gh, gw * 0.56, gh * 2);
+      sctx.restore();
     }
   }
   // 範囲選択: 選択中の塊の輪郭を真鍮色でハイライトする
@@ -3864,7 +3999,7 @@ function draw() {
     var cAnchor = pieceHome(clusterAnchorId(carry.cluster), n);
     carry.cluster.pieces.forEach(function (id) {
       var cHome = pieceHome(id, n);
-      var cwx = (carry.cluster.gx + (cHome.col - cAnchor.col)) * CELL, cwy = (carry.cluster.gy + (cHome.row - cAnchor.row)) * CELL;
+      var cwx = (carry.cluster.gx + (cHome.col - cAnchor.col)) * CELL, cwy = (carry.cluster.gy + (cHome.row - cAnchor.row)) * CELL - (9 * liftP) / v.scale; // 持ち上げの浮きに輪郭も追随 (v53)
       if (cwx + CELL * 1.4 < wTl.x || cwx - CELL * 0.4 > wBr.x || cwy + CELL * 1.4 < wTl.y || cwy - CELL * 0.4 > wBr.y) return;
       strokePiece(id, cwx, cwy, '#e8b64c', 3.5, 'rgba(232,182,76,0.20)');
     });
@@ -3983,6 +4118,99 @@ function startMergeFlash(pieces) {
     requestAnimationFrame(loop);
   })();
 }
+/* ---------- 手触り (v53): 演出アニメーションの共通基盤 ----------
+ * 論理座標・保存形式は一切変えず、描画オフセットと音だけで付ける。
+ * アニメーションが1つでも生きている間だけ rAF で draw を回す */
+var CLEAR_GLOSS_MS = 1100;
+var fxLoopOn = false;
+function fxAnimActive() {
+  if (!state) return false;
+  var now = Date.now();
+  if (state.devAnim && fxProgress(state.devAnim.start, DEV_ANIM_MS, now) < 1) return true;
+  if (state.mergeAnim && fxProgress(state.mergeAnim.start, 160, now) < 1) return true;
+  if (state.dropAnim && fxProgress(state.dropAnim.start, 150, now) < 1) return true;
+  if (state.clearGloss && fxProgress(state.clearGloss.start, CLEAR_GLOSS_MS, now) < 1) return true;
+  if (liftStartAt && (drag || carry) && now - liftStartAt < LIFT_MS) return true;
+  return false;
+}
+function kickFxLoop() {
+  if (fxLoopOn) return;
+  fxLoopOn = true;
+  (function loop() {
+    if (!fxAnimActive()) { fxLoopOn = false; return; }
+    draw();
+    requestAnimationFrame(loop);
+  })();
+}
+/* 合体の見た目フィードバック (音は呼び出し側の seMerge が担う):
+ * 吸い付き + 弾み (mergeAnim)。現像モードなら現像開始もここで */
+function mergeMotion(cluster, fromGX, fromGY) {
+  if (!cluster) return;
+  state.mergeAnim = { cluster: cluster, fromGX: fromGX, fromGY: fromGY, start: Date.now() };
+  if (state.devMode && cluster.pieces.length >= 2) {
+    var fresh = cluster.pieces.filter(function (id) { return !state.devRevealed.has(id); });
+    if (fresh.length) {
+      fresh.forEach(function (id) { state.devRevealed.add(id); });
+      state.devAnim = { ids: new Set(fresh), start: Date.now() };
+    }
+  }
+  kickFxLoop();
+}
+function mergeFeedback(cluster, fromGX, fromGY) {
+  if (!cluster) return;
+  startMergeFlash(cluster.pieces);
+  mergeMotion(cluster, fromGX, fromGY);
+}
+/* 置いた (合体しなかった) ときの小さな沈み込み */
+function dropSettle(cluster) {
+  if (!cluster) return;
+  state.dropAnim = { cluster: cluster, start: Date.now() };
+  kickFxLoop();
+}
+/* 持ち上げ: 掴んでからの経過で影が広がり、塊が少し浮く */
+var LIFT_MS = 230;
+var liftStartAt = 0;
+function liftProgress() {
+  if (!liftStartAt) return 0;
+  return easeOutCubic(fxProgress(liftStartAt, LIFT_MS, Date.now()));
+}
+/* 持ち上げ中の塊の影: 塊のシルエットを一度だけオフスクリーンに焼き
+ * (形はピースの輪郭そのまま)、持ち上げ量に応じて広げて下に敷く */
+function clusterShadowCanvas(cl, v) {
+  var cached = cl._shadowFx;
+  if (cached && Math.abs(cached.scale - v.scale) < 0.01) return cached;
+  var box = clusterWorldBox(cl);
+  var pad = CELL * 0.5;
+  var w = Math.max(2, Math.ceil((box.x1 - box.x0 + pad * 2) * v.scale));
+  var h = Math.max(2, Math.ceil((box.y1 - box.y0 + pad * 2) * v.scale));
+  var cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  var ctx = cv.getContext('2d');
+  var sub = { scale: v.scale, tx: -(box.x0 - pad) * v.scale, ty: -(box.y0 - pad) * v.scale, fit: v.fit }; // キャンバス原点 = 影キャンバスの左上 (画面の tx/ty は混ぜない)
+  drawClusterOn(ctx, sub, cl, { x: box.x0 - pad * 2, y: box.y0 - pad * 2 }, { x: box.x1 + pad * 2, y: box.y1 + pad * 2 });
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.fillStyle = 'rgba(43,28,10,1)';
+  ctx.fillRect(0, 0, w, h);
+  var out = { canvas: cv, scale: v.scale, x0: box.x0 - pad, y0: box.y0 - pad };
+  cl._shadowFx = out;
+  return out;
+}
+function drawHeldShadow(cl, v, p) {
+  var sh = clusterShadowCanvas(cl, v);
+  var w = sh.canvas.width, h = sh.canvas.height;
+  /* 位置はキャッシュせず毎回現在の塊位置から求める (影キャンバスの
+   * 中身は位置に依らないが、左上座標はドラッグで動くため) */
+  var box = clusterWorldBox(cl);
+  var pad = CELL * 0.5;
+  var sx = (box.x0 - pad) * v.scale + v.tx, sy = (box.y0 - pad) * v.scale + v.ty;
+  var s = 1 + 0.08 * p; // 持ち上がるほど影が広がる
+  var offY = 4 + 14 * p; // 本体が浮くぶん影は下へ離れる
+  var dw = w * s, dh = h * s;
+  sctx.save();
+  sctx.globalAlpha = 0.3;
+  sctx.drawImage(sh.canvas, sx + w / 2 - dw / 2, sy + h - dh + offY, dw, dh);
+  sctx.restore();
+}
 function clusterWorldBox(cl) {
   var n = state.n, anchor = pieceHome(clusterAnchorId(cl), n);
   var minC = 1e9, minR = 1e9, maxC = -1e9, maxR = -1e9;
@@ -3996,20 +4224,53 @@ function clusterWorldBox(cl) {
     x1: (cl.gx + (maxC - anchor.col) + 1.4) * CELL, y1: (cl.gy + (maxR - anchor.row) + 1.4) * CELL
   };
 }
-function drawCluster(cl, wTl, wBr) { drawClusterOn(sctx, view(), cl, wTl, wBr); }
-function drawClusterOn(ctx, v, cl, wTl, wBr) {
+function drawCluster(cl, wTl, wBr, fx) { drawClusterOn(sctx, view(), cl, wTl, wBr, fx); }
+function drawClusterOn(ctx, v, cl, wTl, wBr, fx) {
   var box = clusterWorldBox(cl);
   if (box.x1 < wTl.x || box.x0 > wBr.x || box.y1 < wTl.y || box.y0 > wBr.y) return;
   var n = state.n, anchor = pieceHome(clusterAnchorId(cl), n);
+  /* 手触り (v53): 合体の吸い付き (最終位置へ滑り込む) と小さな弾み、
+   * 置いた直後の沈み込み、持ち上げ中の浮き上がりは、論理座標を
+   * 変えず描画オフセットだけで付ける */
+  var offGX = 0, offGY = 0, pulse = 1, liftPx = 0;
+  if (fx && fx.liftPx) liftPx = fx.liftPx;
+  if (state.mergeAnim && state.mergeAnim.cluster === cl) {
+    var map2 = fxProgress(state.mergeAnim.start, 160, Date.now());
+    var me = 1 - easeOutCubic(map2);
+    offGX += (state.mergeAnim.fromGX - cl.gx) * me;
+    offGY += (state.mergeAnim.fromGY - cl.gy) * me;
+    pulse = 1 + 0.028 * Math.sin(map2 * Math.PI);
+  }
+  if (state.dropAnim && state.dropAnim.cluster === cl) {
+    var dap = fxProgress(state.dropAnim.start, 150, Date.now());
+    offGY += 0.045 * Math.sin(dap * Math.PI); // 置いた瞬間にわずかに沈んで戻る
+  }
+  var pcx = 0, pcy = 0;
+  if (pulse !== 1) {
+    pcx = ((box.x0 + box.x1) / 2 + offGX * CELL) * v.scale + v.tx;
+    pcy = ((box.y0 + box.y1) / 2 + offGY * CELL) * v.scale + v.ty;
+  }
   cl.pieces.forEach(function (id) {
     var home = pieceHome(id, n);
-    var wx = (cl.gx + (home.col - anchor.col)) * CELL, wy = (cl.gy + (home.row - anchor.row)) * CELL;
+    var wx = (cl.gx + offGX + (home.col - anchor.col)) * CELL, wy = (cl.gy + offGY + (home.row - anchor.row)) * CELL;
     if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
     var bmp = pieceBitmap(id);
     var ratio = (CELL * v.scale) / bmp.cellPx;
     var dx = wx * v.scale + v.tx - bmp.marginPx * ratio;
-    var dy = wy * v.scale + v.ty - bmp.marginPx * ratio;
+    var dy = wy * v.scale + v.ty - bmp.marginPx * ratio - liftPx;
     var sz = bmp.canvas.width * ratio;
+    if (pulse !== 1) { dx = pcx + (dx - pcx) * pulse; dy = pcy + (dy - pcy) * pulse; sz *= pulse; }
+    /* 現像モード: 白ピースの上に、現像済みピースの絵を不透明度で重ねる */
+    var alpha = state.devMode ? devPieceAlpha(id, cl) : 1;
+    if (alpha <= 0) { ctx.drawImage(pieceBitmapPaper(id).canvas, dx, dy, sz, sz); return; }
+    if (alpha < 1) {
+      ctx.drawImage(pieceBitmapPaper(id).canvas, dx, dy, sz, sz);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(bmp.canvas, dx, dy, sz, sz);
+      ctx.restore();
+      return;
+    }
     ctx.drawImage(bmp.canvas, dx, dy, sz, sz);
   });
 }
@@ -4086,6 +4347,7 @@ function carryClusterPos() {
 }
 function startCarry(cluster, group, sx, sy, grabDX, grabDY) {
   carry = { cluster: cluster, group: group, anchorX: sx, anchorY: sy, grabDX: grabDX, grabDY: grabDY };
+  liftStartAt = Date.now(); kickFxLoop(); // 持ち上げ演出 (影と浮き) の開始 (v53)
   draw();
 }
 /* 運び中の塊をその場に置く (グリッド吸着・合体・保存は settleDrag に任せる) */
@@ -4421,6 +4683,7 @@ stage.addEventListener('pointerdown', function (ev) {
       });
     }
     seGrab(); // 掴んだ音 (紙の「サッ」)
+    liftStartAt = Date.now(); kickFxLoop(); // 持ち上げ演出 (影と浮き) の開始 (v53)
     startTimerOnce();
   } else if (state.cleared) {
     // クリア後のパン: 'two' 方式は2本指 (ピンチ) のみ (マウスだけ1ボタンで
@@ -4568,6 +4831,7 @@ stage.addEventListener('contextmenu', function (ev) { ev.preventDefault(); }); /
 
 /* ドラッグの確定処理 (離したとき & ピンチへ切り替えるとき共通) */
 function settleDrag() {
+  liftStartAt = 0; // 持ち上げ演出はここで終わり (v53)
   if (mpInRoom() && mp.mode !== 'race') { mpSettleDrag(); return; } // 協力/ターン制は seq 確定経路へ (確定はイベント適用時)。レースは各自ローカル盤面なのでソロ経路で確定させる
   var cl = drag.cluster;
   var group = drag.group;
@@ -4582,7 +4846,8 @@ function settleDrag() {
   var others = state.clusters.filter(function (c) { return c !== cl; });
   var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: cl.gx, gy: cl.gy }, state.n);
   state.clusters = res.clusters;
-  if (res.merged) { startMergeFlash(res.cluster.pieces); seMerge(); } // 合体のクリック + チャイム
+  if (res.merged) { mergeFeedback(res.cluster, cl.gx, cl.gy); seMerge(); } // 合体の吸い付き + 音階スナップ音
+  else dropSettle(res.cluster); // 合体しなかった置きは小さく沈む
   afterBoardChange();
 }
 /* 範囲選択のグループ確定:
@@ -4604,6 +4869,7 @@ function settleGroupDrag(leader, group) {
   var followers = group.map(function (g) { return g.cluster; }).filter(function (c) { return c !== leader; });
   var all = res.clusters.concat(shiftClusters(followers, dx, dy));
   var queue = all.slice(res.clusters.length);
+  var followerMotions = [];
   while (queue.length) {
     var f = queue.shift();
     if (all.indexOf(f) < 0) continue; // 既に別の塊へ合体済み
@@ -4611,10 +4877,13 @@ function settleGroupDrag(leader, group) {
       all.filter(function (c) { return c !== f; }),
       { pieces: f.pieces, surface: f.surface, gx: f.gx, gy: f.gy }, n, { noSnap: true });
     all = r2.clusters;
-    if (r2.merged) flash = (flash || []).concat(r2.cluster.pieces);
+    if (r2.merged) { flash = (flash || []).concat(r2.cluster.pieces); followerMotions.push({ cluster: r2.cluster, fx: f.gx, fy: f.gy }); }
   }
   state.clusters = all;
+  if (res.merged) mergeMotion(res.cluster, leader.gx, leader.gy);
+  followerMotions.forEach(function (m) { mergeMotion(m.cluster, m.fx, m.fy); });
   if (flash) { startMergeFlash(flash); seMerge(); } // グループ側で合体した場合も同じ音
+  else dropSettle(res.cluster);
   afterBoardChange();
 }
 function afterBoardChange() {
@@ -4713,6 +4982,7 @@ function onClear() {
     bestTimeSec: prev ? Math.min(prev.bestTimeSec, elapsed) : elapsed,
     moves: state.moves,
     previewViewed: state.previewViewed, previewCount: state.previewCount,
+    dev: !!state.devMode, // 現像モードでのクリアか (v53)
     clearedAt: new Date().toISOString(),
     author: state.author || null
   };
@@ -4740,6 +5010,15 @@ function onClear() {
   saveStore();
   persistProgress();
   runConfetti();
+  /* 完成の余韻 (v53): レース以外は、完成盤面を光の帯が横切る約1秒を
+   * 見せてから記録証を出す。レースは順位表示が続くので即時 */
+  var glossDelay = !(mpInRoom() && mp.mode === 'race');
+  if (glossDelay && state.clusters.length === 1) {
+    var finBox = clusterWorldBox(state.clusters[0]);
+    state.clearGloss = { start: Date.now(), box: { x0: finBox.x0 + CELL * 0.35, y0: finBox.y0 + CELL * 0.35, x1: finBox.x1 - CELL * 0.35, y1: finBox.y1 - CELL * 0.35 } };
+    kickFxLoop();
+  }
+  var presentResult = function () {
   // 記録証 (C案): 額装した完成盤面 + 記録2行 + 「完成図を見ずにクリア」バッジ
   $('resultTitle').textContent = 'クリア';
   $('resultDateLine').textContent = 'ステージ ' + playStage + ' ・ ' + difficulty + 'ピース';
@@ -4774,6 +5053,8 @@ function onClear() {
   $('resultModal').hidden = false;
   navPush('result');
   mpFillResultExtras(); // 協力プレイ時の貢献度と注記 (ソロでは隠したまま)
+  };
+  if (glossDelay) setTimeout(presentResult, 1000); else presentResult();
 }
 /* ---------- クリア結果の共有 (文字 / 画像) ---------- */
 function flashShareBtn(text) {
@@ -7578,6 +7859,44 @@ function buildDifficultySeg() {
     seg.appendChild(b);
   });
 }
+/* プレイスタイル (v53): ふつう / 現像 (つながった塊だけ絵が浮かび上がる)。
+ * 進行中のゲームがある難易度では、そのゲームのモードが正。切り替えは
+ * 進捗が消えるので「はじめから」と同じ確認モーダルを挟む */
+var pendingPlayMode = null;
+function effectivePlayMode() {
+  if (state && state.gameStarted) return state.devMode ? 'develop' : 'normal';
+  return normalizePlayMode(store.playMode);
+}
+function buildPlayModeSeg() {
+  var seg = $('playModeSeg');
+  if (!seg) return;
+  seg.innerHTML = '';
+  var cur = effectivePlayMode();
+  [['normal', 'ふつう'], ['develop', '現像']].forEach(function (pair) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'mode-chip' + (pair[0] === cur ? ' active' : '');
+    b.textContent = pair[1];
+    b.setAttribute('aria-pressed', pair[0] === cur ? 'true' : 'false');
+    b.addEventListener('click', function () { onPlayModeChip(pair[0]); });
+    seg.appendChild(b);
+  });
+}
+function onPlayModeChip(mode) {
+  if (mode === effectivePlayMode()) return;
+  if (state && freshStartNeedsConfirm({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters })) {
+    pendingPlayMode = mode;
+    $('freshConfirmText').textContent = difficulty + 'ピースの進捗は消えます。' +
+      (mode === 'develop' ? '現像モード' : 'ふつうモード') + 'ではじめから遊びますか？';
+    $('freshConfirmModal').hidden = false;
+    return;
+  }
+  store.playMode = mode;
+  saveStore();
+  if (state && state.gameStarted) { restartPuzzle(); return; } // クリア済み: 進捗を捨てて新しいモードの箱に戻る
+  if (state) state.devMode = mode === 'develop';
+  buildPlayModeSeg();
+}
 /* 箱は1つだけ (ステージ制)。タップで最新の未挑戦 (または再プレイ先) が開く */
 function activeGiftBox() { return $('giftBox'); }
 function onGiftBoxTap() { openBox(); }
@@ -7889,9 +8208,10 @@ function wireControls() {
     $('freshConfirmText').textContent = difficulty + 'ピースの進捗は消えます。はじめから遊びますか？';
     $('freshConfirmModal').hidden = false;
   });
-  $('freshConfirmNoBtn').addEventListener('click', function () { $('freshConfirmModal').hidden = true; });
+  $('freshConfirmNoBtn').addEventListener('click', function () { $('freshConfirmModal').hidden = true; pendingPlayMode = null; });
   $('freshConfirmYesBtn').addEventListener('click', function () {
     $('freshConfirmModal').hidden = true;
+    if (pendingPlayMode) { store.playMode = pendingPlayMode; pendingPlayMode = null; saveStore(); } // モード切替経由の場合は先にモードを確定 (v53)
     restartPuzzle();
   });
   var giftBoxElNow = $('giftBox');
@@ -8318,11 +8638,11 @@ function renderStartScreen() {
       // クリア済みのステージ×難易度は進捗サマリーの代わりにクリア表示にする
       var rec = findRecordForStage(playStage, difficulty);
       var best = rec ? rec.bestTimeSec : currentElapsed();
-      $('resumeInfo').textContent = difficulty + 'ピース ・ クリア済み ・ ベストタイム ' + formatTime(best);
+      $('resumeInfo').textContent = difficulty + 'ピース ・ クリア済み ・ ベストタイム ' + formatTime(best) + (state.devMode ? ' ・ 現像モード' : '');
     } else {
       var max = 0;
       state.clusters.forEach(function (c) { if (c.pieces.length > max) max = c.pieces.length; });
-      $('resumeInfo').textContent = difficulty + 'ピース ・ 最大の塊 ' + max + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed());
+      $('resumeInfo').textContent = difficulty + 'ピース ・ 最大の塊 ' + max + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed()) + (state.devMode ? ' ・ 現像モード' : '');
     }
   }
   updateStartWallRow();
@@ -9422,9 +9742,10 @@ function mpLoadPuzzle(stage, pieces) {
     clusters: initialScatter(playDate, pieces),
     elapsedBase: 0, moves: 0, previewViewed: false, previewCount: 0,
     mergeFlash: null, cleared: false,
+    devMode: false, devRevealed: new Set(), devAnim: null, mergeAnim: null, dropAnim: null, clearGloss: null, // MP は現像モード対象外 (v53)
     started: false, paused: false, timerStart: 0,
     views: { desk: null },
-    bitmaps: new Map(), bitmapFailures: new Map(),
+    bitmaps: new Map(), bitmapsPaper: new Map(), bitmapFailures: new Map(),
     srcCanvas: null, boardPx: 0, resumed: false, usedFallback: false
   };
   selection.clear();
@@ -9669,7 +9990,7 @@ function mpOnDrop(ev) {
     // (大同士の合体も +1、チェーンで2塊取り込めば +2。ピース数は数えない
     // ので、完走時の全員合計は必ず ピース数 - 1 になる) (§3.9)
     mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + (clustersBefore - state.clusters.length);
-    startMergeFlash(res.cluster.pieces);
+    mergeFeedback(res.cluster, ev.x, ev.y);
     seMerge();
   }
   seDrop();
@@ -9744,6 +10065,7 @@ function mpOnGroupDrop(ev) {
   };
   var clustersBefore = state.clusters.length;
   var flashPieces = [];
+  var groupMotions = [];
   // 追随塊は適用前のオブジェクト参照で掴む (合体で消費されたら飛ばす)
   var followerObjs = [];
   items.forEach(function (it) {
@@ -9756,14 +10078,14 @@ function mpOnGroupDrop(ev) {
     return othersLease(c) || !!itemByAnchor[clusterAnchorId(c)];
   });
   var clusters = res.clusters;
-  if (res.merged) flashPieces = flashPieces.concat(res.cluster.pieces);
+  if (res.merged) { flashPieces = flashPieces.concat(res.cluster.pieces); groupMotions.push({ cluster: res.cluster, fx: leaderItem.x, fy: leaderItem.y }); }
   var afterPos = piecePositions([res.cluster], n).get(ev.leader);
   var dx = afterPos.gx - beforeGx, dy = afterPos.gy - beforeGy;
   followerObjs.forEach(function (f) {
     if (clusters.indexOf(f) < 0) return; // 既に別の塊へ合体済み
     var r2 = applyClusterDrop(clusters, f, f.gx + dx, f.gy + dy, n, othersLease, { noSnap: true });
     clusters = r2.clusters;
-    if (r2.merged) flashPieces = flashPieces.concat(r2.cluster.pieces);
+    if (r2.merged) { flashPieces = flashPieces.concat(r2.cluster.pieces); groupMotions.push({ cluster: r2.cluster, fx: f.gx + dx, fy: f.gy + dy }); }
   });
   state.clusters = clusters;
   if (Array.isArray(ev.order)) {
@@ -9776,6 +10098,7 @@ function mpOnGroupDrop(ev) {
   var mergedCount = clustersBefore - state.clusters.length;
   if (mergedCount > 0) {
     mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + mergedCount;
+    groupMotions.forEach(function (m) { mergeMotion(m.cluster, m.fx, m.fy); });
     if (flashPieces.length) startMergeFlash(flashPieces);
     seMerge();
   }
@@ -10563,6 +10886,7 @@ function startGame(pool) {
   selection.clear(); // 塊が作り直されるので選択は引き継がない
   cancelPressAndRect();
   buildDifficultySeg();
+  buildPlayModeSeg();
   if (firstStart) { uiHome = true; firstStart = false; } // ページを開き直したら必ずスタート画面から
   // スタート画面: 未開封なら包装された箱 (柄は日付×難易度グループで決定的)、開始済みなら続きからパネル
   renderStartScreen();

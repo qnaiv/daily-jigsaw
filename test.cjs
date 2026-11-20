@@ -1595,7 +1595,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v52'") !== -1, 'sw: VERSION は v52');
+  ok(swSB.indexOf("VERSION = 'v53'") !== -1, 'sw: VERSION は v53');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -2512,6 +2512,73 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(openBoxBody.indexOf('if (state.resumed) showResumeBanner();') !== -1, '再開バナー: 机に入った瞬間にだけ出す');
   const loadPuzzleBody = bodyOf(appV, 'function mpLoadPuzzle(', 'function mpOnBegin()');
   ok(loadPuzzleBody.indexOf('hideResumeBanner();') !== -1, '再開バナー: MP の盤面ロードで隠す');
+}
+
+/* ============ v53: 現像モード / 手触り ============ */
+{
+  const fsW = require('fs'), pathW = require('path');
+  const appW = fsW.readFileSync(pathW.join(__dirname, 'app.js'), 'utf8');
+  const htmlW = fsW.readFileSync(pathW.join(__dirname, 'index.html'), 'utf8');
+  const bodyOfW = (src, start, end) => src.slice(src.indexOf(start), src.indexOf(end));
+
+  // プレイスタイルの正規化: 'develop' だけが現像、それ以外は全部ふつう
+  ok(L.normalizePlayMode('develop') === 'develop', '現像: develop はそのまま');
+  ok(L.normalizePlayMode('normal') === 'normal' && L.normalizePlayMode(undefined) === 'normal' &&
+     L.normalizePlayMode('weird') === 'normal' && L.normalizePlayMode(null) === 'normal',
+     '現像: 未知値・未保存は normal に落とす');
+
+  // 現像済み集合の復元: 2ピース以上の塊のピースだけが現像済み
+  const rev = L.developRevealedFromClusters([
+    { pieces: [1, 2], gx: 0, gy: 0 }, { pieces: [3], gx: 0, gy: 0 }, { pieces: [4, 5, 6], gx: 0, gy: 0 }
+  ]);
+  ok(eq(rev.slice().sort(), [1, 2, 4, 5, 6]), '現像: 復元は塊 (2+) のピースだけ');
+  ok(eq(L.developRevealedFromClusters([]), []) && eq(L.developRevealedFromClusters(null), []), '現像: 空・null は空集合');
+
+  // 合体ラダー: 初回は 0、短時間の連続で上がり、間が空くと戻る
+  ok(L.mergeLadderStep(0, 0, 1000) === 0, 'ラダー: 初回は 0');
+  ok(L.mergeLadderStep(0, 1000, 2000) === 1 && L.mergeLadderStep(1, 2000, 4999) === 2, 'ラダー: 3秒以内の連続で上がる');
+  ok(L.mergeLadderStep(5, 1000, 4001) === 0, 'ラダー: 3秒を超えたらリセット');
+  ok(L.mergeLadderStep(98, 1000, 1500) === 99 && L.mergeLadderStep(99, 1500, 2000) === 99, 'ラダー: 上限で止まる');
+  ok(L.MERGE_LADDER_FREQS.length >= 4 && L.MERGE_LADDER_FREQS.every((f, i, a) => i === 0 || f > a[i - 1]),
+     'ラダー: 周波数表は単調増加');
+
+  // アニメーション曲線・進行度は 0..1 にクランプされる
+  ok(L.easeOutCubic(0) === 0 && L.easeOutCubic(1) === 1 && L.easeOutCubic(-1) === 0 && L.easeOutCubic(2) === 1,
+     '手触り: easeOutCubic は端点とクランプが正しい');
+  ok(L.fxProgress(1000, 200, 1100) === 0.5 && L.fxProgress(1000, 200, 500) === 0 && L.fxProgress(1000, 200, 9999) === 1,
+     '手触り: fxProgress は 0..1 に収まる');
+  ok(L.fxProgress(0, 200, 1100) === 1 && L.fxProgress(1000, 0, 1100) === 1, '手触り: 不正な開始・長さは完了扱い');
+
+  // 配線: モードチップ (HTML + JS)、白ピース描画、現像の永続化
+  ok(htmlW.indexOf('id="playModeSeg"') !== -1, '現像: スタート画面にモードチップの置き場がある');
+  ok(appW.indexOf('function buildPlayModeSeg()') !== -1 && appW.indexOf('function onPlayModeChip(') !== -1 &&
+     appW.indexOf('buildPlayModeSeg();') !== -1, '現像: モードチップの構築と切替が配線されている');
+  ok(appW.indexOf('prog.dev = !!state.devMode;') !== -1 && appW.indexOf('dev: !!state.devMode,') !== -1,
+     '現像: ランのモードが進行セーブとクリア記録に残る');
+  const drawClusterBody = bodyOfW(appW, 'function drawClusterOn(', '/* マット画面');
+  ok(drawClusterBody.indexOf('pieceBitmapPaper(id)') !== -1 && drawClusterBody.indexOf('devPieceAlpha(id, cl)') !== -1,
+     '現像: 描画は白ピースの上に現像分だけ絵を重ねる');
+  ok(appW.indexOf('function renderPieceBitmapPaper(') !== -1 && appW.indexOf('bitmapsPaper') !== -1,
+     '現像: 白ピースビットマップの生成とキャッシュがある');
+  const mpStateBody = bodyOfW(appW, 'function mpLoadPuzzle(', 'function mpOnBegin()');
+  ok(mpStateBody.indexOf('devMode: false') !== -1, '現像: MP の盤面は現像モード対象外');
+
+  // 配線: 手触り (影・吸い付き・沈み・ラダー音・完成の光)
+  ok(appW.indexOf('function drawHeldShadow(') !== -1 && appW.indexOf('function clusterShadowCanvas(') !== -1 &&
+     appW.indexOf('liftPx: 9 * liftP') !== -1, '手触り: 持ち上げ中の影と浮きが描画に配線されている');
+  const settleBody = bodyOfW(appW, 'function settleDrag()', '/* 範囲選択のグループ確定');
+  ok(settleBody.indexOf('mergeFeedback(res.cluster, cl.gx, cl.gy)') !== -1 && settleBody.indexOf('dropSettle(res.cluster)') !== -1,
+     '手触り: 置いた時は吸い付き、合体しなければ沈み込み');
+  const seMergeBody = bodyOfW(appW, 'function seMerge()', 'function seClear()');
+  ok(seMergeBody.indexOf('mergeLadderStep(') !== -1 && seMergeBody.indexOf('MERGE_LADDER_FREQS') !== -1,
+     '手触り: 合体音はラダーで音階が上がる');
+  const onClearBody = bodyOfW(appW, 'function onClear()', '/* ---------- クリア結果の共有');
+  ok(onClearBody.indexOf('state.clearGloss = ') !== -1 && onClearBody.indexOf('setTimeout(presentResult, 1000)') !== -1 &&
+     onClearBody.indexOf("mp.mode === 'race'") !== -1,
+     '手触り: 完成時は光の帯を見せてから記録証 (レースは即時)');
+  const drawBody = bodyOfW(appW, 'function draw() {', '/* ---------- ミニマップ');
+  ok(drawBody.indexOf('state.clearGloss') !== -1 && drawBody.indexOf('drawHeldShadow(cl, v, liftP)') !== -1,
+     '手触り: draw() が完成の光と持ち上げ影を描く');
 }
 
 console.log('\n結果: ' + pass + ' passed, ' + fail + ' failed');
