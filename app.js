@@ -2740,7 +2740,6 @@ var BGM_TRACKS = [
   { file: 'in-that-mood.mp3', title: 'In That Mood', artist: 'OtoLogic', license: 'CC BY 4.0', sec: 133.4 },
   { file: 'washed-up.mp3', title: 'Washed Up', artist: 'HoliznaCC0', license: 'CC0', sec: 234.6 },
   { file: 'currents-we-used-to-know.mp3', title: 'Currents We Used to Know', artist: 'HoliznaCC0', license: 'CC0', sec: 202.4 },
-  { file: 'ocean-memory.mp3', title: 'Ocean Memory', artist: 'HoliznaCC0', license: 'CC0', sec: 150.8 },
   { file: 'lullabies-for-the-end-of-the-world-3.mp3', title: 'Lullabies For The End Of The World #3', artist: 'HoliznaCC0', license: 'CC0', sec: 193.3 },
   { file: 'traveling-in-your-mind.mp3', title: 'Traveling in Your Mind', artist: 'Loyalty Freak Music', license: 'CC0', sec: 236.6 },
   { file: 'meanwhile.mp3', title: 'Meanwhile', artist: 'Scott Buckley', license: 'CC BY 4.0', sec: 325.8 },
@@ -3178,10 +3177,14 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
+var APP_VERSION = 'v59'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
- * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) を経て、
- * Max でも小さいという実機報告を受け 0.52 へ倍増 (2026-11-21 ユーザー指示) */
-var SE_MASTER_BASE = 0.52;
+ * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52
+ * (2026-11-21 倍増) でも BGM に埋もれるという実機報告を受け、1.0 へ
+ * (2026-11-21 ユーザー指示)。SE は短い単発音の寄せ集めで、持続する
+ * BGM と知覚音量を揃えるにはピーク基準でこの水準が要る。重なっても
+ * 最悪 ~0.55 程度でクリップしない (クリア音で検証済みの構成) */
+var SE_MASTER_BASE = 1.0;
 var seVolume = (typeof store.seVolume === 'number' && isFinite(store.seVolume))
   ? Math.min(1, Math.max(0, store.seVolume)) : 1;
 function seMasterGain() { return SE_MASTER_BASE * seVolume; }
@@ -3197,7 +3200,7 @@ function ensureSeContext() {
   try {
     seCtx = new AC();
     seMaster = seCtx.createGain();
-    seMaster.gain.value = seMasterGain(); // 基準 0.52 × ユーザーの SE音量 (既定 1)
+    seMaster.gain.value = seMasterGain(); // 基準 1.0 × ユーザーの SE音量 (既定 1)
     seMaster.connect(seCtx.destination);
   } catch (e) { seCtx = null; }
 }
@@ -8345,6 +8348,7 @@ function wireControls() {
   });
   $('difficultySel').addEventListener('change', onDifficultySelect);
   $('playModeSel').addEventListener('change', onPlayModeSelect);
+  $('appVersion').textContent = 'ver. ' + APP_VERSION;
   $('rankRow').addEventListener('click', function () { buildRankModal(); $('rankModal').hidden = false; });
   $('rankCloseBtn').addEventListener('click', function () { $('rankModal').hidden = true; });
   $('rankBackdrop').addEventListener('click', function () { $('rankModal').hidden = true; });

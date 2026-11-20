@@ -1269,7 +1269,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(settingsBlock.indexOf('settingsHomeBtn') < settingsBlock.indexOf('settingsRestartBtn') && settingsBlock.indexOf('settingsRestartBtn') < settingsBlock.indexOf('>みため<'), '設定レイアウト確定形: やりなおすは スタート画面に戻る の直下');
   ok(settingsBlock.indexOf('settingsResetBtn') > settingsBlock.indexOf('settings-other'), '設定レイアウト確定形: データをリセットは そのほか の文字リンク内');
   ok(settingsBlock.indexOf('id="seVolume"') !== -1 && html.indexOf('id="seVolumeStart"') !== -1, 'SE音量: 設定シートとスタート画面の両方にスライダーがある');
-  ok(appSrc.indexOf('var SE_MASTER_BASE = 0.52') !== -1 && appSrc.indexOf('store.seVolume') !== -1 && appSrc.indexOf('function applySeVolume()') !== -1, 'SE音量: 基準ゲイン 0.52 (v58 倍増) × store.seVolume でマスターに反映');
+  ok(appSrc.indexOf('var SE_MASTER_BASE = 1.0') !== -1 && appSrc.indexOf('store.seVolume') !== -1 && appSrc.indexOf('function applySeVolume()') !== -1, 'SE音量: 基準ゲイン 1.0 (v59) × store.seVolume でマスターに反映');
   ok(html.indexOf('wallPaperInfo') === -1 && appSrc.indexOf('wallPaperInfo') === -1, '壁紙名ラベル: 壁画面の現在壁紙名テキストは撤去');
 
   // 画像共有のフォールバック: 保存に落ちたら必ず注記を出す (成功時・キャンセル時は出さない)
@@ -1595,7 +1595,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v58'") !== -1, 'sw: VERSION は v58');
+  ok(swSB.indexOf("VERSION = 'v59'") !== -1, 'sw: VERSION は v59');
+  ok(appSB.indexOf("var APP_VERSION = 'v59'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
   // ランクシステム (v57): XP 表と補間、倍率、ランク導出、称号、報酬表、移行
   ok(L.xpForPieces(16) === 15 && L.xpForPieces(36) === 30 && L.xpForPieces(64) === 50 && L.xpForPieces(100) === 75 && L.xpForPieces(225) === 130 && L.xpForPieces(400) === 200 && L.xpForPieces(1024) === 420, 'ランク: XP 表が仕様どおり');
   ok(L.xpForPieces(49) === 39 && L.xpForPieces(81) === 62 && L.xpForPieces(144) === 94, 'ランク: 表に無いピース数 (ハンデ等) は線形補間');
@@ -2402,10 +2403,10 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const secVals = [];
   tbBlock.replace(/sec: ([0-9.]+)/g, function (m, v) { secVals.push(Number(v)); return m; });
   const fileCount = (tbBlock.match(/file: '/g) || []).length;
-  ok(fileCount === 21 && secVals.length === 21 && secVals.every(function (v) { return v > 0; }),
-     'BGM同期配線: BGM_TRACKS の全21曲に実測秒 (sec) が付いている');
+  ok(fileCount === 20 && secVals.length === 20 && secVals.every(function (v) { return v > 0; }),
+     'BGM同期配線: BGM_TRACKS の全20曲に実測秒 (sec) が付いている (Ocean Memory は人の声が入っていたため 2026-11-21 削除)');
   const secSum = secVals.reduce(function (s, v) { return s + v; }, 0);
-  ok(secSum > 4200 && secSum < 4300, 'BGM同期配線: 実測秒の合計が全曲ぶん (約71分) になっている');
+  ok(secSum > 4050 && secSum < 4150, 'BGM同期配線: 実測秒の合計が全曲ぶん (約68分) になっている');
   // start ペイロードに規範リスト + シードが載る
   ok(appB.indexOf('files: BGM_TRACKS.map(function (t) { return t.file; })') !== -1 &&
      appB.indexOf('secs: BGM_TRACKS.map(function (t) { return t.sec; })') !== -1 &&
