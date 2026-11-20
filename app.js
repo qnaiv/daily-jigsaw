@@ -2206,6 +2206,18 @@ function fxProgress(start, dur, now) {
   if (!start || !(dur > 0)) return 1;
   return Math.min(1, Math.max(0, (now - start) / dur));
 }
+/* 合体の吸い付き量 (セル単位): ドラッグした塊のアンカーが合体後の塊の
+ * 中で最終的に座る位置と、離した瞬間の浮動位置との差。
+ * 合体後の塊のアンカーは相手側のピースになることがあるので、差は
+ * 「合体後の塊の gx」ではなくアンカー同士の相対位置から取る。
+ * (v53 は塊全体へ (離した位置 − 合体後の gx) を一律に付けたため、
+ * 動かしていない相手のピースまで大きくずれる「ガクン」があった) */
+function mergePullDelta(resGx, resGy, resAnchor, movedAnchor, fromGX, fromGY) {
+  return {
+    dx: fromGX - (resGx + (movedAnchor.col - resAnchor.col)),
+    dy: fromGY - (resGy + (movedAnchor.row - resAnchor.row))
+  };
+}
 /* 現像モード: 2ピース以上の塊に入っているピースは「現像済み」。
  * セーブ再開時はアニメーションなしでこの集合を復元する */
 function developRevealedFromClusters(clusters) {
@@ -2262,7 +2274,7 @@ var PureLogic = {
   boxTapAction: boxTapAction,
   normalizePlayMode: normalizePlayMode, MERGE_LADDER_FREQS: MERGE_LADDER_FREQS,
   MERGE_LADDER_RESET_MS: MERGE_LADDER_RESET_MS, mergeLadderStep: mergeLadderStep,
-  easeOutCubic: easeOutCubic, fxProgress: fxProgress,
+  easeOutCubic: easeOutCubic, fxProgress: fxProgress, mergePullDelta: mergePullDelta,
   developRevealedFromClusters: developRevealedFromClusters,
   WALL_CATALOG: WALL_CATALOG,
   FRAME_STYLES: FRAME_STYLES, WALL_SIZE_RATIO: WALL_SIZE_RATIO,
@@ -3336,7 +3348,7 @@ function newGameState(pool) {
     mergeFlash: null,                 // { ids:Set, start:ms } 合体フィードバック
     devMode: gameStarted ? !!prog.dev : normalizePlayMode(store.playMode) === 'develop', // 現像モード (v53): 開始済みはセーブの dev が正
     devRevealed: new Set(developRevealedFromClusters(gameStarted ? prog.clusters : [])),
-    devAnim: null, mergeAnim: null, dropAnim: null, clearGloss: null, // 手触り演出 (v53、描画専用)
+    devAnim: null, mergeAnims: [], dropAnim: null, clearGloss: null, // 手触り演出 (v53、描画専用)
     cleared: !!prog.cleared,
     started: false, paused: false, timerStart: 0,
     views: { desk: null }, // {scale, tx, ty} scaleFit も保持
@@ -4122,12 +4134,13 @@ function startMergeFlash(pieces) {
  * 論理座標・保存形式は一切変えず、描画オフセットと音だけで付ける。
  * アニメーションが1つでも生きている間だけ rAF で draw を回す */
 var CLEAR_GLOSS_MS = 1100;
+var MERGE_ANIM_MS = 160;
 var fxLoopOn = false;
 function fxAnimActive() {
   if (!state) return false;
   var now = Date.now();
   if (state.devAnim && fxProgress(state.devAnim.start, DEV_ANIM_MS, now) < 1) return true;
-  if (state.mergeAnim && fxProgress(state.mergeAnim.start, 160, now) < 1) return true;
+  if (state.mergeAnims && state.mergeAnims.some(function (a) { return fxProgress(a.start, MERGE_ANIM_MS, now) < 1; })) return true;
   if (state.dropAnim && fxProgress(state.dropAnim.start, 150, now) < 1) return true;
   if (state.clearGloss && fxProgress(state.clearGloss.start, CLEAR_GLOSS_MS, now) < 1) return true;
   if (liftStartAt && (drag || carry) && now - liftStartAt < LIFT_MS) return true;
@@ -4143,10 +4156,18 @@ function kickFxLoop() {
   })();
 }
 /* 合体の見た目フィードバック (音は呼び出し側の seMerge が担う):
- * 吸い付き + 弾み (mergeAnim)。現像モードなら現像開始もここで */
-function mergeMotion(cluster, fromGX, fromGY) {
-  if (!cluster) return;
-  state.mergeAnim = { cluster: cluster, fromGX: fromGX, fromGY: fromGY, start: Date.now() };
+ * 吸い付き + 弾み (mergeAnims)。吸い付きは「動かしたピースだけ」に
+ * 付け、相手のピースは最初から最終位置に置く (mergePullDelta)。
+ * 現像モードなら現像開始もここで */
+function mergeMotion(cluster, movedPieces, fromGX, fromGY) {
+  if (!cluster || !movedPieces || !movedPieces.length) return;
+  var n = state.n;
+  var movedAnchor = pieceHome(Math.min.apply(null, movedPieces), n);
+  var resAnchor = pieceHome(clusterAnchorId(cluster), n);
+  var d = mergePullDelta(cluster.gx, cluster.gy, resAnchor, movedAnchor, fromGX, fromGY);
+  var now = Date.now();
+  state.mergeAnims = state.mergeAnims.filter(function (a) { return fxProgress(a.start, MERGE_ANIM_MS, now) < 1; });
+  state.mergeAnims.push({ cluster: cluster, pieces: new Set(movedPieces), dx: d.dx, dy: d.dy, start: now });
   if (state.devMode && cluster.pieces.length >= 2) {
     var fresh = cluster.pieces.filter(function (id) { return !state.devRevealed.has(id); });
     if (fresh.length) {
@@ -4156,10 +4177,10 @@ function mergeMotion(cluster, fromGX, fromGY) {
   }
   kickFxLoop();
 }
-function mergeFeedback(cluster, fromGX, fromGY) {
+function mergeFeedback(cluster, movedPieces, fromGX, fromGY) {
   if (!cluster) return;
   startMergeFlash(cluster.pieces);
-  mergeMotion(cluster, fromGX, fromGY);
+  mergeMotion(cluster, movedPieces, fromGX, fromGY);
 }
 /* 置いた (合体しなかった) ときの小さな沈み込み */
 function dropSettle(cluster) {
@@ -4234,12 +4255,20 @@ function drawClusterOn(ctx, v, cl, wTl, wBr, fx) {
    * 変えず描画オフセットだけで付ける */
   var offGX = 0, offGY = 0, pulse = 1, liftPx = 0;
   if (fx && fx.liftPx) liftPx = fx.liftPx;
-  if (state.mergeAnim && state.mergeAnim.cluster === cl) {
-    var map2 = fxProgress(state.mergeAnim.start, 160, Date.now());
-    var me = 1 - easeOutCubic(map2);
-    offGX += (state.mergeAnim.fromGX - cl.gx) * me;
-    offGY += (state.mergeAnim.fromGY - cl.gy) * me;
-    pulse = 1 + 0.028 * Math.sin(map2 * Math.PI);
+  /* 合体の吸い付きは「動かしたピースだけ」へ付ける。相手のピースは
+   * 合体前から最終位置にあるので、塊全体をずらすとガクンとなる。
+   * 弾み (pulse) は塊全体に付ける */
+  var pullAnims = null;
+  if (state.mergeAnims) {
+    for (var ai = 0; ai < state.mergeAnims.length; ai++) {
+      var an = state.mergeAnims[ai];
+      if (an.cluster !== cl) continue;
+      var map2 = fxProgress(an.start, MERGE_ANIM_MS, Date.now());
+      if (map2 >= 1) continue;
+      var me = 1 - easeOutCubic(map2);
+      (pullAnims || (pullAnims = [])).push({ pieces: an.pieces, dx: an.dx * me, dy: an.dy * me });
+      pulse = 1 + 0.028 * Math.sin(map2 * Math.PI);
+    }
   }
   if (state.dropAnim && state.dropAnim.cluster === cl) {
     var dap = fxProgress(state.dropAnim.start, 150, Date.now());
@@ -4252,7 +4281,11 @@ function drawClusterOn(ctx, v, cl, wTl, wBr, fx) {
   }
   cl.pieces.forEach(function (id) {
     var home = pieceHome(id, n);
-    var wx = (cl.gx + offGX + (home.col - anchor.col)) * CELL, wy = (cl.gy + offGY + (home.row - anchor.row)) * CELL;
+    var pox = 0, poy = 0;
+    if (pullAnims) for (var pj = 0; pj < pullAnims.length; pj++) {
+      if (pullAnims[pj].pieces.has(id)) { pox += pullAnims[pj].dx; poy += pullAnims[pj].dy; }
+    }
+    var wx = (cl.gx + offGX + pox + (home.col - anchor.col)) * CELL, wy = (cl.gy + offGY + poy + (home.row - anchor.row)) * CELL;
     if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
     var bmp = pieceBitmap(id);
     var ratio = (CELL * v.scale) / bmp.cellPx;
@@ -4846,7 +4879,7 @@ function settleDrag() {
   var others = state.clusters.filter(function (c) { return c !== cl; });
   var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: cl.gx, gy: cl.gy }, state.n);
   state.clusters = res.clusters;
-  if (res.merged) { mergeFeedback(res.cluster, cl.gx, cl.gy); seMerge(); } // 合体の吸い付き + 音階スナップ音
+  if (res.merged) { mergeFeedback(res.cluster, cl.pieces, cl.gx, cl.gy); seMerge(); } // 合体の吸い付き + 音階スナップ音
   else dropSettle(res.cluster); // 合体しなかった置きは小さく沈む
   afterBoardChange();
 }
@@ -4877,11 +4910,11 @@ function settleGroupDrag(leader, group) {
       all.filter(function (c) { return c !== f; }),
       { pieces: f.pieces, surface: f.surface, gx: f.gx, gy: f.gy }, n, { noSnap: true });
     all = r2.clusters;
-    if (r2.merged) { flash = (flash || []).concat(r2.cluster.pieces); followerMotions.push({ cluster: r2.cluster, fx: f.gx, fy: f.gy }); }
+    if (r2.merged) { flash = (flash || []).concat(r2.cluster.pieces); followerMotions.push({ cluster: r2.cluster, pieces: f.pieces, fx: f.gx, fy: f.gy }); }
   }
   state.clusters = all;
-  if (res.merged) mergeMotion(res.cluster, leader.gx, leader.gy);
-  followerMotions.forEach(function (m) { mergeMotion(m.cluster, m.fx, m.fy); });
+  if (res.merged) mergeMotion(res.cluster, leader.pieces, leader.gx, leader.gy);
+  followerMotions.forEach(function (m) { mergeMotion(m.cluster, m.pieces, m.fx, m.fy); });
   if (flash) { startMergeFlash(flash); seMerge(); } // グループ側で合体した場合も同じ音
   else dropSettle(res.cluster);
   afterBoardChange();
@@ -9742,7 +9775,7 @@ function mpLoadPuzzle(stage, pieces) {
     clusters: initialScatter(playDate, pieces),
     elapsedBase: 0, moves: 0, previewViewed: false, previewCount: 0,
     mergeFlash: null, cleared: false,
-    devMode: false, devRevealed: new Set(), devAnim: null, mergeAnim: null, dropAnim: null, clearGloss: null, // MP は現像モード対象外 (v53)
+    devMode: false, devRevealed: new Set(), devAnim: null, mergeAnims: [], dropAnim: null, clearGloss: null, // MP は現像モード対象外 (v53)
     started: false, paused: false, timerStart: 0,
     views: { desk: null },
     bitmaps: new Map(), bitmapsPaper: new Map(), bitmapFailures: new Map(),
@@ -9990,7 +10023,7 @@ function mpOnDrop(ev) {
     // (大同士の合体も +1、チェーンで2塊取り込めば +2。ピース数は数えない
     // ので、完走時の全員合計は必ず ピース数 - 1 になる) (§3.9)
     mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + (clustersBefore - state.clusters.length);
-    mergeFeedback(res.cluster, ev.x, ev.y);
+    mergeFeedback(res.cluster, cl.pieces, ev.x, ev.y);
     seMerge();
   }
   seDrop();
@@ -10078,14 +10111,14 @@ function mpOnGroupDrop(ev) {
     return othersLease(c) || !!itemByAnchor[clusterAnchorId(c)];
   });
   var clusters = res.clusters;
-  if (res.merged) { flashPieces = flashPieces.concat(res.cluster.pieces); groupMotions.push({ cluster: res.cluster, fx: leaderItem.x, fy: leaderItem.y }); }
+  if (res.merged) { flashPieces = flashPieces.concat(res.cluster.pieces); groupMotions.push({ cluster: res.cluster, pieces: leaderCl.pieces, fx: leaderItem.x, fy: leaderItem.y }); }
   var afterPos = piecePositions([res.cluster], n).get(ev.leader);
   var dx = afterPos.gx - beforeGx, dy = afterPos.gy - beforeGy;
   followerObjs.forEach(function (f) {
     if (clusters.indexOf(f) < 0) return; // 既に別の塊へ合体済み
     var r2 = applyClusterDrop(clusters, f, f.gx + dx, f.gy + dy, n, othersLease, { noSnap: true });
     clusters = r2.clusters;
-    if (r2.merged) { flashPieces = flashPieces.concat(r2.cluster.pieces); groupMotions.push({ cluster: r2.cluster, fx: f.gx + dx, fy: f.gy + dy }); }
+    if (r2.merged) { flashPieces = flashPieces.concat(r2.cluster.pieces); groupMotions.push({ cluster: r2.cluster, pieces: f.pieces, fx: f.gx + dx, fy: f.gy + dy }); }
   });
   state.clusters = clusters;
   if (Array.isArray(ev.order)) {
@@ -10098,7 +10131,7 @@ function mpOnGroupDrop(ev) {
   var mergedCount = clustersBefore - state.clusters.length;
   if (mergedCount > 0) {
     mp.contrib[ev.from] = (mp.contrib[ev.from] || 0) + mergedCount;
-    groupMotions.forEach(function (m) { mergeMotion(m.cluster, m.fx, m.fy); });
+    groupMotions.forEach(function (m) { mergeMotion(m.cluster, m.pieces, m.fx, m.fy); });
     if (flashPieces.length) startMergeFlash(flashPieces);
     seMerge();
   }

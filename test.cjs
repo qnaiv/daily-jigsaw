@@ -1595,7 +1595,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v53'") !== -1, 'sw: VERSION は v53');
+  ok(swSB.indexOf("VERSION = 'v54'") !== -1, 'sw: VERSION は v54');
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
@@ -2567,8 +2567,24 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appW.indexOf('function drawHeldShadow(') !== -1 && appW.indexOf('function clusterShadowCanvas(') !== -1 &&
      appW.indexOf('liftPx: 9 * liftP') !== -1, '手触り: 持ち上げ中の影と浮きが描画に配線されている');
   const settleBody = bodyOfW(appW, 'function settleDrag()', '/* 範囲選択のグループ確定');
-  ok(settleBody.indexOf('mergeFeedback(res.cluster, cl.gx, cl.gy)') !== -1 && settleBody.indexOf('dropSettle(res.cluster)') !== -1,
+  ok(settleBody.indexOf('mergeFeedback(res.cluster, cl.pieces, cl.gx, cl.gy)') !== -1 && settleBody.indexOf('dropSettle(res.cluster)') !== -1,
      '手触り: 置いた時は吸い付き、合体しなければ沈み込み');
+
+  // 吸い付き量 (v54 ガクン修正): 差は「自分のアンカーの最終位置」との差。
+  // 合体後のアンカーが相手側でも、相手の位置ではなく吸着分だけになる
+  const dPullA = L.mergePullDelta(10, 10, { col: 2, row: 2 }, { col: 2, row: 2 }, 10.3, 9.8);
+  ok(Math.abs(dPullA.dx - 0.3) < 1e-9 && Math.abs(dPullA.dy - -0.2) < 1e-9,
+     '手触り: 吸い付き量は自アンカー基準 (離した位置との差)');
+  const dPullB = L.mergePullDelta(5, 5, { col: 1, row: 1 }, { col: 3, row: 1 }, 7.25, 5.1);
+  ok(Math.abs(dPullB.dx - 0.25) < 1e-9 && Math.abs(dPullB.dy - 0.1) < 1e-9,
+     '手触り: 相手アンカーでも吸い付きは吸着分だけ (塊全体をずらさない)');
+  const dPullC = L.mergePullDelta(5, 5, { col: 1, row: 3 }, { col: 1, row: 1 }, 5.1, 2.8);
+  ok(Math.abs(dPullC.dx - 0.1) < 1e-9 && Math.abs(dPullC.dy - -0.2) < 1e-9,
+     '手触り: 縦方向のアンカー差でも吸着分だけ');
+  ok(appW.indexOf('function mergePullDelta(') !== -1 &&
+     drawClusterBody.indexOf('pullAnims[pj].pieces.has(id)') !== -1 &&
+     appW.indexOf('mergeAnims: []') !== -1,
+     '手触り: 吸い付きは動かしたピースだけに付く (v54)');
   const seMergeBody = bodyOfW(appW, 'function seMerge()', 'function seClear()');
   ok(seMergeBody.indexOf('mergeLadderStep(') !== -1 && seMergeBody.indexOf('MERGE_LADDER_FREQS') !== -1,
      '手触り: 合体音はラダーで音階が上がる');
