@@ -1595,7 +1595,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v55'") !== -1, 'sw: VERSION は v55');
+  ok(swSB.indexOf("VERSION = 'v56'") !== -1, 'sw: VERSION は v56');
 
   // hidden 属性 / JS の hidden 切替が CSS の display 指定に打ち消されないこと。
   // (v55: .cert-sub-actions の display:flex が #resultMpActions の hidden を
@@ -2587,8 +2587,23 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      '手触り: fxProgress は 0..1 に収まる');
   ok(L.fxProgress(0, 200, 1100) === 1 && L.fxProgress(1000, 0, 1100) === 1, '手触り: 不正な開始・長さは完了扱い');
 
-  // 配線: モードチップ (HTML + JS)、白ピース描画、現像の永続化
-  ok(htmlW.indexOf('id="playModeSeg"') !== -1, '現像: スタート画面にモードチップの置き場がある');
+  // 配線: モード切替 (HTML + JS)、白ピース描画、現像の永続化
+  // v56: スタート画面のピース数/モードはチップ列からセレクトボックスへ変更
+  ok(htmlW.indexOf('id="playModeSel"') !== -1 && htmlW.indexOf('id="difficultySel"') !== -1 &&
+     htmlW.indexOf('id="difficultySeg"') === -1 && htmlW.indexOf('id="playModeSeg"') === -1,
+     'トップ改修: ピース数とモードはセレクトボックスで、チップの置き場は無い');
+  ok(htmlW.indexOf('id="modeInfoModal"') !== -1 && htmlW.indexOf('img/mode-normal.jpg') !== -1 &&
+     htmlW.indexOf('img/mode-develop.jpg') !== -1 && htmlW.indexOf('id="modeInfoBtn"') !== -1,
+     'トップ改修: モード説明は ⓘ ダイアログ (実画面の画像つき) の中だけに置く');
+  ok(appW.indexOf('function onDifficultySelect()') !== -1 && appW.indexOf('function onPlayModeSelect()') !== -1 &&
+     appW.indexOf("$('difficultySel').addEventListener('change', onDifficultySelect)") !== -1 &&
+     appW.indexOf("$('playModeSel').addEventListener('change', onPlayModeSelect)") !== -1,
+     'トップ改修: セレクトの変更ハンドラが配線されている');
+  ok(appW.indexOf("o.textContent = d + 'ピース' + star + (cleared ? ' ✓' : '');") !== -1,
+     'トップ改修: 難易度の選択肢に ★ とクリア済み ✓ が入る');
+  ok(htmlW.indexOf('id="startPrefs"') !== -1 && htmlW.indexOf('id="startPrefsBtn"') !== -1 &&
+     appW.indexOf("$('startPrefsBtn').addEventListener('click'") !== -1,
+     'トップ改修: みため・おとは畳める置き場にまとめた');
   ok(appW.indexOf('function buildPlayModeSeg()') !== -1 && appW.indexOf('function onPlayModeChip(') !== -1 &&
      appW.indexOf('buildPlayModeSeg();') !== -1, '現像: モードチップの構築と切替が配線されている');
   ok(appW.indexOf('prog.dev = !!state.devMode;') !== -1 && appW.indexOf('dev: !!state.devMode,') !== -1,

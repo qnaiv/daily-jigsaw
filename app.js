@@ -7855,42 +7855,28 @@ function renderDetailPuzzle(r) {
  * チップは「Nピース」表記 (数字だけではピース数と伝わらないため)。
  * 目安時間は出さない (ユーザー指定) */
 function buildDifficultySeg() {
-  var seg = $('difficultySeg');
-  seg.innerHTML = '';
+  var sel = $('difficultySel');
+  if (!sel) return;
+  sel.innerHTML = '';
   DIFFICULTIES.forEach(function (d) {
-    var b = document.createElement('button');
-    b.type = 'button';
-    var sel = d === difficulty;
-    b.className = 'diff-chip' + (sel ? ' active' : '');
-    var num = document.createElement('span');
-    num.className = 'diff-num';
-    num.textContent = d + 'ピース';
-    b.appendChild(num);
+    var o = document.createElement('option');
+    o.value = String(d);
     var tier = frameTier(d);
-    var star = document.createElement('span');
-    star.className = 'diff-star ' + (tier || 'none');
-    star.textContent = tier ? (tier === 'royal' ? '★★' : '★') : '';
-    b.appendChild(star);
-    /* 今のステージでクリア済みの難易度には右上に ✓ バッジ (ユーザー指定 A案) */
+    var star = tier ? (tier === 'royal' ? ' ★★' : ' ★') : '';
     var cleared = !!findRecordForStage(playStage, d);
-    if (cleared) {
-      b.classList.add('cleared');
-      var badge = document.createElement('span');
-      badge.className = 'diff-check-badge';
-      badge.textContent = '✓';
-      b.appendChild(badge);
-    }
-    b.setAttribute('aria-pressed', sel ? 'true' : 'false');
-    b.addEventListener('click', function () {
-      if (d === difficulty) return;
-      if (state) persistProgress();
-      difficulty = d;
-      store.lastDifficulty = d;
-      saveStore();
-      startGame(state.pool);
-    });
-    seg.appendChild(b);
+    o.textContent = d + 'ピース' + star + (cleared ? ' ✓' : '');
+    sel.appendChild(o);
   });
+  sel.value = String(difficulty);
+}
+function onDifficultySelect() {
+  var d = Number($('difficultySel').value);
+  if (!DIFFICULTIES.includes(d) || d === difficulty) { buildDifficultySeg(); return; }
+  if (state) persistProgress();
+  difficulty = d;
+  store.lastDifficulty = d;
+  saveStore();
+  startGame(state.pool);
 }
 /* プレイスタイル (v53): ふつう / 現像 (つながった塊だけ絵が浮かび上がる)。
  * 進行中のゲームがある難易度では、そのゲームのモードが正。切り替えは
@@ -7901,19 +7887,13 @@ function effectivePlayMode() {
   return normalizePlayMode(store.playMode);
 }
 function buildPlayModeSeg() {
-  var seg = $('playModeSeg');
-  if (!seg) return;
-  seg.innerHTML = '';
-  var cur = effectivePlayMode();
-  [['normal', 'ふつう'], ['develop', '現像']].forEach(function (pair) {
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'mode-chip' + (pair[0] === cur ? ' active' : '');
-    b.textContent = pair[1];
-    b.setAttribute('aria-pressed', pair[0] === cur ? 'true' : 'false');
-    b.addEventListener('click', function () { onPlayModeChip(pair[0]); });
-    seg.appendChild(b);
-  });
+  var sel = $('playModeSel');
+  if (!sel) return;
+  sel.value = effectivePlayMode();
+}
+function onPlayModeSelect() {
+  onPlayModeChip($('playModeSel').value === 'develop' ? 'develop' : 'normal');
+  buildPlayModeSeg(); // 確認モーダルで止まった場合などに表示を実態へ戻す
 }
 function onPlayModeChip(mode) {
   if (mode === effectivePlayMode()) return;
@@ -8208,6 +8188,17 @@ function wireControls() {
   $('settingsCreditsBtn').addEventListener('click', openCredits);
   $('settingsTutorialBtn').addEventListener('click', startFullTour);
   $('startTutorialBtn').addEventListener('click', startFullTour);
+  $('startPrefsBtn').addEventListener('click', function () {
+    var p = $('startPrefs');
+    p.hidden = !p.hidden;
+    $('startPrefsBtn').setAttribute('aria-expanded', String(!p.hidden));
+    $('startPrefsBtn').classList.toggle('open', !p.hidden);
+  });
+  $('difficultySel').addEventListener('change', onDifficultySelect);
+  $('playModeSel').addEventListener('change', onPlayModeSelect);
+  $('modeInfoBtn').addEventListener('click', function () { $('modeInfoModal').hidden = false; });
+  $('modeInfoCloseBtn').addEventListener('click', function () { $('modeInfoModal').hidden = true; });
+  $('modeInfoBackdrop').addEventListener('click', function () { $('modeInfoModal').hidden = true; });
   $('tourNextBtn').addEventListener('click', function () { tourAdvance(1); });
   $('tourPrevBtn').addEventListener('click', function () { tourAdvance(-1); });
   $('tourSkipBtn').addEventListener('click', function () { tourFinish(); });

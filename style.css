@@ -390,7 +390,19 @@ button { font: inherit; cursor: pointer; }
 
 /* 導線はボタンらしい見た目に (2026-11-08 再設計): アイコン + ラベル +
  * 状態の小テキスト + 右端の矢印。ごほうび/解放の通知も同じ形で並ぶ */
-.start-nav { width: 100%; display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.start-nav { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+/* 行き先は3つのタイルに (アイコン上・ラベル・小テキスト)。通知だけ全幅の行 */
+.start-nav .nav-btn {
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; min-height: 94px; padding: 12px 6px 10px; text-align: center;
+}
+.start-nav .nav-text { align-items: center; }
+.start-nav .nav-label { font-size: 14px; }
+.start-nav .nav-sub { font-size: 10.5px; }
+.start-nav .nav-arrow { display: none; }
+.start-nav .nav-btn.notice {
+  grid-column: 1 / -1; flex-direction: row; min-height: 48px; padding: 8px 14px;
+}
 .nav-btn {
   display: flex; align-items: center; gap: 12px; width: 100%;
   min-height: 56px; padding: 10px 14px; text-align: left;
@@ -1095,6 +1107,68 @@ button { font: inherit; cursor: pointer; }
 .tour-count { flex: 1; text-align: center; font-size: 11px; color: #a68d5f; letter-spacing: 2px; }
 .tour-nav-btn { padding: 8px 16px; }
 .start-tutorial-link { display: block; margin: 12px auto 0; }
+
+/* テーマ・音は下の「みため・おと」に畳む */
+.start-foot {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  margin-top: 16px; border-top: 1px solid var(--line); padding-top: 4px;
+}
+.start-prefs-btn {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap;
+  background: none; border: 0; padding: 8px 4px; cursor: pointer;
+  color: var(--paper-dim); font-size: 12.5px; font-weight: 700; letter-spacing: .06em;
+  -webkit-tap-highlight-color: transparent;
+}
+.start-prefs-chev {
+  width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; transition: transform .18s;
+}
+.start-prefs-btn.open .start-prefs-chev { transform: rotate(180deg); }
+.start-foot .start-tutorial-link { display: inline-block; margin: 0; }
+#startPrefs { width: 100%; }
+#startPrefs .start-theme { margin-top: 2px; border-top: 0; padding-top: 2px; }
+
+/* 案5: セレクト2つを1枚のカードに収め、罫線で分ける。モード説明は
+ * ⓘ ダイアログの中だけに置く */
+.start-selects {
+  /* 枠線と濃い影は野暮ったいので落とし、面の色だけで静かに区切る */
+  width: 100%; margin-top: 14px; padding: 4px 16px;
+  background: var(--panel); border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(120, 96, 50, .05);
+}
+.start-select-row { display: flex; align-items: center; gap: 10px; min-height: 58px; }
+.start-select-divider { border-top: 1px solid var(--line); }
+.start-select-ic {
+  flex: none; width: 31px; height: 31px; border-radius: 9px;
+  background: #dfe9dc; display: grid; place-items: center;
+}
+.start-select-ic svg { width: 19px; height: 19px; fill: none; stroke: #33523f; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.start-select-ic svg .ic-half { fill: #33523f; stroke: none; }
+.start-select-label {
+  flex: none; width: 74px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--paper-dim);
+}
+.start-select {
+  flex: 1; min-width: 0; min-height: 44px; padding: 0 30px 0 4px;
+  font-size: 16px; font-weight: 700; letter-spacing: .03em; color: var(--paper-ink);
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6' fill='none' stroke='%238a7a5c' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 4px center / 19px;
+  border: 0; border-radius: 8px; appearance: none; -webkit-appearance: none;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.mode-info-btn {
+  flex: none; width: 21px; height: 21px; padding: 0; display: inline-grid; place-items: center;
+  background: none; border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.mode-info-btn svg { width: 19px; height: 19px; fill: none; stroke: var(--paper-dim); stroke-width: 1.7; stroke-linecap: round; }
+.mode-info-btn svg .mi-dot { fill: var(--paper-dim); stroke: none; }
+.mode-info-btn:active { opacity: .55; }
+.mode-info-body { display: flex; flex-direction: column; gap: 16px; align-items: stretch; }
+.mode-info-img { width: 100%; height: auto; display: block; border-radius: 10px; border: 1px solid var(--line); margin-bottom: 8px; }
+.mode-info-title { margin: 0; text-align: center; font-size: 16px; font-weight: 800; letter-spacing: .08em; }
+.mode-info-item { text-align: left; }
+.mode-info-name { margin: 0 0 3px; font-size: 14.5px; font-weight: 800; letter-spacing: .05em; }
+.mode-info-text { margin: 0; font-size: 13.5px; line-height: 1.75; color: var(--paper-dim); letter-spacing: .02em; }
+.mode-info-close { width: 100%; margin-top: 2px; }
 
 /* ---------- 協力プレイ (マルチ) ---------- */
 /* プレイ画面: 接続バッジ (右上・設定ボタンの下) と合図ピンボタン (右下) */
