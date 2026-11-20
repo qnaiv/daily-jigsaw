@@ -1269,7 +1269,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(settingsBlock.indexOf('settingsHomeBtn') < settingsBlock.indexOf('settingsRestartBtn') && settingsBlock.indexOf('settingsRestartBtn') < settingsBlock.indexOf('>みため<'), '設定レイアウト確定形: やりなおすは スタート画面に戻る の直下');
   ok(settingsBlock.indexOf('settingsResetBtn') > settingsBlock.indexOf('settings-other'), '設定レイアウト確定形: データをリセットは そのほか の文字リンク内');
   ok(settingsBlock.indexOf('id="seVolume"') !== -1 && html.indexOf('id="seVolumeStart"') !== -1, 'SE音量: 設定シートとスタート画面の両方にスライダーがある');
-  ok(appSrc.indexOf('var SE_MASTER_BASE = 1.0') !== -1 && appSrc.indexOf('store.seVolume') !== -1 && appSrc.indexOf('function applySeVolume()') !== -1, 'SE音量: 基準ゲイン 1.0 (v59) × store.seVolume でマスターに反映');
+  ok(appSrc.indexOf('var SE_MASTER_BASE = 3.0') !== -1 && appSrc.indexOf('store.seVolume') !== -1 && appSrc.indexOf('function applySeVolume()') !== -1 && appSrc.indexOf('createDynamicsCompressor') !== -1, 'SE音量: 基準ゲイン 3.0 (v60) × store.seVolume でマスターに反映 + 歪み防止リミッター');
   ok(html.indexOf('wallPaperInfo') === -1 && appSrc.indexOf('wallPaperInfo') === -1, '壁紙名ラベル: 壁画面の現在壁紙名テキストは撤去');
 
   // 画像共有のフォールバック: 保存に落ちたら必ず注記を出す (成功時・キャンセル時は出さない)
@@ -1595,8 +1595,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v59'") !== -1, 'sw: VERSION は v59');
-  ok(appSB.indexOf("var APP_VERSION = 'v59'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v60'") !== -1, 'sw: VERSION は v60');
+  ok(appSB.indexOf("var APP_VERSION = 'v60'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
   // ランクシステム (v57): XP 表と補間、倍率、ランク導出、称号、報酬表、移行
   ok(L.xpForPieces(16) === 15 && L.xpForPieces(36) === 30 && L.xpForPieces(64) === 50 && L.xpForPieces(100) === 75 && L.xpForPieces(225) === 130 && L.xpForPieces(400) === 200 && L.xpForPieces(1024) === 420, 'ランク: XP 表が仕様どおり');
   ok(L.xpForPieces(49) === 39 && L.xpForPieces(81) === 62 && L.xpForPieces(144) === 94, 'ランク: 表に無いピース数 (ハンデ等) は線形補間');

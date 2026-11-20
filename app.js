@@ -3177,14 +3177,14 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v59'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v60'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
- * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52
- * (2026-11-21 倍増) でも BGM に埋もれるという実機報告を受け、1.0 へ
- * (2026-11-21 ユーザー指示)。SE は短い単発音の寄せ集めで、持続する
- * BGM と知覚音量を揃えるにはピーク基準でこの水準が要る。重なっても
- * 最悪 ~0.55 程度でクリップしない (クリア音で検証済みの構成) */
-var SE_MASTER_BASE = 1.0;
+ * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
+ * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
+ * (2026-11-21 ユーザー指示「じゃあ三倍でいい」)。この倍率では単発でも
+ * 1.0 を超え得るので、マスターの後段にリミッター (コンプレッサー) を
+ * 入れて歪みだけは防ぐ */
+var SE_MASTER_BASE = 3.0;
 var seVolume = (typeof store.seVolume === 'number' && isFinite(store.seVolume))
   ? Math.min(1, Math.max(0, store.seVolume)) : 1;
 function seMasterGain() { return SE_MASTER_BASE * seVolume; }
@@ -3200,8 +3200,15 @@ function ensureSeContext() {
   try {
     seCtx = new AC();
     seMaster = seCtx.createGain();
-    seMaster.gain.value = seMasterGain(); // 基準 1.0 × ユーザーの SE音量 (既定 1)
-    seMaster.connect(seCtx.destination);
+    seMaster.gain.value = seMasterGain(); // 基準 3.0 × ユーザーの SE音量 (既定 1)
+    var seLimiter = seCtx.createDynamicsCompressor();
+    seLimiter.threshold.value = -14;
+    seLimiter.knee.value = 8;
+    seLimiter.ratio.value = 12;
+    seLimiter.attack.value = 0.002;
+    seLimiter.release.value = 0.18;
+    seMaster.connect(seLimiter);
+    seLimiter.connect(seCtx.destination);
   } catch (e) { seCtx = null; }
 }
 function seNoiseBuffer() {
