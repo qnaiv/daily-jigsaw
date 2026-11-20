@@ -719,6 +719,7 @@ button { font: inherit; cursor: pointer; }
   font-weight: 800; letter-spacing: .08em; min-height: 48px;
 }
 .cert-sub-actions { display: flex; gap: 8px; }
+.cert-sub-actions[hidden] { display: none; } /* display 指定が hidden 属性を打ち消す事故の防止 (マルチ用ボタン行がソロに出ていた) */
 .cert-secondary { flex: 1; background: transparent; border-color: var(--brass); color: var(--ink); }
 .cert-close { align-self: center; margin-top: 2px; }
 #detailText { font-size: 14px; line-height: 1.7; text-align: left; width: 100%; }
@@ -964,6 +965,7 @@ button { font: inherit; cursor: pointer; }
 #wallSelBar[hidden] { display: none; }
 #wallSelName { font-weight: 700; font-size: 13.5px; color: var(--screen-ink); margin-right: auto; }
 #wallFrameColors { display: flex; gap: 6px; flex-wrap: wrap; }
+#wallFrameColors[hidden] { display: none; }
 .frame-swatch {
   width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0,0,0,.18);
   padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;

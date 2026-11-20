@@ -1595,7 +1595,45 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v54'") !== -1, 'sw: VERSION は v54');
+  ok(swSB.indexOf("VERSION = 'v55'") !== -1, 'sw: VERSION は v55');
+
+  // hidden 属性 / JS の hidden 切替が CSS の display 指定に打ち消されないこと。
+  // (v55: .cert-sub-actions の display:flex が #resultMpActions の hidden を
+  //  無効化し、ソロのクリア画面にマルチ用ボタン「つぎのステージへ」が
+  //  出て押しても反応しない事故があった。その同類を全部洗う)
+  {
+    const dispSels = [];
+    const ruleRe = /([^{}]+)\{([^}]*)\}/g; let rm2;
+    while ((rm2 = ruleRe.exec(cssSB))) {
+      if (!/display\s*:\s*(flex|grid|block|inline-flex|inline-grid|inline-block)/.test(rm2[2])) continue;
+      rm2[1].split(',').forEach(s => { s = s.trim(); if (/^[.#][A-Za-z0-9_-]+$/.test(s)) dispSels.push(s); });
+    }
+    const guardSels = new Set();
+    const gRe = /([.#][A-Za-z0-9_-]+)\[hidden\]/g;
+    while ((rm2 = gRe.exec(cssSB))) guardSels.add(rm2[1]);
+    const idInfo = {};
+    const tagRe = /<(\w+)([^>]*)>/g;
+    while ((rm2 = tagRe.exec(htmlSB))) {
+      const idM = rm2[2].match(/id="([^"]+)"/); if (!idM) continue;
+      const clM = rm2[2].match(/class="([^"]+)"/);
+      idInfo[idM[1]] = { classes: clM ? clM[1].split(/\s+/) : [], hiddenAttr: /(^|\s)hidden(\s|=|$)/.test(rm2[2]) };
+    }
+    const jsIds = new Set();
+    const jsRe = /\$\('([A-Za-z0-9_-]+)'\)\.hidden\s*=/g;
+    while ((rm2 = jsRe.exec(appSB))) jsIds.add(rm2[1]);
+    const victims = [];
+    Object.keys(idInfo).forEach(id => {
+      const info = idInfo[id];
+      if (!info.hiddenAttr && !jsIds.has(id)) return;
+      dispSels.forEach(sel => {
+        const hit = sel[0] === '.' ? info.classes.indexOf(sel.slice(1)) !== -1 : sel === '#' + id;
+        if (hit && !guardSels.has(sel) && !guardSels.has('#' + id)) victims.push(id + ' via ' + sel);
+      });
+    });
+    ok(victims.length === 0, 'hidden ガード: display 指定に hidden が打ち消される要素がない' + (victims.length ? ' (' + victims.join(', ') + ')' : ''));
+    ok(cssSB.indexOf('.cert-sub-actions[hidden]') !== -1 && cssSB.indexOf('#wallFrameColors[hidden]') !== -1,
+       'hidden ガード: 結果画面のマルチ用ボタン行と壁の額色行に [hidden] 規則がある');
+  }
 }
 
 /* 初期散布は開始直後のドロップで勝手にくっつかない (2026-11-10 バグ修正) */
