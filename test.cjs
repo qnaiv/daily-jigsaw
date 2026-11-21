@@ -1595,8 +1595,21 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v60'") !== -1, 'sw: VERSION は v60');
-  ok(appSB.indexOf("var APP_VERSION = 'v60'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v61'") !== -1, 'sw: VERSION は v61');
+  ok(appSB.indexOf("var APP_VERSION = 'v61'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  // 現像マルチ (v61): ロビーで見た目 (ふつう/現像) を選び、start と
+  // snapshot で全端末に行き渡り、盤面は devMode で組まれる
+  ok(htmlSB.indexOf('id="mpDevSeg"') !== -1 && appSB.indexOf("$('mpDevSeg')") !== -1 && appSB.indexOf('mp.lobbyDev = o.dev;') !== -1,
+     '現像マルチ: ロビー (ホスト) に見た目チップがあり、選択が lobbyDev に入る');
+  ok(appSB.indexOf('dev: !!mp.lobbyDev, // 現像マルチ') !== -1 && appSB.indexOf('mp.devMode = !!ev.dev;') !== -1,
+     '現像マルチ: start ペイロードに dev が載り、受信側で mp.devMode に確定する');
+  ok(appSB.indexOf('devMode: !!mp.devMode, devRevealed: new Set()') !== -1,
+     '現像マルチ: mpLoadPuzzle が devMode で盤面を組む');
+  ok(appSB.indexOf('devMode: mp.devMode, // 現像マルチ') !== -1 && appSB.indexOf("typeof snap.devMode === 'boolean'") !== -1 &&
+     appSB.indexOf('state.devRevealed = new Set(developRevealedFromClusters(state.clusters));') !== -1,
+     '現像マルチ: snapshot に devMode が載り、合流側は現像済み集合を塊構成から作り直す');
+  ok(appSB.indexOf('mode: mp.lobbyMode, dev: !!mp.lobbyDev })') !== -1 && appSB.indexOf("? ' ・ 現像' : '';") !== -1,
+     '現像マルチ: ロビー情報に dev が流れ、ゲストのロビー行に「現像」が出る');
   // ランクシステム (v57): XP 表と補間、倍率、ランク導出、称号、報酬表、移行
   ok(L.xpForPieces(16) === 15 && L.xpForPieces(36) === 30 && L.xpForPieces(64) === 50 && L.xpForPieces(100) === 75 && L.xpForPieces(225) === 130 && L.xpForPieces(400) === 200 && L.xpForPieces(1024) === 420, 'ランク: XP 表が仕様どおり');
   ok(L.xpForPieces(49) === 39 && L.xpForPieces(81) === 62 && L.xpForPieces(144) === 94, 'ランク: 表に無いピース数 (ハンデ等) は線形補間');
@@ -1763,7 +1776,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: スタート導線・ロビー・バッジ・ピンボタン・貢献度表示の要素がある');
   ok(swM.indexOf("'mp.js'") !== -1 && swM.indexOf("endsWith('/mp.js')") !== -1,
      'MP配線: sw.js が mp.js をプリキャッシュし NetworkFirst 対象に含む');
-  ok(appM.indexOf('var MP_LOGIC_VERSION = 5;') !== -1 &&
+  ok(appM.indexOf('var MP_LOGIC_VERSION = 6;') !== -1 &&
      appM.indexOf('hashState: function (clusters) { return canonicalStateHash(clusters); }') !== -1 &&
      appM.indexOf("t: 'grab-req'") !== -1 && appM.indexOf("t: 'drop'") !== -1 && appM.indexOf("t: 'sort'") !== -1,
      'MP配線: hooks が canonicalStateHash を使い、grab-req/drop/sort を送る');
@@ -2200,8 +2213,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(mpP.indexOf("msg.t === 'profile'") !== -1 && mpP.indexOf('profiles: profiles') !== -1 &&
      mpP.indexOf('resolveProfileColors') !== -1 && mpP.indexOf('var MP_LOGIC_VERSION') === -1,
      'MP改善#4: mp.js は profile を名簿で保持し welcome に同梱、色を調停する');
-  ok(appP.indexOf('var MP_LOGIC_VERSION = 5;') !== -1,
-     'MP改善#4: profile は追加型でバージョンを上げなかった (その後ハンデで 4、レース完走方式で 5 に上げた)');
+  ok(appP.indexOf('var MP_LOGIC_VERSION = 6;') !== -1,
+     'MP改善#4: profile は追加型でバージョンを上げなかった (その後ハンデで 4、レース完走方式で 5、現像マルチで 6 に上げた)');
   ok(cssP.indexOf('.mp-avatar') !== -1 && cssP.indexOf('.mp-prof-icons') !== -1 &&
      cssP.indexOf('#mpTurnDot.has-icon') !== -1,
      'MP改善#4: style.css にアバターと編集シートのスタイルがある');
@@ -2500,9 +2513,10 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appR.indexOf('ホストが復帰しました') !== -1 &&
      appR.indexOf('対戦が始まっていた部屋には戻れません') !== -1,
      '堅牢化: 猶予カウントダウンと復帰まわりの文言が配線されている');
-  // MP_LOGIC_VERSION は据え置き (追加型プロトコルで旧端末と混在安全なため)
-  ok(appR.indexOf('var MP_LOGIC_VERSION = 5;') !== -1,
-     '堅牢化: MP_LOGIC_VERSION は 5 のまま (上げる必要なし)');
+  // MP_LOGIC_VERSION は当時 5 のまま (追加型プロトコルで旧端末と混在安全
+  // だったため)。その後 v61 の現像マルチで 6 に上がった (下の v61 検証)
+  ok(appR.indexOf('var MP_LOGIC_VERSION = 6;') !== -1,
+     '堅牢化: MP_LOGIC_VERSION は当時据え置き (現行は v61 で 6)');
 }
 
 /* ============ v52: 壁の高速化 / リース残留 / 再開バナー ============ */
@@ -2644,7 +2658,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(appW.indexOf('function renderPieceBitmapPaper(') !== -1 && appW.indexOf('bitmapsPaper') !== -1,
      '現像: 白ピースビットマップの生成とキャッシュがある');
   const mpStateBody = bodyOfW(appW, 'function mpLoadPuzzle(', 'function mpOnBegin()');
-  ok(mpStateBody.indexOf('devMode: false') !== -1, '現像: MP の盤面は現像モード対象外');
+  ok(mpStateBody.indexOf('devMode: !!mp.devMode') !== -1, '現像: MP の盤面は start の dev 指定でのみ現像になる (v61 現像マルチ)');
 
   // 配線: 手触り (影・吸い付き・沈み・ラダー音・完成の光)
   ok(appW.indexOf('function drawHeldShadow(') !== -1 && appW.indexOf('function clusterShadowCanvas(') !== -1 &&

@@ -3177,7 +3177,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v60'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v61'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -8844,7 +8844,7 @@ function renderStartScreen() {
  * - persistProgress は部屋中ずっと無動作 (ソロの進行中セーブと分離、§5)
  * - 記録と報酬は参加者全員が自分の store に書く (レースも完走した
  *   全員、§5 改訂)。確定した記録は onClear がその場で saveStore する (#1) */
-var MP_LOGIC_VERSION = 5; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加。v4: レースのハンデ (start の piecesMap) を追加 — 旧端末が piecesMap を無視すると別条件のレースが静かに成立するため上げる。v5: レース完走方式 (finish に elapsedSec を載せ、レースは全員完走まで終わらない) — 旧端末は最初の finish で全員終了してしまうため混在を弾く
+var MP_LOGIC_VERSION = 6; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加。v4: レースのハンデ (start の piecesMap) を追加 — 旧端末が piecesMap を無視すると別条件のレースが静かに成立するため上げる。v5: レース完走方式 (finish に elapsedSec を載せ、レースは全員完走まで終わらない) — 旧端末は最初の finish で全員終了してしまうため混在を弾く。v6: 現像マルチ (start の dev) — 旧端末が dev を無視すると色付きピースで遊べてしまうため混在を弾く
 /* プレイヤー識別色のパレット (8色)。先頭4色は従来の参加順割当てと
  * 同じ順序 (互換のため変更しない)。プロフィールで選んだ色がその人の
  * 識別色になり、重複はホストが調停する (MP改善#4) */
@@ -8911,6 +8911,7 @@ var mp = {
   stage: null, pieces: null, startedAt: 0,
   basePieces: null, piecesMap: null, // レースのハンデ: 基準ピース数と全員分の実効ピース数 (playerId -> pieces)
   mode: 'coop', lobbyMode: 'coop',
+  lobbyDev: null, devMode: false, // 現像マルチ (v61): ロビーの選択 (null = 未初期化、開く時にソロ設定から) と対戦中の確定値
   turnOrder: [], turnIdx: 0, leftPlayers: {}, matchPlayers: [],
   raceProgress: {}, raceWinner: null, finishSent: false,
   raceFinish: {}, raceDone: false, // レース完走集計: playerId -> { rank, elapsedSec } / 全員完走 (or 残り全員退出) の確定
@@ -9048,6 +9049,7 @@ var mpHooksObj = {
       raceProgress: mp.raceProgress, raceWinner: mp.raceWinner,
       raceFinish: mp.raceFinish, raceDone: mp.raceDone,
       bgmSync: mp.bgmSync, // 途中参加者も同じ曲順・同じ位置で合流できるように
+      devMode: mp.devMode, // 現像マルチ: 途中参加者も白ピースで合流する
       cleared: !!(state && state.cleared)
     };
   },
@@ -9427,6 +9429,8 @@ function mpResetState() {
   mp.session = null; mp.role = null; mp.code = null; mp.manual = false;
   mp.begun = false; mp.started = false; mp.loading = false;
   mp.mode = 'coop'; mp.lobbyMode = 'coop';
+  mp.lobbyDev = null; // 次にロビーを開く時にソロのモード設定から初期化する
+  mp.devMode = false;
   mp.turnOrder = []; mp.turnIdx = 0; mp.leftPlayers = {}; mp.matchPlayers = [];
   mp.raceProgress = {}; mp.raceWinner = null; mp.finishSent = false;
   mp.raceFinish = {}; mp.raceDone = false;
@@ -9481,6 +9485,7 @@ function mpShowHome() {
   if (state && state.pool) {
     if (mp.lobbyStage == null) mp.lobbyStage = nextStage(store.records, state.pool);
     if (mp.lobbyPieces == null) mp.lobbyPieces = difficulty;
+    if (mp.lobbyDev == null) mp.lobbyDev = (store.playMode === 'develop'); // 現像マルチ: 初期値はソロのモード設定
   }
   $('mpHomeView').hidden = false;
   $('mpManualView').hidden = true;
@@ -9693,6 +9698,23 @@ function mpRenderHostControls() {
     mseg.appendChild(b);
   });
   $('mpModeDesc').textContent = MP_MODE_DESCS[mp.lobbyMode];
+  var dseg = $('mpDevSeg');
+  dseg.innerHTML = '';
+  [{ dev: false, label: 'ふつう' }, { dev: true, label: '現像' }].forEach(function (o) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'diff-chip' + (mp.lobbyDev === o.dev ? ' active' : '');
+    var num = document.createElement('span');
+    num.className = 'diff-num';
+    num.textContent = o.label;
+    b.appendChild(num);
+    b.addEventListener('click', function () {
+      mp.lobbyDev = o.dev;
+      mpRenderHostControls();
+      mpBroadcastLobbyInfo();
+    });
+    dseg.appendChild(b);
+  });
   var anyGuest = mpPeerList().some(function (p) { return !p.isHost && p.connected; });
   $('mpStartBtn').disabled = !anyGuest;
   $('mpStartHint').hidden = anyGuest; // 押せない理由はボタンの直上に (ゲストが入ったら消える)
@@ -9721,20 +9743,21 @@ function mpRenderLobbyPuzzle() {
     img.dataset.url = url;
     img.src = url;
   }
+  var devSuffix = (!mpIsHost() && mp.lobbyInfo && mp.lobbyInfo.dev) ? ' ・ 現像' : '';
   if (!mpIsHost() && mp.lobbyInfo && mp.lobbyInfo.mode === 'race') {
     // レースのゲスト行: 基準と自分の実効ピース数を並べて自分の条件が分かるようにする
     line.textContent = 'ステージ ' + stage + ' ・ 基準' + pieces + 'ピース / あなたは' +
       handicapPieces(pieces, mpMyHandicap()) + 'ピース' +
-      ' ・ ' + (MP_MODE_NAMES[mp.lobbyInfo.mode] || '');
+      ' ・ ' + (MP_MODE_NAMES[mp.lobbyInfo.mode] || '') + devSuffix;
   } else {
     line.textContent = 'ステージ ' + stage + ' ・ ' + pieces + 'ピース' +
-      (mpIsHost() ? '' : ' ・ ' + (MP_MODE_NAMES[(mp.lobbyInfo && mp.lobbyInfo.mode) || 'coop'] || ''));
+      (mpIsHost() ? '' : ' ・ ' + (MP_MODE_NAMES[(mp.lobbyInfo && mp.lobbyInfo.mode) || 'coop'] || '')) + devSuffix;
   }
 }
 function mpBroadcastLobbyInfo() {
   if (!mpIsHost() || !mp.session) return;
   mpHostRoomSaveLobby(); // 復帰時にロビー設定を戻せるよう保存記録へも反映する
-  mp.session.sendEphemeral('lobby', { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode });
+  mp.session.sendEphemeral('lobby', { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode, dev: !!mp.lobbyDev });
 }
 
 /* ---------- ホスト復帰の資格情報 (HOST_RECLAIM_DESIGN §3.2) ---------- */
@@ -9765,7 +9788,7 @@ function mpHostRoomSaveLobby() {
   if (!mpIsHost() || !mp.code) return;
   var rec = mpHostRoomLoad();
   if (!rec || rec.code !== mp.code) return;
-  rec.lobby = { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode };
+  rec.lobby = { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode, dev: !!mp.lobbyDev };
   mpHostRoomSave(rec);
 }
 /* 入口の「前の部屋に戻る」ボタンの表示 (保存記録がある時だけ) */
@@ -9788,6 +9811,7 @@ function mpReclaimRoom() {
     if (rec.lobby.stage != null) mp.lobbyStage = rec.lobby.stage;
     if (rec.lobby.pieces != null) mp.lobbyPieces = rec.lobby.pieces;
     if (rec.lobby.mode) mp.lobbyMode = rec.lobby.mode;
+    if (typeof rec.lobby.dev === 'boolean') mp.lobbyDev = rec.lobby.dev;
   }
   mpStartSession(window.JigsawMP.createRoom(mpHooksObj, mpCallbacks(), {
     code: rec.code, hostPublicJwk: rec.publicKeyJwk,
@@ -9820,7 +9844,7 @@ function mpCreateRoom() {
     window.JigsawMP.generateHostKeyPair().then(function (kp) {
       mpHostRoomSave({
         code: code, privateKeyJwk: kp.privateJwk, publicKeyJwk: kp.publicJwk,
-        lobby: { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode },
+        lobby: { stage: mp.lobbyStage, pieces: mp.lobbyPieces, mode: mp.lobbyMode, dev: !!mp.lobbyDev },
         createdAt: Date.now()
       });
       begin({ hostPublicJwk: kp.publicJwk });
@@ -9929,7 +9953,7 @@ function mpLoadPuzzle(stage, pieces) {
     clusters: initialScatter(playDate, pieces),
     elapsedBase: 0, moves: 0, previewViewed: false, previewCount: 0,
     mergeFlash: null, cleared: false,
-    devMode: false, devRevealed: new Set(), devAnim: null, mergeAnims: [], dropAnim: null, clearGloss: null, // MP は現像モード対象外 (v53)
+    devMode: !!mp.devMode, devRevealed: new Set(), devAnim: null, mergeAnims: [], dropAnim: null, clearGloss: null, // 現像マルチ (v61): start / snapshot の devMode で決まる。新規対戦は全ピース単体から始まるので現像済みは空
     started: false, paused: false, timerStart: 0,
     views: { desk: null },
     bitmaps: new Map(), bitmapsPaper: new Map(), bitmapFailures: new Map(),
@@ -10087,6 +10111,7 @@ function mpOnStartEvent(ev) {
   // しない (時間軸は startedAt から計算できるので途中オンで合流できる)
   mp.bgmSync = sanitizeBgmSync(ev.bgmSync);
   if (mp.bgmSync && bgmOn && bgm.started) bgmSyncSeek(bgmSyncElapsed());
+  mp.devMode = !!ev.dev; // 現像マルチ (v61)
   mpLoadPuzzle(ev.stage, mp.pieces); // 自分の実効ピース数で自分の盤面を組む
 }
 /* 「つぎのステージへ」: 即開始せずロビーへ戻る。ステージだけ +1 された
@@ -10513,6 +10538,7 @@ function mpOnComplete() {
 function mpApplySnapshot(snap) {
   if (!snap) return;
   if (snap.mode) mp.mode = snap.mode;
+  if (typeof snap.devMode === 'boolean') mp.devMode = snap.devMode; // 現像マルチ: 合流先も白ピースになる
   if (snap.bgmSync) mp.bgmSync = sanitizeBgmSync(snap.bgmSync); // BGM 同期の規範リストも復元する (盤面ロード後の合流に使う)
   // レースのハンデ: 再読込の判定と読込は「自分の実効ピース数」基準にする
   // (snap.pieces はホスト本人のピース数なので、ハンデがあると永遠に
@@ -10578,6 +10604,12 @@ function mpDoApplySnapshot(snap) {
   state.clusters = (snap.clusters || []).map(function (c) {
     return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy };
   });
+  if (state.devMode) {
+    // 現像マルチ: 現像済みは塊構成から導出できるので、復元した塊から
+    // 作り直す (アニメーションなしで即表示)
+    state.devRevealed = new Set(developRevealedFromClusters(state.clusters));
+    state.devAnim = null;
+  }
   if (typeof snap.elapsedSec === 'number') {
     state.elapsedBase = snap.elapsedSec;
     state.started = true;
@@ -11028,6 +11060,7 @@ $('mpStartBtn').addEventListener('click', function () {
   var payload = {
     stage: mp.lobbyStage, pieces: mp.lobbyPieces, startedAt: Date.now(),
     mode: mp.lobbyMode, // モードは start で確定し、部屋の間は固定
+    dev: !!mp.lobbyDev, // 現像マルチ (v61): 見た目も start で確定
     order: order,
     // BGM 同期: 規範リスト (ファイル名 + 実測秒) と共有シードを配る。
     // 全端末がこのシードで同じ曲順を決定的に作り、startedAt からの
