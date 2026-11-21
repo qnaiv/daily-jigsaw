@@ -3177,7 +3177,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v61'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v62'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -8355,6 +8355,20 @@ function wireControls() {
   });
   $('difficultySel').addEventListener('change', onDifficultySelect);
   $('playModeSel').addEventListener('change', onPlayModeSelect);
+  /* Firefox Android ではセレクト本体へのタップで選択ポップアップが
+   * 開かないことがある (実機報告 v62)。行のどこをタップしても
+   * showPicker() で明示的に開くようにして回避する (対応ブラウザでは
+   * 本体の標準動作と二重に開こうとして例外になるだけなので握りつぶす。
+   * モード行の ⓘ ボタンは対象外) */
+  Array.prototype.forEach.call(document.querySelectorAll('.start-select-row[data-picker-for]'), function (row) {
+    row.addEventListener('click', function (ev) {
+      if (ev.target.closest && ev.target.closest('#modeInfoBtn')) return;
+      var sel = $(row.getAttribute('data-picker-for'));
+      if (sel && typeof sel.showPicker === 'function') {
+        try { sel.showPicker(); } catch (e) { /* 既に開いている等は無視 */ }
+      }
+    });
+  });
   $('appVersion').textContent = 'ver. ' + APP_VERSION;
   $('rankRow').addEventListener('click', function () { buildRankModal(); $('rankModal').hidden = false; });
   $('rankCloseBtn').addEventListener('click', function () { $('rankModal').hidden = true; });

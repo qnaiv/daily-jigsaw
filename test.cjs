@@ -1595,8 +1595,15 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v61'") !== -1, 'sw: VERSION は v61');
-  ok(appSB.indexOf("var APP_VERSION = 'v61'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v62'") !== -1, 'sw: VERSION は v62');
+  ok(appSB.indexOf("var APP_VERSION = 'v62'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  // Firefox Android でセレクトが開けない問題 (v62): label で包むと合成
+  // クリックになりポップアップが開かないため div 化し、行タップで
+  // showPicker() を呼ぶ
+  ok(htmlSB.indexOf('<label class="start-select-row">') === -1 &&
+     htmlSB.indexOf('data-picker-for="difficultySel"') !== -1 && htmlSB.indexOf('data-picker-for="playModeSel"') !== -1 &&
+     appSB.indexOf("sel.showPicker()") !== -1 && appSB.indexOf("closest('#modeInfoBtn')") !== -1,
+     'セレクト: 行は div 化され、行タップで showPicker が呼ばれる (ⓘ は除外)');
   // 現像マルチ (v61): ロビーで見た目 (ふつう/現像) を選び、start と
   // snapshot で全端末に行き渡り、盤面は devMode で組まれる
   ok(htmlSB.indexOf('id="mpDevSeg"') !== -1 && appSB.indexOf("$('mpDevSeg')") !== -1 && appSB.indexOf('mp.lobbyDev = o.dev;') !== -1,
