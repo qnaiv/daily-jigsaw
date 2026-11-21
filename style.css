@@ -1150,10 +1150,30 @@ button { font: inherit; cursor: pointer; }
 }
 .start-select {
   flex: 1; min-width: 0; min-height: 44px; padding: 0 30px 0 4px;
+  font-family: inherit; text-align: left;
   font-size: 16px; font-weight: 700; letter-spacing: .03em; color: var(--paper-ink);
   background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6' fill='none' stroke='%238a7a5c' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 4px center / 19px;
-  border: 0; border-radius: 8px; appearance: none; -webkit-appearance: none;
+  border: 0; border-radius: 8px;
   cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+/* 選択シート (v63): ネイティブ select の代替。現在の値にラジオ印 */
+.picker-body { padding: 18px 14px 10px; }
+.picker-options { display: flex; flex-direction: column; }
+.picker-option {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 13px 10px;
+  background: none; border: 0; border-bottom: 1px solid var(--line);
+  font-family: inherit; font-size: 16px; font-weight: 700; text-align: left;
+  color: var(--paper-ink); cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.picker-option:last-child { border-bottom: 0; }
+.picker-radio {
+  flex: none; width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--paper-dim); position: relative;
+}
+.picker-option.on .picker-radio { border-color: var(--accent); }
+.picker-option.on .picker-radio::after {
+  content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--accent);
 }
 .mode-info-btn {
   flex: none; width: 21px; height: 21px; padding: 0; display: inline-grid; place-items: center;

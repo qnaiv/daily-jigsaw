@@ -3177,7 +3177,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v62'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v63'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -7974,23 +7974,25 @@ function renderDetailPuzzle(r) {
 /* 難易度セレクタ (ステージ制): 箱は1つ、難易度は全7種を1セットで出す。
  * チップは「Nピース」表記 (数字だけではピース数と伝わらないため)。
  * 目安時間は出さない (ユーザー指定) */
+/* 選択肢は自前シート (openStartPicker) 用に組み立てて保持し、行の
+ * ボタンには現在の値だけを表示する (v63: ネイティブ select を廃止) */
+var difficultyOptions = [];
 function buildDifficultySeg() {
-  var sel = $('difficultySel');
-  if (!sel) return;
-  sel.innerHTML = '';
+  var btn = $('difficultySel');
+  if (!btn) return;
+  difficultyOptions = [];
+  var curLabel = '';
   DIFFICULTIES.forEach(function (d) {
-    var o = document.createElement('option');
-    o.value = String(d);
     var tier = frameTier(d);
     var star = tier ? (tier === 'royal' ? ' ★★' : ' ★') : '';
     var cleared = !!findRecordForStage(playStage, d);
-    o.textContent = d + 'ピース' + star + (cleared ? ' ✓' : '');
-    sel.appendChild(o);
+    var label = d + 'ピース' + star + (cleared ? ' ✓' : '');
+    difficultyOptions.push({ value: String(d), label: label });
+    if (d === difficulty) curLabel = label;
   });
-  sel.value = String(difficulty);
+  btn.textContent = curLabel || (difficulty + 'ピース');
 }
-function onDifficultySelect() {
-  var d = Number($('difficultySel').value);
+function onDifficultyPicked(d) {
   if (!DIFFICULTIES.includes(d) || d === difficulty) { buildDifficultySeg(); return; }
   if (state) persistProgress();
   difficulty = d;
@@ -8007,13 +8009,46 @@ function effectivePlayMode() {
   return normalizePlayMode(store.playMode);
 }
 function buildPlayModeSeg() {
-  var sel = $('playModeSel');
-  if (!sel) return;
-  sel.value = effectivePlayMode();
+  var btn = $('playModeSel');
+  if (!btn) return;
+  btn.textContent = effectivePlayMode() === 'develop' ? '現像' : 'ふつう';
 }
-function onPlayModeSelect() {
-  onPlayModeChip($('playModeSel').value === 'develop' ? 'develop' : 'normal');
+function onPlayModePicked(mode) {
+  onPlayModeChip(mode === 'develop' ? 'develop' : 'normal');
   buildPlayModeSeg(); // 確認モーダルで止まった場合などに表示を実態へ戻す
+}
+/* ピース数/モードの選択シート (v63)。Firefox Android ではネイティブ
+ * select の選択ポップアップが開いても項目を選べない (実機動画で確認:
+ * ポップアップ内のタップが一切効かない) ため、選択は自前シートで完結
+ * させる。見た目と操作 (行タップ → 一覧 → 選んで閉じる) は従来どおり */
+function closeStartPicker() { $('startPicker').hidden = true; }
+function openStartPicker(kind) {
+  var box = $('startPickerOptions');
+  box.innerHTML = '';
+  var cur = kind === 'difficulty' ? String(difficulty) : effectivePlayMode();
+  var opts = kind === 'difficulty' ? difficultyOptions : [
+    { value: 'normal', label: 'ふつう' }, { value: 'develop', label: '現像' }
+  ];
+  $('startPickerTitle').textContent = kind === 'difficulty' ? 'ピース数' : 'モード';
+  opts.forEach(function (o) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'picker-option' + (o.value === cur ? ' on' : '');
+    var t = document.createElement('span');
+    t.className = 'picker-option-label';
+    t.textContent = o.label;
+    var r = document.createElement('span');
+    r.className = 'picker-radio';
+    b.appendChild(t);
+    b.appendChild(r);
+    b.addEventListener('click', function () {
+      closeStartPicker();
+      if (kind === 'difficulty') onDifficultyPicked(Number(o.value));
+      else onPlayModePicked(o.value);
+    });
+    box.appendChild(b);
+  });
+  $('startPicker').hidden = false;
 }
 /* ランク行 (スタート画面) とランク詳細ダイアログの描画 (v57) */
 function paintRankRow() {
@@ -8353,22 +8388,15 @@ function wireControls() {
     $('startPrefsBtn').setAttribute('aria-expanded', String(!p.hidden));
     $('startPrefsBtn').classList.toggle('open', !p.hidden);
   });
-  $('difficultySel').addEventListener('change', onDifficultySelect);
-  $('playModeSel').addEventListener('change', onPlayModeSelect);
-  /* Firefox Android ではセレクト本体へのタップで選択ポップアップが
-   * 開かないことがある (実機報告 v62)。行のどこをタップしても
-   * showPicker() で明示的に開くようにして回避する (対応ブラウザでは
-   * 本体の標準動作と二重に開こうとして例外になるだけなので握りつぶす。
-   * モード行の ⓘ ボタンは対象外) */
-  Array.prototype.forEach.call(document.querySelectorAll('.start-select-row[data-picker-for]'), function (row) {
+  /* ピース数/モード: 行タップで自前の選択シートを開く (v63)。
+   * モード行の ⓘ ボタンはシートではなく説明ダイアログ用なので除外 */
+  Array.prototype.forEach.call(document.querySelectorAll('.start-select-row[data-picker]'), function (row) {
     row.addEventListener('click', function (ev) {
       if (ev.target.closest && ev.target.closest('#modeInfoBtn')) return;
-      var sel = $(row.getAttribute('data-picker-for'));
-      if (sel && typeof sel.showPicker === 'function') {
-        try { sel.showPicker(); } catch (e) { /* 既に開いている等は無視 */ }
-      }
+      openStartPicker(row.getAttribute('data-picker'));
     });
   });
+  $('startPickerBackdrop').addEventListener('click', closeStartPicker);
   $('appVersion').textContent = 'ver. ' + APP_VERSION;
   $('rankRow').addEventListener('click', function () { buildRankModal(); $('rankModal').hidden = false; });
   $('rankCloseBtn').addEventListener('click', function () { $('rankModal').hidden = true; });

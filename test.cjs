@@ -1595,15 +1595,15 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v62'") !== -1, 'sw: VERSION は v62');
-  ok(appSB.indexOf("var APP_VERSION = 'v62'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
-  // Firefox Android でセレクトが開けない問題 (v62): label で包むと合成
-  // クリックになりポップアップが開かないため div 化し、行タップで
-  // showPicker() を呼ぶ
-  ok(htmlSB.indexOf('<label class="start-select-row">') === -1 &&
-     htmlSB.indexOf('data-picker-for="difficultySel"') !== -1 && htmlSB.indexOf('data-picker-for="playModeSel"') !== -1 &&
-     appSB.indexOf("sel.showPicker()") !== -1 && appSB.indexOf("closest('#modeInfoBtn')") !== -1,
-     'セレクト: 行は div 化され、行タップで showPicker が呼ばれる (ⓘ は除外)');
+  ok(swSB.indexOf("VERSION = 'v63'") !== -1, 'sw: VERSION は v63');
+  ok(appSB.indexOf("var APP_VERSION = 'v63'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  // Firefox Android でネイティブ select の選択ポップアップが操作でき
+  // ない問題 (v62→v63): select 自体を廃止し、自前の選択シートで完結
+  ok(htmlSB.indexOf('<select id="difficultySel"') === -1 && htmlSB.indexOf('<select id="playModeSel"') === -1 &&
+     htmlSB.indexOf('data-picker="difficulty"') !== -1 && htmlSB.indexOf('data-picker="mode"') !== -1 &&
+     htmlSB.indexOf('id="startPicker"') !== -1 && appSB.indexOf('function openStartPicker(') !== -1 &&
+     appSB.indexOf("closest('#modeInfoBtn')") !== -1 && appSB.indexOf('showPicker') === -1,
+     '選択シート: ネイティブ select は無く、行タップで自前シートが開く (ⓘ は除外)');
   // 現像マルチ (v61): ロビーで見た目 (ふつう/現像) を選び、start と
   // snapshot で全端末に行き渡り、盤面は devMode で組まれる
   ok(htmlSB.indexOf('id="mpDevSeg"') !== -1 && appSB.indexOf("$('mpDevSeg')") !== -1 && appSB.indexOf('mp.lobbyDev = o.dev;') !== -1,
@@ -2639,18 +2639,17 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(L.fxProgress(0, 200, 1100) === 1 && L.fxProgress(1000, 0, 1100) === 1, '手触り: 不正な開始・長さは完了扱い');
 
   // 配線: モード切替 (HTML + JS)、白ピース描画、現像の永続化
-  // v56: スタート画面のピース数/モードはチップ列からセレクトボックスへ変更
+  // v56 でセレクトボックス化、v63 でネイティブ select を自前シートへ
   ok(htmlW.indexOf('id="playModeSel"') !== -1 && htmlW.indexOf('id="difficultySel"') !== -1 &&
      htmlW.indexOf('id="difficultySeg"') === -1 && htmlW.indexOf('id="playModeSeg"') === -1,
-     'トップ改修: ピース数とモードはセレクトボックスで、チップの置き場は無い');
+     'トップ改修: ピース数とモードは選択行で、チップの置き場は無い');
   ok(htmlW.indexOf('id="modeInfoModal"') !== -1 && htmlW.indexOf('img/mode-normal.jpg') !== -1 &&
      htmlW.indexOf('img/mode-develop.jpg') !== -1 && htmlW.indexOf('id="modeInfoBtn"') !== -1,
      'トップ改修: モード説明は ⓘ ダイアログ (実画面の画像つき) の中だけに置く');
-  ok(appW.indexOf('function onDifficultySelect()') !== -1 && appW.indexOf('function onPlayModeSelect()') !== -1 &&
-     appW.indexOf("$('difficultySel').addEventListener('change', onDifficultySelect)") !== -1 &&
-     appW.indexOf("$('playModeSel').addEventListener('change', onPlayModeSelect)") !== -1,
-     'トップ改修: セレクトの変更ハンドラが配線されている');
-  ok(appW.indexOf("o.textContent = d + 'ピース' + star + (cleared ? ' ✓' : '');") !== -1,
+  ok(appW.indexOf('function onDifficultyPicked(') !== -1 && appW.indexOf('function onPlayModePicked(') !== -1 &&
+     appW.indexOf("openStartPicker(row.getAttribute('data-picker'))") !== -1,
+     'トップ改修: 選択シートからの変更ハンドラが配線されている');
+  ok(appW.indexOf("var label = d + 'ピース' + star + (cleared ? ' ✓' : '');") !== -1,
      'トップ改修: 難易度の選択肢に ★ とクリア済み ✓ が入る');
   ok(htmlW.indexOf('id="startPrefs"') !== -1 && htmlW.indexOf('id="startPrefsBtn"') !== -1 &&
      appW.indexOf("$('startPrefsBtn').addEventListener('click'") !== -1,
