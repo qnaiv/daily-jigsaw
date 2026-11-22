@@ -1478,7 +1478,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const updBody = appSrc2.slice(appSrc2.indexOf('function updateWallPreview()'), appSrc2.indexOf('/* 壁画像で共有'));
   ok(updBody.indexOf('var drift = Math.abs(srcC.width / srcC.height - targetAspect);') !== -1 && updBody.indexOf('if (drift <= 0.02)') !== -1, '壁帯: キャッシュのアスペクトずれを検出し、一致したときだけそのまま貼る');
   ok(updBody.indexOf('0.15') === -1, '壁帯: 旧の引き伸ばし閾値 (0.15) は廃止 (ずれは描き直しで解消)');
-  ok(updBody.indexOf("key + '@' + targetAspect.toFixed(3)") !== -1 && updBody.indexOf('renderWallPreviewCanvas(renderAspect)') !== -1, '壁帯: 描き直しは内容キー+アスペクトで多重起動を防ぎ、現在のアスペクトで描く');
+  ok(updBody.indexOf('var busyK = key;') !== -1 && updBody.indexOf('renderWallPreviewCanvas(renderAspect)') !== -1, '壁帯: 描き直しは内容キーで多重起動を防ぎ (v65: アスペクトは完了時に再判定)、現在のアスペクトで描く');
   ok(updBody.indexOf('Math.abs(wallPreviewAspect() - renderAspect) > 0.02') !== -1, '壁帯: 描画中にアスペクトが動いた結果は採用せず描き直す');
   const previewBody = appSrc2.slice(appSrc2.indexOf('function renderWallPreviewCanvas('), appSrc2.indexOf('var wallPreviewCache'));
   const shareBody = appSrc2.slice(appSrc2.indexOf('function buildWallShareImage()'), appSrc2.indexOf('function downloadWallShareImage'));
@@ -1595,8 +1595,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v64'") !== -1, 'sw: VERSION は v64');
-  ok(appSB.indexOf("var APP_VERSION = 'v64'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v65'") !== -1, 'sw: VERSION は v64');
+  ok(appSB.indexOf("var APP_VERSION = 'v65'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
   // マルチの巻き戻り対策 (v64): seq 採番の前倒し、却下の mid 照合、
   // 再掴み中のエコー保留、snapshot のドラッグ保護、ゴースト残像の掃除
   ok(fsB.readFileSync(pathB.join(__dirname, 'mp.js'), 'utf8').indexOf('lastSeq = seq;\n    if (typeof hooks.applyEvent') !== -1 &&
@@ -1604,7 +1604,9 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appSB.indexOf('mp.dropRejects[rej.mid]') !== -1 &&
      appSB.indexOf('function mpFlushDeferred(') !== -1 && appSB.indexOf('mp.deferredEvts.push({ kind: \'drop\', ev: ev })') !== -1 &&
      appSB.indexOf('var dragKeep = null;') !== -1 && appSB.indexOf('var inFlightKeep = {};') !== -1 &&
-     appSB.indexOf('delete mp.movesEph[ev.from];') !== -1,
+     appSB.indexOf('delete mp.movesEph[ev.from];') !== -1 &&
+     appSB.indexOf('squareSourceCache') !== -1 && appSB.indexOf('loadWallSource(rec, px)') !== -1 &&
+     appSB.indexOf('refreshWallTraySel();') !== -1 && appSB.indexOf('lastWallStageW') !== -1,
      '巻き戻り対策: 採番前倒し/mid照合却下/エコー保留/snapshotドラッグ保護/残像掃除が配線されている');
   // Firefox Android でネイティブ select の選択ポップアップが操作でき
   // ない問題 (v62→v63): select 自体を廃止し、自前の選択シートで完結
@@ -2567,13 +2569,13 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
   // 壁の配線: 額と帯と壁共有は高速版、詳細とコレクションは実レンダラーのまま
   const paintWallBody = bodyOf(appV, 'function paintWallFrameUnit(', 'function renderWallBoardCanvas(');
-  ok(paintWallBody.indexOf('renderWallBoardFast(rec)') !== -1, '壁高速化: 壁の額は高速盤面で描く');
+  ok(paintWallBody.indexOf('renderWallBoardFast(rec, Math.max(160, Math.min(512, px)))') !== -1, '壁高速化: 壁の額は高速盤面を実寸に合わせて描く (v65)');
   const overlayBody = bodyOf(appV, 'function wallSeamOverlay(', 'function renderWallBoardFast(');
   ok(overlayBody.indexOf('wallOverlayCache.get(key)') !== -1 && overlayBody.indexOf('wallOverlayEdges(pieces)') !== -1 &&
      overlayBody.indexOf('detailPiecePath(') !== -1 && overlayBody.indexOf('strokePieceBevel(') !== -1,
      '壁高速化: オーバーレイはキャッシュ優先で、実レンダラーと同じ部品 (輪郭パス+ベベル) で作る');
   const fastBody = bodyOf(appV, 'function renderWallBoardFast(', '/* 完成盤面を指定サイズで描く');
-  ok(fastBody.indexOf('loadWallSource(rec)') !== -1 && fastBody.indexOf('wallSeamOverlay(rec.pieces, px)') !== -1,
+  ok(fastBody.indexOf('loadWallSource(rec, px)') !== -1 && fastBody.indexOf('wallSeamOverlay(rec.pieces, px)') !== -1,
      '壁高速化: 高速盤面は写真1回描画 + オーバーレイ重ね');
   const shareFrameBody = bodyOf(appV, 'function buildShareFrameCanvas(', 'function buildWallShareImage()');
   ok(shareFrameBody.indexOf('renderWallBoardFast(rec, boardPx)') !== -1, '壁高速化: 帯と壁共有画像も高速盤面');

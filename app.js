@@ -3177,7 +3177,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v64'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v65'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -5744,8 +5744,10 @@ function updateWallFitBtn() {
   if (!b) return;
   b.textContent = wallCam.zoom > wallFitZoom() + 0.01 ? '全体' : 'ズーム';
 }
+var lastWallStageW = 0, lastWallStageH = 0; // resize 再描画ガード用 (v65)
 function renderWall() {
   var stage = $('wallStage');
+  lastWallStageW = stage.clientWidth; lastWallStageH = stage.clientHeight;
   stage.innerHTML = '';
   var world = document.createElement('div');
   world.id = 'wallWorld';
@@ -6045,9 +6047,12 @@ function updateWallPreview() {
   if (srcC) {
     var drift = Math.abs(srcC.width / srcC.height - targetAspect);
     if (drift <= 0.02) {
-      // アスペクト一致 (誤差はレイアウト揺れの範囲): そのまま貼る
+      // アスペクト一致 (誤差はレイアウト揺れの範囲): そのまま貼る。
+      // 既に同じ内容を表示中なら貼り直し自体を省く (v65)
+      if (cv.width === bw && cv.height === bh && cv._wallShownKey === key) return;
       cv.width = bw; cv.height = bh;
       ctx.drawImage(srcC, 0, 0, bw, bh);
+      cv._wallShownKey = key;
       cv.style.opacity = ''; // 完成形を表示する
       return;
     }
@@ -6067,7 +6072,11 @@ function updateWallPreview() {
     cv.width = bw; cv.height = bh;
     paintWallBase(ctx, bw, bh, wallpaperById(store.wall.paper) || wallpaperById('kinari'));
   }
-  var busyK = key + '@' + targetAspect.toFixed(3);
+  // v65: busy キーにアスペクトを混ぜない。混ぜると URL バーの
+  // アニメーション中にアスペクトが変わるたび本描画が走り直す。
+  // 描画完了時にずれていたら、落ち着いたアスペクトで1回だけ描き直す
+  // (下の完了コールバックの再入で処理される)
+  var busyK = key;
   if (wallPreviewBusyKey === busyK) return;
   wallPreviewBusyKey = busyK;
   var renderAspect = wallPreviewAspect();
@@ -6754,7 +6763,9 @@ function paintWallFrameUnit(cv, f, rec, st) {
   paintFrameUnit(ctx, st, U, null, rec ? 'loading' : 'missing', f.recordKey, upperPieces);
   if (!rec) return;
   var reveal = function () { if (cv.parentElement) cv.parentElement.style.opacity = ''; };
-  renderWallBoardFast(rec).then(function (board) {
+  // 盤面は額 Canvas の実寸に合わせる (v65: 従来は表示の数倍の
+  // 736〜960px で毎回生成していた)
+  renderWallBoardFast(rec, Math.max(160, Math.min(512, px))).then(function (board) {
     if (!cv.isConnected) return; // 壁を作り直していたら古い描画は捨てる
     var c2 = cv.getContext('2d');
     c2.setTransform(scale, 0, 0, scale, 0, 0);
@@ -6797,7 +6808,7 @@ function wallSeamOverlay(pieces, sizePx) {
 }
 function renderWallBoardFast(rec, sizePx) {
   var px = sizePx || detailRenderPlan(rec.pieces).sizePx;
-  return loadWallSource(rec).then(function (src) {
+  return loadWallSource(rec, px).then(function (src) {
     var bcv = document.createElement('canvas');
     bcv.width = px; bcv.height = px;
     var ctx = bcv.getContext('2d');
@@ -6897,8 +6908,17 @@ function selectWall(kind, key) {
     el.classList.toggle('sel', !!wallSelected && el.dataset.kind === kind && el.dataset.key === key);
   });
   updateWallSelBar();
-  renderWallTray();
+  refreshWallTraySel(); // v65: 選択のたびのトレイ全再構築 (最大200点) をやめ、sel 付け替えだけにする
   updateSampleBoxOpacity();
+}
+/* トレイの選択表示だけを付け替える (renderWallTray の sel 判定と同じ) */
+function refreshWallTraySel() {
+  var selEntry = wallSelected && wallSelected.kind === 'item' ? wallPlacedByUid(wallSelected.key) : null;
+  document.querySelectorAll('#wallTray .decor-chip').forEach(function (b) {
+    var on = (b.dataset.trayItem && selEntry && b.dataset.trayItem === selEntry.id) ||
+      (b.dataset.trayCat && wallSelected && wallSelected.kind === 'cat' && b.dataset.trayCat === wallSelected.key);
+    b.classList.toggle('sel', !!on);
+  });
 }
 function updateWallSelBar() {
   var bar = $('wallSelBar');
@@ -6998,6 +7018,7 @@ function renderWallTray() {
     var selEntry = wallSelected && wallSelected.kind === 'item' ? wallPlacedByUid(wallSelected.key) : null;
     var b = document.createElement('button');
     b.type = 'button';
+    b.dataset.trayItem = it.id;
     b.className = 'decor-chip' + (count ? ' placed' : '') +
       (selEntry && selEntry.id === it.id ? ' sel' : '');
     b.innerHTML = '<img src="wall-items/' + it.id + '.webp" alt="">' +
@@ -7022,6 +7043,7 @@ function renderWallTray() {
     var placed = !!wallCatPlacedEntry(c.id);
     var b = document.createElement('button');
     b.type = 'button';
+    b.dataset.trayCat = c.id;
     b.className = 'decor-chip' + (placed ? ' placed' : '') +
       (wallSelected && wallSelected.kind === 'cat' && wallSelected.key === c.id ? ' sel' : '');
     b.innerHTML = '<img src="cats/' + c.id + '.webp" alt="">' +
@@ -7885,14 +7907,26 @@ function loadDetailSource(r) {
  * して読む (wallPhotoUrl)。詳細モーダルは画質優先で原寸のまま
  * (loadDetailSource) — 切り分けは URL の選択だけで、切り抜きと
  * デコード待ちの手順は共通 (loadSquareSource) */
-function loadWallSource(r) {
+function loadWallSource(r, wantPx) {
   var size = Math.min(1080, imageSizeFor(r.pieces));
+  // 壁表示は実寸が小さいので、要求サイズに合わせて読み込み側も絞る
+  // (v65: 従来は表示 124px に対して最大 1080px の正方形 Canvas を
+  // 毎回作り直していた)
+  if (wantPx) size = Math.max(96, Math.min(size, Math.ceil(wantPx / 64) * 64));
   var url = wallPhotoUrl(entryForRecord(r), size);
   return loadSquareSource(r, url, size);
 }
+/* 正方形ソース Canvas のキャッシュ (v65): 額の写真はレコードごとに
+ * 不変なのに、壁の再描画のたびに全額分を再ロード+再デコードして
+ * いた。URL+サイズをキーに Promise ごと使い回す (消費側は読み取り
+ * 専用)。上限を超えたら古いものから捨てる */
+var squareSourceCache = new Map();
 function loadSquareSource(r, url, size) {
   if (!url) return Promise.resolve(makeFallbackCanvas(r.date));
-  return loadImgCorsFallback(url).then(function (img) {
+  var ck = url + '|' + size;
+  var hit = squareSourceCache.get(ck);
+  if (hit) return hit;
+  var p = loadImgCorsFallback(url).then(function (img) {
     var draw = function () {
       var side = Math.min(img.naturalWidth, img.naturalHeight);
       var cv = document.createElement('canvas');
@@ -7905,6 +7939,9 @@ function loadSquareSource(r, url, size) {
     if (img.decode) return img.decode().then(draw, draw);
     return draw();
   }, function () { return makeFallbackCanvas(r.date); });
+  squareSourceCache.set(ck, p);
+  if (squareSourceCache.size > 40) squareSourceCache.delete(squareSourceCache.keys().next().value);
+  return p;
 }
 /* 完成盤面用のピース輪郭パス (盤面座標)。buildPiecePath と同じ組み立てだが、
  * ゲームの state ではなく引数の edges / レイアウトから作る。 */
@@ -8508,8 +8545,20 @@ function wireControls() {
   $('wallPaperBtn').addEventListener('click', function () { openPaperPicker(); });
   $('wallShareBtn').addEventListener('click', function () { shareWallImage(); });
   $('paperPickerBack').addEventListener('click', function () { navBack(); });
-  // 画面リサイズで壁ステージの大きさが変わったら壁を描き直す
-  window.addEventListener('resize', function () { if (uiWall) renderWall(); });
+  // 画面リサイズで壁ステージの大きさが変わったら壁を描き直す。
+  // v65: URL バーの出入り等で resize が連打され、そのたび全再構築+
+  // 全写真再読込になっていた。デバウンスし、実寸が変わった時だけ描く
+  var wallResizeTimer = 0;
+  window.addEventListener('resize', function () {
+    if (!uiWall) return;
+    clearTimeout(wallResizeTimer);
+    wallResizeTimer = setTimeout(function () {
+      var st = $('wallStage');
+      if (!st || !uiWall) return;
+      if (st.clientWidth === lastWallStageW && st.clientHeight === lastWallStageH) return;
+      renderWall();
+    }, 180);
+  });
   // 壁カメラのジェスチャ: 空き場所のドラッグでパン、2本指でピンチズーム、
   // ホイールでもズーム。アイテム上の操作は attachWallDrag が担当する
   var wallPtrs = new Map();
