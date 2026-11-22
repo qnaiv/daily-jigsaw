@@ -645,3 +645,12 @@
 - 運搬: start ペイロードの `dev` で確定し、snapshot にも `devMode` を載せる (途中参加・再入室も白ピースで合流)。現像済み集合は塊構成から導出できるため同期対象にせず、snapshot 復元時に developRevealedFromClusters で作り直す (アニメなし)。合体時の現像アニメは mpOnDrop/mpOnGroupDrop が共有する mergeMotion 経由で全端末で自律的に起きる。
 - レースは各自の盤面にだけ効く (相手の進捗表示は塊ベースの分数のまま)。記録は dev:true が付き、XP の現像倍率 ×1.2 も MP でそのまま効く。
 - MP_LOGIC_VERSION 5 → 6: 旧端末が dev を無視すると色付きピースで遊べてしまう (静かな条件不一致) ため混在を弾く。v4 (ハンデ) と同じ判断。
+
+## v64 マルチの巻き戻り対策 (2026-11-22)
+実機報告「協力で動かしたピースが巻き戻る」を受け、巻き戻り経路を全数調査して5件を修正。根本原因はホストが確定イベントを取り消すことではなく、クライアント側の楽観表示と権威状態の reconciliation 不備だった。
+1. **seq 衝突 (mp.js)**: sequence() が適用後に lastSeq を代入していたため、適用中の再入採番 (完成 drop → complete) が同じ seq を掴み、ゲスト側で後に届いた drop 本体が「過去」として捨てられていた。採番を適用前に確定 (適用例外時は欠番になり、欠番バッファ+snapshot で回復する方が安全)。回帰テスト mp-test [21]。
+2. **却下時の巻き戻し (app.js)**: 単一スロット lastDropAnchor/lastGroupDropAnchors を廃し、送信時に mid → {anchors, 掴み位置, touch回数} を記録 (mpTrackDrop)。却下は mid で照合し、送信後に確定イベントで触られた塊は戻さない (mpRollbackTracked)。自分の drop 確定時に grabHome を確定位置へ更新し、消えた塊の復帰先を掃除。
+3. **再掴み中のエコー (app.js)**: 自分の drop/group-drop エコーが同じ塊の再掴み中に届いたら適用を保留し (deferredEvts)、離す直前に mpFlushDeferred で確定させる。
+4. **snapshot のドラッグ保護 (app.js)**: mpDoApplySnapshot がドラッグ中の塊の位置を保持し、差し替え後のオブジェクトへ掴み直す。塊が消えていたらドラッグを畳む。
+5. **ゴースト残像 (app.js)**: drop/group-drop/release の確定適用時に movesEph を消し、旧ドラッグ位置に最大1.5秒残っていた残像を解消。
+残課題 (別途): 色ソートのアニメーション競合、pendingGroupDrop の単一スロット喪失、pendingDrops の世代管理。

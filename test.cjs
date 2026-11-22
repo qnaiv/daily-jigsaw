@@ -1595,8 +1595,17 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v63'") !== -1, 'sw: VERSION は v63');
-  ok(appSB.indexOf("var APP_VERSION = 'v63'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v64'") !== -1, 'sw: VERSION は v64');
+  ok(appSB.indexOf("var APP_VERSION = 'v64'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  // マルチの巻き戻り対策 (v64): seq 採番の前倒し、却下の mid 照合、
+  // 再掴み中のエコー保留、snapshot のドラッグ保護、ゴースト残像の掃除
+  ok(fsB.readFileSync(pathB.join(__dirname, 'mp.js'), 'utf8').indexOf('lastSeq = seq;\n    if (typeof hooks.applyEvent') !== -1 &&
+     appSB.indexOf('function mpTrackDrop(') !== -1 && appSB.indexOf('function mpRollbackTracked(') !== -1 &&
+     appSB.indexOf('mp.dropRejects[rej.mid]') !== -1 &&
+     appSB.indexOf('function mpFlushDeferred(') !== -1 && appSB.indexOf('mp.deferredEvts.push({ kind: \'drop\', ev: ev })') !== -1 &&
+     appSB.indexOf('var dragKeep = null;') !== -1 && appSB.indexOf('var inFlightKeep = {};') !== -1 &&
+     appSB.indexOf('delete mp.movesEph[ev.from];') !== -1,
+     '巻き戻り対策: 採番前倒し/mid照合却下/エコー保留/snapshotドラッグ保護/残像掃除が配線されている');
   // Firefox Android でネイティブ select の選択ポップアップが操作でき
   // ない問題 (v62→v63): select 自体を廃止し、自前の選択シートで完結
   ok(htmlSB.indexOf('<select id="difficultySel"') === -1 && htmlSB.indexOf('<select id="playModeSel"') === -1 &&

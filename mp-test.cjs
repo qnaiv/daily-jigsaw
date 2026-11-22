@@ -1474,6 +1474,39 @@ function sessionGraceTests() {
   }).then(() => { restore(); }, err => { restore(); throw err; });
 }
 
+/* ================= 21. 適用中の再入採番で seq が衝突しない (v64) ==== */
+console.log('[21] seq 衝突 (完成 drop → complete の再入)');
+{
+  const rig = makeRig();
+  rig.hostEngine.hostControl({ t: 'start', stage: 1, pieces: 36 });
+  // ホスト本人の適用 (mpOnDrop) の中から complete が送られる状況を模す:
+  // 自分の drop の適用中にだけ、入れ子で complete を要求する
+  const seenSeqs = [];
+  const origRecv = rig.g1Engine.receiveFromHost;
+  rig.g1Engine.receiveFromHost = m => { if (m && m.t === 'ev') seenSeqs.push(m.seq + ':' + m.ev.t); origRecv(m); };
+  let nested = false;
+  const origHostApply = rig.hostGame.hooks.applyEvent;
+  rig.hostGame.hooks.applyEvent = (ev, meta) => {
+    origHostApply(ev, meta);
+    if (ev.t === 'drop' && meta && meta.from === 'host' && !nested) {
+      nested = true;
+      rig.hostEngine.request({ t: 'complete' });
+    }
+  };
+  const eH = grabOk(rig.hostEngine, 9);
+  ok(!!eH, 'seq衝突: ホストが grab 成功');
+  rig.hostEngine.request({ t: 'drop', cluster: 9, epoch: eH, x: 3, y: 3 });
+  ok(nested, 'seq衝突: 適用中に入れ子の complete が送られた');
+  const dropSeq = seenSeqs.find(s => s.endsWith(':drop'));
+  const compSeq = seenSeqs.find(s => s.endsWith(':complete'));
+  ok(!!dropSeq && !!compSeq && dropSeq !== compSeq,
+     'seq衝突: drop と complete が別 seq で配信された (旧実装では重複し片方が捨てられた)');
+  eq(rig.g1Engine.getWatermark(), rig.hostEngine.getWatermark(), 'seq衝突: ゲストの watermark がホストに追いついた');
+  eq(rig.g1Game.canonical(), rig.hostGame.canonical(), 'seq衝突: ゲストの盤面がホストと一致 (drop が消えていない)');
+  const h = allHashes(rig);
+  eq(h[1], h[0], 'seq衝突: ゲスト1の状態ハッシュがホストと一致');
+}
+
 MP.encodeManualCode({ v: 1, kind: 'offer', sdp: 'dummy-sdp' }).then(codeStr => {
   ok(/^[gr]\./.test(codeStr), '手動コードに接頭辞が付く');
   return MP.decodeManualCode(codeStr);

@@ -3177,7 +3177,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v63'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v64'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -8962,6 +8962,10 @@ var mp = {
   peers: [], verifyCode: null,
   myLeases: {},          // anchorId -> epoch (自分に付与されたリース)
   grabHome: {},          // anchorId -> {gx, gy} (掴む前の位置。却下時の復帰用)
+  dropRejects: {},       // mid -> {anchors, homes, touch} (却下時に正しい塊だけを戻すため v64)
+  anchorTouch: {},       // anchorId -> 確定イベントで触られた回数 (却下巻き戻しの鮮度判定 v64)
+  deferredEvts: [],      // 再掴み中に届いた自分の drop エコー (離すまで適用を保留 v64)
+  flushingDeferred: false,
   pendingGrabAnchor: null, lastDropAnchor: null,
   pendingDrops: {},      // epoch 未確定のまま離した drop {anchorId -> {x, y}} (複数溜まっても上書きしない)
   pendingRelease: {},    // anchorId -> true (epoch 未確定のまま離した tap)
@@ -9295,12 +9299,20 @@ function mpOnReject(rej) {
     if (rej.reason === 'leased') showToast('そのピースは相手が持っています');
     else if (rej.reason === 'not-your-turn') showToast('あなたの番ではありません');
   } else if (rej.evType === 'drop') {
-    var a2 = mp.lastDropAnchor;
-    mp.lastDropAnchor = null;
-    if (a2 != null) {
-      delete mp.myLeases[a2]; // 却下された drop のリースはホスト側で解放される。自分の記録も消す
-      var c2 = mpClusterByAnchor(a2), hh = mp.grabHome[a2];
-      if (c2 && hh) { c2.gx = hh.gx; c2.gy = hh.gy; draw(); }
+    // v64: mid で照合し、送信後に触られていない塊だけを戻す。
+    // 記録が無い場合 (旧経路の送信など) だけ従来の単一スロットへ
+    var rec = rej.mid != null ? mp.dropRejects[rej.mid] : null;
+    if (rec) {
+      delete mp.dropRejects[rej.mid];
+      mpRollbackTracked(rec);
+    } else {
+      var a2 = mp.lastDropAnchor;
+      mp.lastDropAnchor = null;
+      if (a2 != null) {
+        delete mp.myLeases[a2]; // 却下された drop のリースはホスト側で解放される。自分の記録も消す
+        var c2 = mpClusterByAnchor(a2), hh = mp.grabHome[a2];
+        if (c2 && hh) { c2.gx = hh.gx; c2.gy = hh.gy; draw(); }
+      }
     }
     showToast('置けませんでした');
   } else if (rej.evType === 'grab-group-req') {
@@ -9323,14 +9335,20 @@ function mpOnReject(rej) {
     if (rej.reason === 'leased') showToast('そのピースは相手が持っています');
     else if (rej.reason === 'not-your-turn') showToast('あなたの番ではありません');
   } else if (rej.evType === 'group-drop') {
-    var gdAnchors = mp.lastGroupDropAnchors || [];
-    mp.lastGroupDropAnchors = null;
-    gdAnchors.forEach(function (a) {
-      delete mp.myLeases[a]; // drop の却下と同じ掃除
-      var cl = mpClusterByAnchor(a), h = mp.grabHome[a];
-      if (cl && h) { cl.gx = h.gx; cl.gy = h.gy; }
-    });
-    draw();
+    var grec = rej.mid != null ? mp.dropRejects[rej.mid] : null;
+    if (grec) {
+      delete mp.dropRejects[rej.mid];
+      mpRollbackTracked(grec);
+    } else {
+      var gdAnchors = mp.lastGroupDropAnchors || [];
+      mp.lastGroupDropAnchors = null;
+      gdAnchors.forEach(function (a) {
+        delete mp.myLeases[a]; // drop の却下と同じ掃除
+        var cl = mpClusterByAnchor(a), h = mp.grabHome[a];
+        if (cl && h) { cl.gx = h.gx; cl.gy = h.gy; }
+      });
+      draw();
+    }
     showToast('置けませんでした');
   } else if (rej.evType === 'sort') {
     showToast('並べ替えを反映できませんでした');
@@ -9481,6 +9499,7 @@ function mpResetState() {
   mp.peers = []; mp.verifyCode = null; mp.contrib = {}; mp.myLeases = {};
   mp.pendingDrops = {}; mp.pendingRelease = {}; mp.pendingSnap = null; mp.queuedEvents = [];
   mp.pendingGroupGrab = null; mp.pendingGroupDrop = null; mp.lastGroupDropAnchors = null; mp.remoteGroups = {};
+  mp.dropRejects = {}; mp.anchorTouch = {}; mp.deferredEvts = []; mp.flushingDeferred = false;
   mp.cursors = {}; mp.movesEph = {}; mp.pins = []; mp.pinMode = false;
   mp.stage = null; mp.pieces = null; mp.basePieces = null; mp.piecesMap = null; mp.lobbyInfo = null;
   mpStopHostWaitCountdown();
@@ -10196,7 +10215,8 @@ function mpOnGrab(ev) {
     if (pd) {
       delete mp.pendingDrops[ev.cluster];
       mp.lastDropAnchor = ev.cluster;
-      mp.session.sendEvent({ t: 'drop', cluster: ev.cluster, x: pd.x, y: pd.y, epoch: ev.epoch });
+      var mid = mp.session.sendEvent({ t: 'drop', cluster: ev.cluster, x: pd.x, y: pd.y, epoch: ev.epoch });
+      mpTrackDrop(mid, [ev.cluster]);
     } else if (mp.pendingRelease[ev.cluster]) {
       delete mp.pendingRelease[ev.cluster];
       mp.session.sendEvent({ t: 'release', cluster: ev.cluster, epoch: ev.epoch });
@@ -10205,6 +10225,7 @@ function mpOnGrab(ev) {
   draw();
 }
 function mpOnRelease(ev) {
+  delete mp.movesEph[ev.from]; // 手を離したらゴースト残像も消す (v64)
   var mine = ev.from === mpMyId() || ev.by === mpMyId();
   if (mine) {
     delete mp.myLeases[ev.cluster];
@@ -10213,6 +10234,7 @@ function mpOnRelease(ev) {
       if (home) { drag.cluster.gx = home.gx; drag.cluster.gy = home.gy; }
       drag = null;
       stopEdgeScroll();
+      mpFlushDeferred(); // ドラッグが畳まれたので保留中のエコーも適用する (v64)
       showToast('長く持ちすぎたのでピースを置きました');
     }
   }
@@ -10223,7 +10245,54 @@ function mpLeaseBlocked(cl) {
   var lease = mp.session.engine.getLease(clusterAnchorId(cl));
   return !!lease && lease.holder !== mpMyId();
 }
+/* 却下時の巻き戻し管理 (v64): drop / group-drop の送信時に mid と
+ * 「掴み位置・送信時点の touch 回数」を記録し、却下が返ったら mid で
+ * 照合して、送信後に確定イベントで触られていない塊だけを戻す。
+ * (従来は単一スロットの lastDropAnchor だったため、連打すると別の塊が
+ * 巻き戻ったり、合体済みの塊が古い掴み位置へ跳んだりした) */
+function mpTouchAnchor(a) { if (a != null) mp.anchorTouch[a] = (mp.anchorTouch[a] || 0) + 1; }
+function mpTrackDrop(mid, anchors) {
+  if (mid == null) return;
+  var homes = {}, touch = {};
+  anchors.forEach(function (a) {
+    var h = mp.grabHome[a];
+    homes[a] = h ? { gx: h.gx, gy: h.gy } : null;
+    touch[a] = mp.anchorTouch[a] || 0;
+  });
+  mp.dropRejects[mid] = { anchors: anchors.slice(), homes: homes, touch: touch };
+}
+function mpRollbackTracked(rec) {
+  rec.anchors.forEach(function (a) {
+    delete mp.myLeases[a]; // 却下された drop のリースはホスト側で解放される
+    if ((mp.anchorTouch[a] || 0) !== rec.touch[a]) return; // 送信後に確定済み → 権威位置が正しい
+    var cl = mpClusterByAnchor(a), h = rec.homes[a];
+    if (cl && h) { cl.gx = h.gx; cl.gy = h.gy; }
+  });
+  draw();
+}
+/* 再掴み中に保留した自分のエコーを適用する (離す直前に呼ぶ) */
+function mpFlushDeferred() {
+  if (!mp.deferredEvts.length) return;
+  var list = mp.deferredEvts;
+  mp.deferredEvts = [];
+  mp.flushingDeferred = true;
+  try {
+    list.forEach(function (d) {
+      try {
+        if (d.kind === 'drop') mpOnDrop(d.ev);
+        else if (d.kind === 'group-drop') mpOnGroupDrop(d.ev);
+      } catch (e) { /* anchor 消滅などは snapshot 回復に任せる */ }
+    });
+  } finally { mp.flushingDeferred = false; }
+}
 function mpOnDrop(ev) {
+  // 自分の drop のエコーが、同じ塊を掴み直している間に届くと、掴んで
+  // いる塊が確定位置へ引き戻される。離すまで適用を保留する (v64)
+  if (!mp.flushingDeferred && ev.from === mpMyId() && drag && !drag.group &&
+      clusterAnchorId(drag.cluster) === ev.cluster) {
+    mp.deferredEvts.push({ kind: 'drop', ev: ev });
+    return;
+  }
   // 確定した drop で自分のリースは終わっている。myLeases に残すと、
   // 次に同じ塊を掴んだ時に古い epoch を「確定済み」と誤認して
   // group-drop の epoch 事故の温床になるので、エコーで消す
@@ -10257,6 +10326,20 @@ function mpOnDrop(ev) {
     mpAdvanceTurn();
     mpUpdateTurnUI();
   }
+  // 巻き戻し対策 (v64): 確定した drop が触った塊を記録し、自分の drop
+  // なら復帰先 (grabHome) を確定位置へ更新して、消えた塊の復帰先と
+  // 解決済みの却下記録を掃除する。相手のゴースト残像もここで消す
+  mpTouchAnchor(ev.cluster);
+  mpTouchAnchor(clusterAnchorId(res.cluster));
+  if (ev.from === mpMyId()) {
+    var ra = clusterAnchorId(res.cluster);
+    mp.grabHome[ra] = { gx: res.cluster.gx, gy: res.cluster.gy };
+    Object.keys(mp.grabHome).forEach(function (k) { if (!mpClusterByAnchor(+k)) delete mp.grabHome[k]; });
+    Object.keys(mp.dropRejects).forEach(function (m) {
+      if (mp.dropRejects[m].anchors.indexOf(ev.cluster) >= 0) delete mp.dropRejects[m];
+    });
+  }
+  delete mp.movesEph[ev.from];
   mpCheckComplete();
 }
 /* grab-group の適用: 自分宛てなら epoch を取り込み、エコー前に離して
@@ -10304,6 +10387,15 @@ function mpOnGrabGroup(ev) {
  * 貢献度は単一 drop と同じ規則をイベント全体に適用 (消えた塊の数)。
  * ターン制では一括移動全体で1手 (合体があれば手番が進む) */
 function mpOnGroupDrop(ev) {
+  // drop と同じ理由で、自分の group-drop エコーが塊群の再掴み中に
+  // 届いたら離すまで保留する (v64)
+  if (!mp.flushingDeferred && ev.from === mpMyId() && drag) {
+    var myAnchors = drag.group
+      ? drag.group.map(function (g) { return clusterAnchorId(g.cluster); })
+      : [clusterAnchorId(drag.cluster)];
+    var hit = (ev.items || []).some(function (it) { return myAnchors.indexOf(it.cluster) >= 0; });
+    if (hit) { mp.deferredEvts.push({ kind: 'group-drop', ev: ev }); return; }
+  }
   var n = state.n;
   var items = ev.items || [];
   if (ev.from === mpMyId()) items.forEach(function (it) { delete mp.myLeases[it.cluster]; }); // drop と同じ掃除
@@ -10364,6 +10456,17 @@ function mpOnGroupDrop(ev) {
     mpAdvanceTurn();
     mpUpdateTurnUI();
   }
+  // 巻き戻し対策 (v64): drop と同じく touch 記録とゴースト残像の掃除
+  items.forEach(function (it) { mpTouchAnchor(it.cluster); });
+  if (res && res.cluster) mpTouchAnchor(clusterAnchorId(res.cluster));
+  if (ev.from === mpMyId()) {
+    Object.keys(mp.dropRejects).forEach(function (m) {
+      var rec = mp.dropRejects[m];
+      if (rec.anchors.some(function (a) { return itemByAnchor[a]; })) delete mp.dropRejects[m];
+    });
+    Object.keys(mp.grabHome).forEach(function (k) { if (!mpClusterByAnchor(+k)) delete mp.grabHome[k]; });
+  }
+  delete mp.movesEph[ev.from];
   mpCheckComplete();
 }
 
@@ -10643,8 +10746,61 @@ function mpDoApplySnapshot(snap) {
     mpCheckRaceDone();
     return;
   }
+  // ドラッグ中の塊は snapshot で巻き戻さない (v64): 差し替え前に位置を
+  // 控え、差し替え後のオブジェクトへ掴み直す。掴んでいた塊が snapshot
+  // に無ければ (合体で消えた等) ドラッグ自体を畳む
+  var dragKeep = null;
+  if (drag && drag.cluster) {
+    dragKeep = {
+      anchor: clusterAnchorId(drag.cluster), gx: drag.cluster.gx, gy: drag.cluster.gy,
+      group: drag.group ? drag.group.map(function (g) {
+        return { anchor: clusterAnchorId(g.cluster), gx: g.cluster.gx, gy: g.cluster.gy };
+      }) : null
+    };
+  }
+  // 置いた直後 (自分の drop がまだ未確定) の塊も snapshot で戻さない
+  // (v64): 相手の操作をきっかけに盤面同期が走ると、確定前の配置が
+  // 同期元に無くて巻き戻って見える。エコーが届けば確定位置に収束し、
+  // 却下されれば却下側の処理で戻すので、ここでは位置を保持する
+  var inFlightKeep = {};
+  Object.keys(mp.dropRejects).forEach(function (m) {
+    mp.dropRejects[m].anchors.forEach(function (a) {
+      var c = mpClusterByAnchor(a);
+      if (c) inFlightKeep[a] = { gx: c.gx, gy: c.gy };
+    });
+  });
+  Object.keys(mp.pendingDrops).forEach(function (a) {
+    var c = mpClusterByAnchor(+a);
+    if (c) inFlightKeep[a] = { gx: c.gx, gy: c.gy };
+  });
   state.clusters = (snap.clusters || []).map(function (c) {
     return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy };
+  });
+  if (dragKeep) {
+    var keepMain = mpClusterByAnchor(dragKeep.anchor);
+    if (keepMain) {
+      keepMain.gx = dragKeep.gx;
+      keepMain.gy = dragKeep.gy;
+      drag.cluster = keepMain;
+      if (dragKeep.group && drag.group) {
+        var keepByAnchor = {};
+        dragKeep.group.forEach(function (k) { keepByAnchor[k.anchor] = k; });
+        drag.group.forEach(function (g) {
+          var rec = keepByAnchor[clusterAnchorId(g.cluster)];
+          var nc = rec && mpClusterByAnchor(rec.anchor);
+          if (nc) { nc.gx = rec.gx; nc.gy = rec.gy; g.cluster = nc; }
+        });
+      }
+    } else {
+      drag = null;
+      stopEdgeScroll();
+      mpFlushDeferred();
+    }
+  }
+  Object.keys(inFlightKeep).forEach(function (a) {
+    if (dragKeep && +a === dragKeep.anchor) return; // ドラッグ側で保持済み
+    var nc = mpClusterByAnchor(+a);
+    if (nc) { nc.gx = inFlightKeep[a].gx; nc.gy = inFlightKeep[a].gy; }
   });
   if (state.devMode) {
     // 現像マルチ: 現像済みは塊構成から導出できるので、復元した塊から
@@ -10676,6 +10832,7 @@ function mpDoApplySnapshot(snap) {
 /* settleDrag の協力分岐: 見た目はローカルで追随済み。確定は seq イベントで */
 function mpSettleDrag() {
   if (!drag) return;
+  mpFlushDeferred(); // 掴み直しの間に保留した自分のエコーを先に確定させる (v64)
   if (drag.group && drag.group.length > 1) { mpSettleGroupDrag(); return; }
   var cl = drag.cluster;
   var wasMoved = drag.moved;
@@ -10686,7 +10843,8 @@ function mpSettleDrag() {
   var epoch = mp.myLeases[anchor];
   if (epoch != null) {
     mp.lastDropAnchor = anchor;
-    mp.session.sendEvent({ t: 'drop', cluster: anchor, x: cl.gx, y: cl.gy, epoch: epoch });
+    var mid = mp.session.sendEvent({ t: 'drop', cluster: anchor, x: cl.gx, y: cl.gy, epoch: epoch });
+    mpTrackDrop(mid, [anchor]);
   } else {
     mp.pendingDrops[anchor] = { x: cl.gx, y: cl.gy };
   }
@@ -10695,6 +10853,7 @@ function mpSettleDrag() {
 /* 範囲選択の一括確定 (#6): 確定は group-drop イベントで全端末が同じ
  * 計算をする。grab-group のエコー前に指を離した場合はエコー到着時に送る */
 function mpSettleGroupDrag() {
+  mpFlushDeferred(); // mpSettleDrag 経由でなく直接呼ばれても保留分を確定させる (v64)
   var group = drag.group;
   var wasMoved = drag.moved;
   var leaderAnchor = clusterAnchorId(drag.cluster);
@@ -10719,7 +10878,8 @@ function mpSendGroupDrop(leader, items, order) {
   var epochs = {};
   items.forEach(function (it) { epochs[it.cluster] = mp.myLeases[it.cluster]; });
   mp.lastGroupDropAnchors = items.map(function (it) { return it.cluster; });
-  mp.session.sendEvent({ t: 'group-drop', leader: leader, items: items, order: order, epochs: epochs });
+  var mid = mp.session.sendEvent({ t: 'group-drop', leader: leader, items: items, order: order, epochs: epochs });
+  mpTrackDrop(mid, mp.lastGroupDropAnchors);
 }
 function mpReleaseMyLease(anchor) {
   var epoch = mp.myLeases[anchor];

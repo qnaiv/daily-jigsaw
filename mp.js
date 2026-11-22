@@ -678,16 +678,20 @@ function createEngine(opts) {
     var out = normalizeEvent(fromId, ev);
     var seq = lastSeq + 1;
     var msg = { t: 'ev', seq: seq, from: fromId, ev: out };
-    // 自端末で適用できないイベントは確定しない (seq も消費しない)。
+    // 採番は適用の前に確定する (v64)。適用中 (完成 drop → complete 等)
+    // に再入した採番が同じ seq を掴むと、ゲスト側で後に届いた方が
+    // 「過去」として黙って捨てられ、盤面が巻き戻って見える事故になる。
+    // 適用が例外になった場合この seq は欠番になるが、ゲスト側は欠番
+    // バッファ + snapshot で回復できる (重複より欠番の方が安全)。
     // ep はセッション層が送信先ごとに捺す (接続 epoch はプレイヤー単位)。
     // 適用中であることは applyDepth で数える (適用の中から送られた
     // イベントの却下に伴うリース解放を、採番の外へ逃がす判定に使う)
+    lastSeq = seq;
     if (typeof hooks.applyEvent === 'function') {
       applyDepth++;
       try { hooks.applyEvent(out, { seq: seq, from: fromId }); }
       finally { applyDepth--; }
     }
-    lastSeq = seq;
     if (fromId === selfId && players[fromId]) players[fromId].lastSeen = now();
     leaseMirrorApply(out);
     if (STATE_CHANGING[out.t]) {
