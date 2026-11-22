@@ -267,6 +267,16 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   const m1 = { pieces: [0], surface: 'mat', gx: 0, gy: 0 };
   const m2 = { pieces: [1], surface: 'mat', gx: 1, gy: 0 };
   ok(L.absorbMerges([m1], m2, n).merged === true, 'マット: 隣ピースを正しい相対位置に置くと合体する');
+  // 塊ロック (v67): 合体するとロックは合体後の塊へ引き継がれる
+  const lkA = { pieces: [0, 1], surface: 'desk', gx: 3, gy: 3, locked: true };
+  const lkB = { pieces: [10, 11], surface: 'desk', gx: 3, gy: 4 };
+  ok(L.absorbMerges([lkA], lkB, n).cluster.locked === true, 'ロック: ロック中の塊に合体させると合体後の塊もロックされる');
+  const lkC = { pieces: [0, 1], surface: 'desk', gx: 3, gy: 3 };
+  const lkD = { pieces: [10, 11], surface: 'desk', gx: 3, gy: 4, locked: true };
+  ok(L.absorbMerges([lkC], lkD, n).cluster.locked === true, 'ロック: ロック中の塊を合体させても合体後の塊はロックされる');
+  const lkE = { pieces: [0, 1], surface: 'desk', gx: 3, gy: 3 };
+  const lkF = { pieces: [10, 11], surface: 'desk', gx: 3, gy: 4 };
+  ok(!L.absorbMerges([lkE], lkF, n).cluster.locked, 'ロック: どちらもロックでなければ合体後もロックされない');
   // 合体しなかった場合はグリッド吸着だけが適用される
   const lone = { pieces: [7], surface: 'desk', gx: 2.4, gy: 6.6 };
   const res6 = L.absorbMerges([], lone, n);
@@ -1595,8 +1605,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v66'") !== -1, 'sw: VERSION は v64');
-  ok(appSB.indexOf("var APP_VERSION = 'v66'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v67'") !== -1, 'sw: VERSION は v64');
+  ok(appSB.indexOf("var APP_VERSION = 'v67'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
   // マルチの巻き戻り対策 (v64): seq 採番の前倒し、却下の mid 照合、
   // 再掴み中のエコー保留、snapshot のドラッグ保護、ゴースト残像の掃除
   ok(fsB.readFileSync(pathB.join(__dirname, 'mp.js'), 'utf8').indexOf('lastSeq = seq;\n    if (typeof hooks.applyEvent') !== -1 &&
@@ -1608,6 +1618,15 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appSB.indexOf('squareSourceCache') !== -1 && appSB.indexOf('loadWallSource(rec, px)') !== -1 &&
      appSB.indexOf('refreshWallTraySel();') !== -1 && appSB.indexOf('lastWallStageW') !== -1,
      '巻き戻り対策: 採番前倒し/mid照合却下/エコー保留/snapshotドラッグ保護/残像掃除が配線されている');
+  // 塊ロック (v67): ボタン層の配線、掴み/持ち運び/グループのガード、
+  // セーブへの保存と snapshot での付け直し
+  ok(htmlSB.indexOf('id="lockLayer"') !== -1 &&
+     appSB.indexOf('function updateLockButtons(') !== -1 && appSB.indexOf('updateLockButtons(v);') !== -1 &&
+     appSB.indexOf('if (hit && hit.cluster.locked)') !== -1 && appSB.indexOf('shakeLockBadge(hitC.cluster)') !== -1 &&
+     appSB.indexOf('return !c.locked; }).map(function (c) {') !== -1 &&
+     appSB.indexOf('if (c.locked) o.locked = true;') !== -1 && appSB.indexOf('lockedPiecesKeep') !== -1 &&
+     appSB.indexOf('lockedAcc') !== -1 && appSB.indexOf('locked: cl.locked') !== -1,
+     '塊ロック: ボタン層/掴みガード/グループ除外/保存/合体引き継ぎ/snapshot付け直しが配線されている');
   // Firefox Android でネイティブ select の選択ポップアップが操作でき
   // ない問題 (v62→v63): select 自体を廃止し、自前の選択シートで完結
   ok(htmlSB.indexOf('<select id="difficultySel"') === -1 && htmlSB.indexOf('<select id="playModeSel"') === -1 &&

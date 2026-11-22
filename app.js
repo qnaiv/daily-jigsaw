@@ -513,6 +513,7 @@ function absorbMerges(others, moving, n, opts) {
   var pool = others.slice();
   var cur = { pieces: moving.pieces.slice(), surface: moving.surface, gx: moving.gx, gy: moving.gy };
   var merged = false;
+  var lockedAcc = !!moving.locked; // 塊ロック (v67): 合体したらロックは合体後の塊へ引き継ぐ
   function tryOnce(exactOnly) {
     var snap = findRelativeSnap(cur, pool, n);
     if (!snap) return false;
@@ -525,6 +526,7 @@ function absorbMerges(others, moving, n, opts) {
     var ap = posOther.get(anchorId) || posTrial.get(anchorId);
     cur = { pieces: pieces, surface: cur.surface, gx: ap.gx, gy: ap.gy };
     pool.splice(pool.indexOf(snap.other), 1);
+    if (snap.other.locked) lockedAcc = true;
     merged = true;
     return true;
   }
@@ -533,6 +535,7 @@ function absorbMerges(others, moving, n, opts) {
     if (!noSnap) { cur.gx = snapToGrid(cur.gx); cur.gy = snapToGrid(cur.gy); }
     while (tryOnce(true)) { /* 吸着後 (noSnap 時は現在位置) で正しい相対位置なら確実合体 */ }
   }
+  if (lockedAcc) cur.locked = true;
   return { clusters: pool.concat([cur]), cluster: cur, merged: merged };
 }
 
@@ -549,7 +552,7 @@ function applyClusterDrop(clusters, cl, x, y, n, isLeased, opts) {
     if (isLeased && isLeased(c)) excluded.push(c);
     else others.push(c);
   });
-  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: x, gy: y }, n, opts);
+  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: x, gy: y, locked: cl.locked }, n, opts);
   return { clusters: res.clusters.concat(excluded), cluster: res.cluster, merged: res.merged };
 }
 
@@ -763,7 +766,9 @@ function normalizeClustersToRect(clusters, n, rect) {
   return clusters.map(function (cl) {
     var c = clampClusterToRect(cl, n, rect);
     if (c.gx === cl.gx && c.gy === cl.gy) return cl;
-    return { pieces: cl.pieces, surface: cl.surface, gx: c.gx, gy: c.gy };
+    var o = { pieces: cl.pieces, surface: cl.surface, gx: c.gx, gy: c.gy };
+    if (cl.locked) o.locked = true; // 塊ロック (v67) を正規化の作り直しで落とさない
+    return o;
   });
 }
 /* 複数の塊の和集合が rect に収まる平行移動量 (グループドラッグ/運搬用) */
@@ -3183,7 +3188,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v66'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v67'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -3440,7 +3445,7 @@ function newGameState(pool) {
     opening: false,
     // 読み込み時に机の外へ出てしまったピースを内側へ救済する (机の有限化)。
     // 範囲内のセーブは正規化が冪等なので1ピクセルも動かない
-    clusters: gameStarted ? normalizeClustersToRect(prog.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy }; }), Math.round(Math.sqrt(difficulty)), deskBounds(difficulty)) : [],
+    clusters: gameStarted ? normalizeClustersToRect(prog.clusters.map(function (c) { var o = { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy }; if (c.locked) o.locked = true; return o; }), Math.round(Math.sqrt(difficulty)), deskBounds(difficulty)) : [],
     elapsedBase: prog.elapsedSec || 0,
     moves: prog.moves || 0,
     previewViewed: !!prog.previewViewed,
@@ -3463,7 +3468,7 @@ function persistProgress() {
   if (mpInRoom()) return; // 協力プレイはソロの進行中セーブと分離する (MULTIPLAYER_DESIGN §5)
   normalizeClustersInDesk(); // 保存は必ず机の中の配置だけにする (机の有限化の最終担保)
   var prog = progressFor(playDate, difficulty);
-  prog.clusters = state.clusters.map(function (c) { return { pieces: c.pieces.slice(), surface: c.surface, gx: c.gx, gy: c.gy }; });
+  prog.clusters = state.clusters.map(function (c) { var o = { pieces: c.pieces.slice(), surface: c.surface, gx: c.gx, gy: c.gy }; if (c.locked) o.locked = true; return o; });
   prog.elapsedSec = currentElapsed();
   prog.moves = state.moves;
   prog.previewViewed = state.previewViewed;
@@ -4007,6 +4012,73 @@ function requestDraw() {
   requestAnimationFrame(function () { drawQueued = false; draw(); });
 }
 
+/* ---------- 塊ロック (v67) ----------
+ * 大きな塊を間違えて動かすストレス対策。2ピース以上の塊の右上に
+ * ロックボタンを常時出し、タップで施錠/解除する。ロック中の塊は
+ * 掴めない (持ち運び・範囲選択のグループにも混ざらない) が、他の
+ * 塊をくっつけることはできる (合体後の塊にロックは引き継がれる)。
+ * ロックはクラスタの locked フラグで持ち、ソロは進行セーブにも残る。
+ * マルチではローカル専用 (自分の誤操作防止。相手は動かせる) で、
+ * snapshot の差し替えでも消えないよう mpDoApplySnapshot で付け直す */
+var LOCK_SVG_OPEN = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9.5" rx="2" fill="#fff"/><path d="M8.5 10.5V7.8a3.6 3.6 0 0 1 7-.9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15.2" r="1.8" fill="rgba(43,32,18,.8)"/></svg>';
+var LOCK_SVG_SHUT = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9.5" rx="2" fill="#3a2c12"/><path d="M8.5 10.5V7.8a3.6 3.6 0 0 1 7.2 0v2.7" fill="none" stroke="#3a2c12" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15.2" r="1.8" fill="#e9cf8f"/></svg>';
+var lockBtns = new Map(); // anchor -> button
+var lockShakeAt = {}; // anchor -> 揺らし開始時刻
+function shakeLockBadge(cl) {
+  lockShakeAt[clusterAnchorId(cl)] = Date.now();
+  updateLockButtons(view());
+}
+function makeLockBtn(anchor) {
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'lock-btn';
+  btn.setAttribute('aria-label', '塊をロック/解除');
+  btn.addEventListener('pointerdown', function (ev) {
+    ev.stopPropagation();
+    var cl = null;
+    if (state) state.clusters.forEach(function (c) { if (clusterAnchorId(c) === anchor) cl = c; });
+    if (!cl) return;
+    cl.locked = !cl.locked;
+    if (cl.locked && selection.has(cl)) selection.delete(cl);
+    persistProgress(); // マルチでは無動作 (ソロのセーブにだけ残る)。音より先に保存する
+    if (seReady()) seTone(cl.locked ? [540, 430] : [400, 320], 0.06, 0.18);
+    updateLockButtons(view());
+    draw();
+  });
+  return btn;
+}
+function updateLockButtons(v) {
+  var layer = $('lockLayer');
+  if (!layer) return;
+  if (!state || state.phase !== 'play' || state.cleared || !state.clusters) {
+    if (lockBtns.size) { layer.innerHTML = ''; lockBtns.clear(); }
+    return;
+  }
+  var seen = new Set();
+  state.clusters.forEach(function (cl) {
+    if (cl.pieces.length < 2) return;
+    if (drag && (drag.cluster === cl || (drag.group && drag.group.some(function (g) { return g.cluster === cl; })))) return;
+    if (carry && carry.cluster === cl) return;
+    var a = clusterAnchorId(cl);
+    seen.add(a);
+    var btn = lockBtns.get(a);
+    if (!btn) { btn = makeLockBtn(a); lockBtns.set(a, btn); layer.appendChild(btn); }
+    var box = clusterWorldBox(cl);
+    btn.style.left = (box.x1 * v.scale + v.tx - 19) + 'px';
+    btn.style.top = (box.y0 * v.scale + v.ty - 19) + 'px';
+    if (btn._locked !== !!cl.locked) {
+      btn._locked = !!cl.locked;
+      btn.classList.toggle('on', !!cl.locked);
+      btn.innerHTML = cl.locked ? LOCK_SVG_SHUT : LOCK_SVG_OPEN;
+    }
+    var sh = lockShakeAt[a];
+    btn.classList.toggle('shake', !!sh && Date.now() - sh < 320);
+  });
+  lockBtns.forEach(function (btn, a) {
+    if (!seen.has(a)) { btn.remove(); lockBtns.delete(a); }
+  });
+}
+
 /* 机の境界の見える化: 可動範囲 (deskBounds) の外側を無彩色の半透明
  * ベールで落とし、境界に細い明線を引く。「見えない壁」で止められる
  * 感覚を無くすため (ユーザー指示 2026-11-10)。色味は付けない
@@ -4127,6 +4199,7 @@ function draw() {
     sctx.lineWidth = 1.5;
     sctx.strokeRect(rx, ry, rw, rh);
   }
+  updateLockButtons(v); // 塊ロックのボタン位置をカメラに追随させる (v67)
   mpDrawOverlays(); // 協力プレイの重ね描き (相手カーソル/保持枠/ゴースト/ピン)。ソロでは無動作
 }
 /* ---------- ミニマップ (机でカメラを動かしている間だけ表示) ----------
@@ -4776,7 +4849,8 @@ stage.addEventListener('pointerdown', function (ev) {
     }
     if (hitC) {
       dropCarry(); // 運んでいたものを置いて、タップした塊を持ち上げる
-      beginCarryForCluster(hitC, p);
+      if (hitC.cluster.locked) shakeLockBadge(hitC.cluster); // ロック中の塊は持ち上げない (v67)
+      else beginCarryForCluster(hitC, p);
       return;
     }
     // 空き地: タップなら置く、10px 超動いたらパン、長押しでは何もしない
@@ -4790,6 +4864,10 @@ stage.addEventListener('pointerdown', function (ev) {
   if (hit && mpInRoom() && mpLeaseBlocked(hit.cluster)) hit = null; // 協力: 他人のリース中の塊は掴めない (§3.5)。吸着は候補から外してあるので、ここに来るのは精密ヒット分
   if (hit && mpInRoom() && mp.mode === 'turn' && mpTurnPlayerId() !== mpMyId()) {
     showToast(mpPlayerName(mpTurnPlayerId()) + 'さんの番です'); // ターン制: 手番のプレイヤーだけが掴める
+    hit = null;
+  }
+  if (hit && hit.cluster.locked) {
+    shakeLockBadge(hit.cluster); // ロック中の塊は掴めない (v67)。フィードバックにバッジを揺らす
     hit = null;
   }
   if (hit) {
@@ -4811,9 +4889,11 @@ stage.addEventListener('pointerdown', function (ev) {
     if (inSelection && selection.size > 1) {
       // 範囲選択のグループドラッグ: 選択全塊の相対オフセットを掴んだ塊基準で保持する
       // (協力/ターン制でも有効。確定は grab-group / group-drop の seq 経路、#6)
-      drag.group = Array.from(selection).map(function (c) {
+      // ロック中の塊はグループに混ぜない (置いていく) (v67)
+      drag.group = Array.from(selection).filter(function (c) { return !c.locked; }).map(function (c) {
         return { cluster: c, offX: c.gx - hit.cluster.gx, offY: c.gy - hit.cluster.gy };
       });
+      if (drag.group.length < 2) drag.group = null;
     }
     seGrab(); // 掴んだ音 (紙の「サッ」)
     liftStartAt = Date.now(); kickFxLoop(); // 持ち上げ演出 (影と浮き) の開始 (v53)
@@ -4977,7 +5057,7 @@ function settleDrag() {
   if (group && group.length > 1) { settleGroupDrag(cl, group); return; }
   // 合体処理 (相対スナップ→グリッド吸着→吸着後に正しい相対位置なら確実に合体、まで一括)
   var others = state.clusters.filter(function (c) { return c !== cl; });
-  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: cl.gx, gy: cl.gy }, state.n);
+  var res = absorbMerges(others, { pieces: cl.pieces, surface: cl.surface, gx: cl.gx, gy: cl.gy, locked: cl.locked }, state.n);
   state.clusters = res.clusters;
   if (res.merged) { mergeFeedback(res.cluster, cl.pieces, cl.gx, cl.gy); seMerge(); } // 合体の吸い付き + 音階スナップ音
   else dropSettle(res.cluster); // 合体しなかった置きは小さく沈む
@@ -4995,7 +5075,7 @@ function settleGroupDrag(leader, group) {
   var before = piecePositions([leader], n).get(anchorId);
   var res = absorbMerges(
     state.clusters.filter(function (c) { return !gset.has(c); }),
-    { pieces: leader.pieces, surface: leader.surface, gx: leader.gx, gy: leader.gy }, n);
+    { pieces: leader.pieces, surface: leader.surface, gx: leader.gx, gy: leader.gy, locked: leader.locked }, n);
   var after = piecePositions([res.cluster], n).get(anchorId);
   var dx = after.gx - before.gx, dy = after.gy - before.gy;
   var flash = res.merged ? res.cluster.pieces.slice() : null;
@@ -5008,7 +5088,7 @@ function settleGroupDrag(leader, group) {
     if (all.indexOf(f) < 0) continue; // 既に別の塊へ合体済み
     var r2 = absorbMerges(
       all.filter(function (c) { return c !== f; }),
-      { pieces: f.pieces, surface: f.surface, gx: f.gx, gy: f.gy }, n, { noSnap: true });
+      { pieces: f.pieces, surface: f.surface, gx: f.gx, gy: f.gy, locked: f.locked }, n, { noSnap: true });
     all = r2.clusters;
     if (r2.merged) { flash = (flash || []).concat(r2.cluster.pieces); followerMotions.push({ cluster: r2.cluster, pieces: f.pieces, fx: f.gx, fy: f.gy }); }
   }
@@ -10817,6 +10897,12 @@ function mpDoApplySnapshot(snap) {
       }) : null
     };
   }
+  // 塊ロック (v67) はローカル専用 (snapshot には載らない) なので、
+  // 差し替えで消えないよう、ロック中ピースの集合を退避して付け直す
+  var lockedPiecesKeep = new Set();
+  state.clusters.forEach(function (c) {
+    if (c.locked) c.pieces.forEach(function (id) { lockedPiecesKeep.add(id); });
+  });
   // 置いた直後 (自分の drop がまだ未確定) の塊も snapshot で戻さない
   // (v64): 相手の操作をきっかけに盤面同期が走ると、確定前の配置が
   // 同期元に無くて巻き戻って見える。エコーが届けば確定位置に収束し、
@@ -10861,6 +10947,11 @@ function mpDoApplySnapshot(snap) {
     var nc = mpClusterByAnchor(+a);
     if (nc) { nc.gx = inFlightKeep[a].gx; nc.gy = inFlightKeep[a].gy; }
   });
+  if (lockedPiecesKeep.size) {
+    state.clusters.forEach(function (c) {
+      if (c.pieces.some(function (id) { return lockedPiecesKeep.has(id); })) c.locked = true;
+    });
+  }
   if (state.devMode) {
     // 現像マルチ: 現像済みは塊構成から導出できるので、復元した塊から
     // 作り直す (アニメーションなしで即表示)
