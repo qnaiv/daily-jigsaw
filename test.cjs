@@ -1605,8 +1605,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v68'") !== -1, 'sw: VERSION は v64');
-  ok(appSB.indexOf("var APP_VERSION = 'v68'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v69'") !== -1, 'sw: VERSION は v64');
+  ok(appSB.indexOf("var APP_VERSION = 'v69'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
   // マルチの巻き戻り対策 (v64): seq 採番の前倒し、却下の mid 照合、
   // 再掴み中のエコー保留、snapshot のドラッグ保護、ゴースト残像の掃除
   ok(fsB.readFileSync(pathB.join(__dirname, 'mp.js'), 'utf8').indexOf('lastSeq = seq;\n    if (typeof hooks.applyEvent') !== -1 &&
@@ -1622,7 +1622,9 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   // セーブへの保存と snapshot での付け直し
   ok(htmlSB.indexOf('id="lockLayer"') !== -1 &&
      appSB.indexOf('function updateLockButtons(') !== -1 && appSB.indexOf('updateLockButtons(v);') !== -1 &&
-     appSB.indexOf('if (hit && hit.cluster.locked)') !== -1 && appSB.indexOf('shakeLockBadge(hitC.cluster)') !== -1 &&
+     appSB.indexOf('if (hit && hit.cluster.locked)') !== -1 && appSB.indexOf('armLockPressForLocked(hit.cluster') !== -1 &&
+     appSB.indexOf('armLockPressForDrag(hit.cluster') !== -1 && appSB.indexOf('ロック中の塊: ピース輪郭に真鍮色の細い縁取り') !== -1 &&
+     htmlSB.indexOf('id="lockRing"') !== -1 &&
      appSB.indexOf('return !c.locked; }).map(function (c) {') !== -1 &&
      appSB.indexOf('if (c.locked) o.locked = true;') !== -1 && appSB.indexOf('function mpOnLock(') !== -1 &&
      appSB.indexOf('lockedAcc') !== -1 && appSB.indexOf('locked: cl.locked') !== -1,

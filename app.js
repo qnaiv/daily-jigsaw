@@ -3188,7 +3188,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v68'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v69'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -4012,44 +4012,95 @@ function requestDraw() {
   requestAnimationFrame(function () { drawQueued = false; draw(); });
 }
 
-/* ---------- 塊ロック (v67) ----------
- * 大きな塊を間違えて動かすストレス対策。2ピース以上の塊の右上に
- * ロックボタンを常時出し、タップで施錠/解除する。ロック中の塊は
- * 掴めない (持ち運び・範囲選択のグループにも混ざらない) が、他の
- * 塊をくっつけることはできる (合体後の塊にロックは引き継がれる)。
+/* ---------- 塊ロック (v67–v69) ----------
+ * 大きな塊を間違えて動かすストレス対策。操作は「塊を長押し →
+ * ロックアイコンが出る → アイコンをタップ」で、施錠・解除とも
+ * 同じ流れ (ユーザーの指定)。ロック中であることは常時アイコン
+ * ではなく、塊のピース輪郭への真鍮色の細い縁取りで示す (draw 内)。
+ * ロック中の塊は掴めない (持ち運び・範囲選択のグループにも混ざ
+ * らない) が、他の塊をくっつけることはできる (合体後の塊に
+ * ロックは引き継がれる)。
  * ロックはクラスタの locked フラグで持ち、ソロは進行セーブにも残る。
  * マルチ (協力/ターン) では共有状態 (v68): lock/unlock イベントで
  * 全端末に行き渡り、ロック中の塊は誰も掴めない (ホストも検証する)。
  * レースは盤面が各自ローカルなので端末内だけのロックになる */
-var LOCK_SVG_OPEN = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9.5" rx="2" fill="#fff"/><path d="M8.5 10.5V7.8a3.6 3.6 0 0 1 7-.9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15.2" r="1.8" fill="rgba(43,32,18,.8)"/></svg>';
-var LOCK_SVG_SHUT = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9.5" rx="2" fill="#3a2c12"/><path d="M8.5 10.5V7.8a3.6 3.6 0 0 1 7.2 0v2.7" fill="none" stroke="#3a2c12" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15.2" r="1.8" fill="#e9cf8f"/></svg>';
-var lockBtns = new Map(); // anchor -> button
-var lockShakeAt = {}; // anchor -> 揺らし開始時刻
-function shakeLockBadge(cl) {
-  lockShakeAt[clusterAnchorId(cl)] = Date.now();
-  updateLockButtons(view());
+var LOCK_SVG_OPEN = '<svg viewBox="0 0 24 24" width="27" height="27" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9.5" rx="2" fill="#fff"/><path d="M8.5 10.5V7.8a3.6 3.6 0 0 1 7-.9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15.2" r="1.8" fill="#33523f"/></svg>';
+var lockCandidate = null; // { anchor } 長押しでアイコンが出ている対象
+var lockBtnEl = null;
+var lockPressTimer = null;
+var lockPressInfo = null; // { cluster, gx, gy, sx, sy }
+function clearLockPress() {
+  if (lockPressTimer) { clearTimeout(lockPressTimer); lockPressTimer = null; }
+  lockPressInfo = null;
 }
-function makeLockBtn(anchor) {
+function showLockCandidate(cl) {
+  lockCandidate = { anchor: clusterAnchorId(cl) };
+  var a = lockCandidate.anchor;
+  setTimeout(function () {
+    if (lockCandidate && lockCandidate.anchor === a) { lockCandidate = null; draw(); }
+  }, 2600); // タップされなければ少し置いて消える
+  draw();
+}
+/* 未ロックの塊: ドラッグ開始と同時に長押し判定を仕掛ける。
+ * 静止したまま LONG_PRESS_MS 経てば、掴み位置へ戻してドラッグを
+ * 畳み、ロックアイコンを出す */
+function armLockPressForDrag(cl, sx, sy) {
+  clearLockPress();
+  if (cl.pieces.length < 2 || cl.locked) return;
+  lockPressInfo = { cluster: cl, gx: cl.gx, gy: cl.gy, sx: sx, sy: sy };
+  lockPressTimer = setTimeout(function () {
+    lockPressTimer = null;
+    if (!drag || !lockPressInfo || drag.cluster !== lockPressInfo.cluster || drag.movedFar) return;
+    drag.cluster.gx = lockPressInfo.gx;
+    drag.cluster.gy = lockPressInfo.gy;
+    drag = null;
+    stopEdgeScroll();
+    showLockCandidate(lockPressInfo.cluster);
+    lockPressInfo = null;
+  }, LONG_PRESS_MS);
+}
+/* ロック中の塊: ドラッグが始まらないので、空き地向けの
+ * pressPending とは別に直接タイマーを持つ。発火したら範囲選択の
+ * 判定を打ち切って解除アイコンを出す */
+function armLockPressForLocked(cl, pid, sx, sy) {
+  clearLockPress();
+  if (cl.pieces.length < 2) return;
+  lockPressInfo = { cluster: cl, sx: sx, sy: sy };
+  lockPressTimer = setTimeout(function () {
+    lockPressTimer = null;
+    if (pressPending && pressPending.id === pid) {
+      clearTimeout(pressPending.timer);
+      pressPending = null;
+    }
+    showLockCandidate(cl);
+    lockPressInfo = null;
+  }, LONG_PRESS_MS);
+}
+function makeLockBtn() {
   var btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'lock-btn';
   btn.setAttribute('aria-label', '塊をロック/解除');
+  btn.innerHTML = LOCK_SVG_OPEN;
   btn.addEventListener('pointerdown', function (ev) {
     ev.stopPropagation();
+    if (!lockCandidate || !state) return;
+    var anchor = lockCandidate.anchor;
     var cl = null;
-    if (state) state.clusters.forEach(function (c) { if (clusterAnchorId(c) === anchor) cl = c; });
-    if (!cl) return;
+    state.clusters.forEach(function (c) { if (clusterAnchorId(c) === anchor) cl = c; });
+    lockCandidate = null;
+    if (!cl) { draw(); return; }
     if (mpInRoom() && mp.mode !== 'race' && mp.session) {
       // マルチ (協力/ターン) ではロックは全員の盤面で効く共有状態 (v68)。
       // 楽観適用はせず、seq された lock/unlock を全端末が適用して揃える
       mp.session.sendEvent({ t: cl.locked ? 'unlock' : 'lock', cluster: anchor });
+      draw();
       return;
     }
     cl.locked = !cl.locked;
     if (cl.locked && selection.has(cl)) selection.delete(cl);
     persistProgress(); // マルチでは無動作 (ソロのセーブにだけ残る)。音より先に保存する
     if (seReady()) seTone(cl.locked ? [540, 430] : [400, 320], 0.06, 0.18);
-    updateLockButtons(view());
     draw();
   });
   return btn;
@@ -4057,33 +4108,28 @@ function makeLockBtn(anchor) {
 function updateLockButtons(v) {
   var layer = $('lockLayer');
   if (!layer) return;
-  if (!state || state.phase !== 'play' || state.cleared || !state.clusters) {
-    if (lockBtns.size) { layer.innerHTML = ''; lockBtns.clear(); }
+  var ring = $('lockRing');
+  var cand = null;
+  if (state && state.phase === 'play' && !state.cleared && lockCandidate) {
+    state.clusters.forEach(function (c) { if (clusterAnchorId(c) === lockCandidate.anchor) cand = c; });
+    if (!cand || cand.pieces.length < 2) { lockCandidate = null; cand = null; }
+  }
+  if (!cand) {
+    if (lockBtnEl) { lockBtnEl.remove(); lockBtnEl = null; }
+    if (ring) ring.hidden = true;
     return;
   }
-  var seen = new Set();
-  state.clusters.forEach(function (cl) {
-    if (cl.pieces.length < 2) return;
-    if (drag && (drag.cluster === cl || (drag.group && drag.group.some(function (g) { return g.cluster === cl; })))) return;
-    if (carry && carry.cluster === cl) return;
-    var a = clusterAnchorId(cl);
-    seen.add(a);
-    var btn = lockBtns.get(a);
-    if (!btn) { btn = makeLockBtn(a); lockBtns.set(a, btn); layer.appendChild(btn); }
-    var box = clusterWorldBox(cl);
-    btn.style.left = (box.x1 * v.scale + v.tx - 19) + 'px';
-    btn.style.top = (box.y0 * v.scale + v.ty - 19) + 'px';
-    if (btn._locked !== !!cl.locked) {
-      btn._locked = !!cl.locked;
-      btn.classList.toggle('on', !!cl.locked);
-      btn.innerHTML = cl.locked ? LOCK_SVG_SHUT : LOCK_SVG_OPEN;
-    }
-    var sh = lockShakeAt[a];
-    btn.classList.toggle('shake', !!sh && Date.now() - sh < 320);
-  });
-  lockBtns.forEach(function (btn, a) {
-    if (!seen.has(a)) { btn.remove(); lockBtns.delete(a); }
-  });
+  var box = clusterWorldBox(cand);
+  if (ring) {
+    ring.hidden = false;
+    ring.style.left = (box.x0 * v.scale + v.tx - 5) + 'px';
+    ring.style.top = (box.y0 * v.scale + v.ty - 5) + 'px';
+    ring.style.width = ((box.x1 - box.x0) * v.scale + 10) + 'px';
+    ring.style.height = ((box.y1 - box.y0) * v.scale + 10) + 'px';
+  }
+  if (!lockBtnEl) { lockBtnEl = makeLockBtn(); layer.appendChild(lockBtnEl); }
+  lockBtnEl.style.left = (box.x1 * v.scale + v.tx - 27) + 'px';
+  lockBtnEl.style.top = (box.y0 * v.scale + v.ty - 27) + 'px';
 }
 
 /* 机の境界の見える化: 可動範囲 (deskBounds) の外側を無彩色の半透明
@@ -4182,6 +4228,20 @@ function draw() {
         var wx = (cl.gx + (home.col - anchor.col)) * CELL, wy = (cl.gy + (home.row - anchor.row)) * CELL;
         if (wx + CELL * 1.4 < wTl.x || wx - CELL * 0.4 > wBr.x || wy + CELL * 1.4 < wTl.y || wy - CELL * 0.4 > wBr.y) return;
         strokePiece(id, wx, wy, brass, 3, hexToRgba(brass, 0.16));
+      });
+    });
+  }
+  // ロック中の塊: ピース輪郭に真鍮色の細い縁取り (常時アイコンは置かない) (v69)
+  if (state.clusters.some(function (c) { return c.locked; })) {
+    var lockBrass = THEMES[uiTheme].brass;
+    state.clusters.forEach(function (cl) {
+      if (!cl.locked) return;
+      var lAnchor = pieceHome(clusterAnchorId(cl), n);
+      cl.pieces.forEach(function (id) {
+        var lHome = pieceHome(id, n);
+        var lwx = (cl.gx + (lHome.col - lAnchor.col)) * CELL, lwy = (cl.gy + (lHome.row - lAnchor.row)) * CELL;
+        if (lwx + CELL * 1.4 < wTl.x || lwx - CELL * 0.4 > wBr.x || lwy + CELL * 1.4 < wTl.y || lwy - CELL * 0.4 > wBr.y) return;
+        strokePiece(id, lwx, lwy, hexToRgba(lockBrass, 0.9), 2, hexToRgba(lockBrass, 0.10));
       });
     });
   }
@@ -4826,6 +4886,7 @@ function stagePos(ev) {
 stage.addEventListener('pointerdown', function (ev) {
   if (!state || state.phase !== 'play' || uiHome || uiCollection) return;
   if (sortAnim) return; // お助けのアニメーション中は操作を受けない
+  if (lockCandidate) { lockCandidate = null; requestDraw(); } // ロックアイコンは次の押下で消える (ボタン自身は伝播しない)
   if (mpInRoom() && !mp.begun) return; // 協力: ready バリア (全員揃うまで入力無効、M10)
   if (mpInRoom() && mp.mode === 'race' && mp.finishSent) return; // レース: 自分が完走した後は操作を受けない (他の人の完走では止まらない)
   if (mpInRoom() && mp.pinMode) { mpFirePin(stagePos(ev)); return; } // 協力: 合図ピン (ピンボタン経由)
@@ -4856,8 +4917,7 @@ stage.addEventListener('pointerdown', function (ev) {
     }
     if (hitC) {
       dropCarry(); // 運んでいたものを置いて、タップした塊を持ち上げる
-      if (hitC.cluster.locked) shakeLockBadge(hitC.cluster); // ロック中の塊は持ち上げない (v67)
-      else beginCarryForCluster(hitC, p);
+      if (!hitC.cluster.locked) beginCarryForCluster(hitC, p); // ロック中の塊は持ち上げない
       return;
     }
     // 空き地: タップなら置く、10px 超動いたらパン、長押しでは何もしない
@@ -4874,7 +4934,8 @@ stage.addEventListener('pointerdown', function (ev) {
     hit = null;
   }
   if (hit && hit.cluster.locked) {
-    shakeLockBadge(hit.cluster); // ロック中の塊は掴めない (v67)。フィードバックにバッジを揺らす
+    // ロック中の塊は掴めない。そのまま長押しされれば解除アイコンを出す
+    armLockPressForLocked(hit.cluster, ev.pointerId, p.x, p.y);
     hit = null;
   }
   if (hit) {
@@ -4902,6 +4963,7 @@ stage.addEventListener('pointerdown', function (ev) {
       });
       if (drag.group.length < 2) drag.group = null;
     }
+    if (!drag.group) armLockPressForDrag(hit.cluster, p.x, p.y); // 長押しでロックアイコン (v69)
     seGrab(); // 掴んだ音 (紙の「サッ」)
     liftStartAt = Date.now(); kickFxLoop(); // 持ち上げ演出 (影と浮き) の開始 (v53)
     startTimerOnce();
@@ -4932,6 +4994,8 @@ stage.addEventListener('pointermove', function (ev) {
   if (!pointers.has(ev.pointerId)) return;
   var p = stagePos(ev);
   pointers.set(ev.pointerId, p);
+  // ロックの長押し判定は、押した場所から動いたら取り消す
+  if (lockPressTimer && lockPressInfo && Math.hypot(p.x - lockPressInfo.sx, p.y - lockPressInfo.sy) > PRESS_MOVE_PX) clearLockPress();
   if (pinch && pointers.size === 2) {
     var pts = Array.from(pointers.values());
     var d = Math.max(10, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y));
@@ -5051,6 +5115,7 @@ stage.addEventListener('contextmenu', function (ev) { ev.preventDefault(); }); /
 
 /* ドラッグの確定処理 (離したとき & ピンチへ切り替えるとき共通) */
 function settleDrag() {
+  clearLockPress(); // ロックの長押し判定はドラッグ確定で畳む
   liftStartAt = 0; // 持ち上げ演出はここで終わり (v53)
   if (mpInRoom() && mp.mode !== 'race') { mpSettleDrag(); return; } // 協力/ターン制は seq 確定経路へ (確定はイベント適用時)。レースは各自ローカル盤面なのでソロ経路で確定させる
   var cl = drag.cluster;
