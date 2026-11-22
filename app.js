@@ -3137,6 +3137,12 @@ function bgmApplySettings() {
  * 停止は BGM オフとタブを隠したときだけ。旧仕様の呼び出し箇所
  * (goToStartScreen / restartPuzzle) はそのまま残してある */
 function bgmEnterTitle() { /* 流し続ける: 何もしない */ }
+/* 画面復帰時に SE の AudioContext を起こす (v66): 隠れている間に
+ * ブラウザ/OS に suspend/interrupted されると、復帰後の音 (マルチで
+ * 相手が合体させた音など、ジェスチャを伴わない発音) が落ちるため */
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden && seCtx && seCtx.state !== 'running') seCtx.resume();
+});
 /* タブが隠れたら一時停止し、戻ったら再開する (設定でオフのとき・
  * まだ一度も流れていないタイトル画面では再開しない) */
 document.addEventListener('visibilitychange', function () {
@@ -3177,7 +3183,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v65'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v66'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -3192,7 +3198,10 @@ function applySeVolume() { if (seMaster && seCtx) seMaster.gain.setTargetAtTime(
 var seCtx = null, seMaster = null, seNoiseBuf = null;
 function ensureSeContext() {
   if (seCtx) {
-    if (seCtx.state === 'suspended') seCtx.resume();
+    // 'suspended' だけでなく 'interrupted' (iOS の割り込み後に残る)
+    // でも resume する。従来は suspended しか見ておらず、interrupted
+    // に入ると再読み込みまで効果音が死んだままだった (v66)
+    if (seCtx.state !== 'running') seCtx.resume();
     return;
   }
   var AC = window.AudioContext || window.webkitAudioContext;
@@ -3209,6 +3218,7 @@ function ensureSeContext() {
     seLimiter.release.value = 0.18;
     seMaster.connect(seLimiter);
     seLimiter.connect(seCtx.destination);
+    if (seCtx.state !== 'running') seCtx.resume(); // suspended で生まれた場合の初回無音を防ぐ (v66)
   } catch (e) { seCtx = null; }
 }
 function seNoiseBuffer() {
