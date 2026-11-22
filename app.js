@@ -462,11 +462,11 @@ function nearestClusterByCellDist(clusters, n, wx, wy, maxDist, exclude) {
  * 量子化するのでエンジン間の 1ulp 差では化けず、配列の並び順にも依存しない */
 function canonicalStateHash(clusters) {
   var rows = clusters.map(function (cl) {
-    return [clusterAnchorId(cl), Math.round(cl.gx * 1e6), Math.round(cl.gy * 1e6), cl.pieces.length];
+    return [clusterAnchorId(cl), Math.round(cl.gx * 1e6), Math.round(cl.gy * 1e6), cl.pieces.length, cl.locked ? 1 : 0];
   });
   rows.sort(function (a, b) { return a[0] - b[0]; });
   var s = '';
-  for (var i = 0; i < rows.length; i++) s += rows[i][0] + ',' + rows[i][1] + ',' + rows[i][2] + ',' + rows[i][3] + ';';
+  for (var i = 0; i < rows.length; i++) s += rows[i][0] + ',' + rows[i][1] + ',' + rows[i][2] + ',' + rows[i][3] + ',' + rows[i][4] + ';';
   return hashSeed(s);
 }
 function snapToGrid(v) { return Math.round(v); }
@@ -3188,7 +3188,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v67'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v68'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -4018,8 +4018,9 @@ function requestDraw() {
  * 掴めない (持ち運び・範囲選択のグループにも混ざらない) が、他の
  * 塊をくっつけることはできる (合体後の塊にロックは引き継がれる)。
  * ロックはクラスタの locked フラグで持ち、ソロは進行セーブにも残る。
- * マルチではローカル専用 (自分の誤操作防止。相手は動かせる) で、
- * snapshot の差し替えでも消えないよう mpDoApplySnapshot で付け直す */
+ * マルチ (協力/ターン) では共有状態 (v68): lock/unlock イベントで
+ * 全端末に行き渡り、ロック中の塊は誰も掴めない (ホストも検証する)。
+ * レースは盤面が各自ローカルなので端末内だけのロックになる */
 var LOCK_SVG_OPEN = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9.5" rx="2" fill="#fff"/><path d="M8.5 10.5V7.8a3.6 3.6 0 0 1 7-.9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15.2" r="1.8" fill="rgba(43,32,18,.8)"/></svg>';
 var LOCK_SVG_SHUT = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9.5" rx="2" fill="#3a2c12"/><path d="M8.5 10.5V7.8a3.6 3.6 0 0 1 7.2 0v2.7" fill="none" stroke="#3a2c12" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15.2" r="1.8" fill="#e9cf8f"/></svg>';
 var lockBtns = new Map(); // anchor -> button
@@ -4038,6 +4039,12 @@ function makeLockBtn(anchor) {
     var cl = null;
     if (state) state.clusters.forEach(function (c) { if (clusterAnchorId(c) === anchor) cl = c; });
     if (!cl) return;
+    if (mpInRoom() && mp.mode !== 'race' && mp.session) {
+      // マルチ (協力/ターン) ではロックは全員の盤面で効く共有状態 (v68)。
+      // 楽観適用はせず、seq された lock/unlock を全端末が適用して揃える
+      mp.session.sendEvent({ t: cl.locked ? 'unlock' : 'lock', cluster: anchor });
+      return;
+    }
     cl.locked = !cl.locked;
     if (cl.locked && selection.has(cl)) selection.delete(cl);
     persistProgress(); // マルチでは無動作 (ソロのセーブにだけ残る)。音より先に保存する
@@ -9025,7 +9032,7 @@ function renderStartScreen() {
  * - persistProgress は部屋中ずっと無動作 (ソロの進行中セーブと分離、§5)
  * - 記録と報酬は参加者全員が自分の store に書く (レースも完走した
  *   全員、§5 改訂)。確定した記録は onClear がその場で saveStore する (#1) */
-var MP_LOGIC_VERSION = 6; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加。v4: レースのハンデ (start の piecesMap) を追加 — 旧端末が piecesMap を無視すると別条件のレースが静かに成立するため上げる。v5: レース完走方式 (finish に elapsedSec を載せ、レースは全員完走まで終わらない) — 旧端末は最初の finish で全員終了してしまうため混在を弾く。v6: 現像マルチ (start の dev) — 旧端末が dev を無視すると色付きピースで遊べてしまうため混在を弾く
+var MP_LOGIC_VERSION = 7; // scatter / merge / sort / イベント種別の振る舞いが変わるたびに上げる (§3.7)。v3: grab-group / group-drop を追加。v4: レースのハンデ (start の piecesMap) を追加 — 旧端末が piecesMap を無視すると別条件のレースが静かに成立するため上げる。v5: レース完走方式 (finish に elapsedSec を載せ、レースは全員完走まで終わらない) — 旧端末は最初の finish で全員終了してしまうため混在を弾く。v6: 現像マルチ (start の dev) — 旧端末が dev を無視すると色付きピースで遊べてしまうため混在を弾く。v7: 塊ロックの共有化 (lock/unlock イベント + ハッシュと snapshot に locked) — 旧端末はロックを無視して動かせてしまうため混在を弾く
 /* プレイヤー識別色のパレット (8色)。先頭4色は従来の参加順割当てと
  * 同じ順序 (互換のため変更しない)。プロフィールで選んだ色がその人の
  * 識別色になり、重複はホストが調停する (MP改善#4) */
@@ -9210,14 +9217,26 @@ var mpHooksObj = {
   getClusters: function () {
     if (!state) return [];
     return state.clusters.map(function (c) {
-      return { anchorId: clusterAnchorId(c), pieces: c.pieces.slice(), gx: c.gx, gy: c.gy };
+      return { anchorId: clusterAnchorId(c), pieces: c.pieces.slice(), gx: c.gx, gy: c.gy, locked: !!c.locked };
     });
   },
   clusterExists: function (anchorId) { return !!mpClusterByAnchor(anchorId); },
   /* ターン制: 手番以外の grab はホスト検証で落とす。手番はホスト端末が
    * seq 順に適用してきたイベントから導出した現在値で判定する */
-  validateGrab: function (fromId) {
+  validateGrab: function (fromId, ev) {
     if (mp.mode === 'turn' && mp.started && fromId !== mpTurnPlayerId()) return 'not-your-turn';
+    // 塊ロック (v68): ロック中の塊は誰も掴めない (クライアント側の
+    // ガードと二重化し、ロックと掴みの競合でもホストが落とす)
+    if (ev && ev.t === 'grab-req') {
+      var cl = mpClusterByAnchor(ev.cluster);
+      if (cl && cl.locked) return 'locked';
+    }
+    if (ev && ev.t === 'grab-group-req' && Array.isArray(ev.clusters)) {
+      for (var i = 0; i < ev.clusters.length; i++) {
+        var c2 = mpClusterByAnchor(ev.clusters[i]);
+        if (c2 && c2.locked) return 'locked';
+      }
+    }
     return null;
   },
   applyEvent: function (ev, meta) { mpApplyEvent(ev, meta); },
@@ -9418,6 +9437,12 @@ function mpStopWaitVeilTimer() {
 
 function mpOnReject(rej) {
   if (!rej) return;
+  if (rej.evType === 'lock' || rej.evType === 'unlock') {
+    // 塊ロック (v68): 相手が掴んでいる最中などはホストに落とされる。
+    // 楽観適用していないので盤面はそのまま。理由だけ伝える
+    showToast(rej.reason === 'leased' ? '相手が持っている間はロックできません' : 'ロックできませんでした');
+    return;
+  }
   if (rej.evType === 'grab-req') {
     var anchor = mp.pendingGrabAnchor;
     mp.pendingGrabAnchor = null;
@@ -10238,6 +10263,26 @@ function mpFlushQueue() {
     mpApplyEventNow(pair[0], pair[1]);
   });
 }
+/* 塊ロックの共有適用 (v68): lock/unlock は seq 順に全端末で適用する。
+ * 状態依存の検証はここで行い、ホストでは例外が却下になり、ゲストでは
+ * snapshot 要求のきっかけになる (既存の drop と同じ作法)。
+ * レースは盤面が各自ローカルなので共有ロックは存在しない */
+function mpOnLock(ev) {
+  if (mp.mode === 'race') return;
+  var cl = mpClusterByAnchor(ev.cluster);
+  if (!cl) throw new Error('no-cluster');
+  if (ev.t === 'lock') {
+    if (cl.locked) throw new Error('already-locked');
+    var lease = (mp.session && mp.session.engine) ? mp.session.engine.getLease(ev.cluster) : null;
+    if (lease) throw new Error('leased'); // 誰かが掴んでいる塊はロックできない
+    cl.locked = true;
+  } else {
+    if (!cl.locked) throw new Error('not-locked');
+    cl.locked = false;
+  }
+  updateLockButtons(view());
+  draw();
+}
 function mpApplyEventNow(ev, meta) {
   // 相手の一括掴みの記録は、その人の確定/解放が来たら役目を終える
   var rgOwner = ev.t === 'lease-expire' ? ev.by : ev.from;
@@ -10257,6 +10302,7 @@ function mpApplyEventNow(ev, meta) {
     case 'release': case 'lease-expire': mpOnRelease(ev); break;
     case 'drop': mpOnDrop(ev); break;
     case 'group-drop': mpOnGroupDrop(ev); break;
+    case 'lock': case 'unlock': mpOnLock(ev); break;
     case 'sort': mpOnSort(ev); break;
     case 'complete': mpOnComplete(); break;
     case 'player-left': mpOnPlayerLeft(ev); break;
@@ -10897,12 +10943,6 @@ function mpDoApplySnapshot(snap) {
       }) : null
     };
   }
-  // 塊ロック (v67) はローカル専用 (snapshot には載らない) なので、
-  // 差し替えで消えないよう、ロック中ピースの集合を退避して付け直す
-  var lockedPiecesKeep = new Set();
-  state.clusters.forEach(function (c) {
-    if (c.locked) c.pieces.forEach(function (id) { lockedPiecesKeep.add(id); });
-  });
   // 置いた直後 (自分の drop がまだ未確定) の塊も snapshot で戻さない
   // (v64): 相手の操作をきっかけに盤面同期が走ると、確定前の配置が
   // 同期元に無くて巻き戻って見える。エコーが届けば確定位置に収束し、
@@ -10919,7 +10959,9 @@ function mpDoApplySnapshot(snap) {
     if (c) inFlightKeep[a] = { gx: c.gx, gy: c.gy };
   });
   state.clusters = (snap.clusters || []).map(function (c) {
-    return { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy };
+    var o = { pieces: c.pieces.slice(), surface: 'desk', gx: c.gx, gy: c.gy };
+    if (c.locked) o.locked = true; // 塊ロック (v68) は snapshot にも載る共有状態
+    return o;
   });
   if (dragKeep) {
     var keepMain = mpClusterByAnchor(dragKeep.anchor);
@@ -10947,11 +10989,6 @@ function mpDoApplySnapshot(snap) {
     var nc = mpClusterByAnchor(+a);
     if (nc) { nc.gx = inFlightKeep[a].gx; nc.gy = inFlightKeep[a].gy; }
   });
-  if (lockedPiecesKeep.size) {
-    state.clusters.forEach(function (c) {
-      if (c.pieces.some(function (id) { return lockedPiecesKeep.has(id); })) c.locked = true;
-    });
-  }
   if (state.devMode) {
     // 現像マルチ: 現像済みは塊構成から導出できるので、復元した塊から
     // 作り直す (アニメーションなしで即表示)

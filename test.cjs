@@ -1605,8 +1605,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v67'") !== -1, 'sw: VERSION は v64');
-  ok(appSB.indexOf("var APP_VERSION = 'v67'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v68'") !== -1, 'sw: VERSION は v64');
+  ok(appSB.indexOf("var APP_VERSION = 'v68'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
   // マルチの巻き戻り対策 (v64): seq 採番の前倒し、却下の mid 照合、
   // 再掴み中のエコー保留、snapshot のドラッグ保護、ゴースト残像の掃除
   ok(fsB.readFileSync(pathB.join(__dirname, 'mp.js'), 'utf8').indexOf('lastSeq = seq;\n    if (typeof hooks.applyEvent') !== -1 &&
@@ -1624,9 +1624,17 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appSB.indexOf('function updateLockButtons(') !== -1 && appSB.indexOf('updateLockButtons(v);') !== -1 &&
      appSB.indexOf('if (hit && hit.cluster.locked)') !== -1 && appSB.indexOf('shakeLockBadge(hitC.cluster)') !== -1 &&
      appSB.indexOf('return !c.locked; }).map(function (c) {') !== -1 &&
-     appSB.indexOf('if (c.locked) o.locked = true;') !== -1 && appSB.indexOf('lockedPiecesKeep') !== -1 &&
+     appSB.indexOf('if (c.locked) o.locked = true;') !== -1 && appSB.indexOf('function mpOnLock(') !== -1 &&
      appSB.indexOf('lockedAcc') !== -1 && appSB.indexOf('locked: cl.locked') !== -1,
-     '塊ロック: ボタン層/掴みガード/グループ除外/保存/合体引き継ぎ/snapshot付け直しが配線されている');
+     '塊ロック: ボタン層/掴みガード/グループ除外/保存/合体引き継ぎ/共有適用が配線されている');
+  // 塊ロックのマルチ共有化 (v68): lock/unlock イベントがエンジンの
+  // 検証を通り、snapshot とチェックサムにも locked が載る
+  ok(fsB.readFileSync(pathB.join(__dirname, 'mp.js'), 'utf8').indexOf("case 'lock': case 'unlock':") !== -1 &&
+     appSB.indexOf("mp.session.sendEvent({ t: cl.locked ? 'unlock' : 'lock', cluster: anchor })") !== -1 &&
+     appSB.indexOf("case 'lock': case 'unlock': mpOnLock(ev); break;") !== -1 &&
+     appSB.indexOf('locked: !!c.locked') !== -1 && appSB.indexOf("cl.locked ? 1 : 0") !== -1 &&
+     appSB.indexOf("rej.evType === 'lock'") !== -1,
+     '塊ロック共有: イベント検証/送信/適用/snapshot/ハッシュ/却下通知が配線されている');
   // Firefox Android でネイティブ select の選択ポップアップが操作でき
   // ない問題 (v62→v63): select 自体を廃止し、自前の選択シートで完結
   ok(htmlSB.indexOf('<select id="difficultySel"') === -1 && htmlSB.indexOf('<select id="playModeSel"') === -1 &&
@@ -1813,7 +1821,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      'MP配線: スタート導線・ロビー・バッジ・ピンボタン・貢献度表示の要素がある');
   ok(swM.indexOf("'mp.js'") !== -1 && swM.indexOf("endsWith('/mp.js')") !== -1,
      'MP配線: sw.js が mp.js をプリキャッシュし NetworkFirst 対象に含む');
-  ok(appM.indexOf('var MP_LOGIC_VERSION = 6;') !== -1 &&
+  ok(appM.indexOf('var MP_LOGIC_VERSION = 7;') !== -1 &&
      appM.indexOf('hashState: function (clusters) { return canonicalStateHash(clusters); }') !== -1 &&
      appM.indexOf("t: 'grab-req'") !== -1 && appM.indexOf("t: 'drop'") !== -1 && appM.indexOf("t: 'sort'") !== -1,
      'MP配線: hooks が canonicalStateHash を使い、grab-req/drop/sort を送る');
@@ -1882,7 +1890,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      appX.indexOf('mode: mp.lobbyMode,') !== -1 &&
      appX.indexOf('mp.mode = ev.mode || \'coop\';') !== -1,
      'MPモード配線: モードはロビーで選び start イベントで全端末に一致させる');
-  ok(appX.indexOf('validateGrab: function (fromId) {') !== -1 &&
+  ok(appX.indexOf('validateGrab: function (fromId, ev) {') !== -1 &&
      appX.indexOf("return 'not-your-turn';") !== -1 &&
      mpX.indexOf('hooks.validateGrab(fromId, ev)') !== -1,
      'MPモード配線: ターン制の grab はホスト検証 (validateGrab) で手番以外を却下する');
@@ -2250,7 +2258,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(mpP.indexOf("msg.t === 'profile'") !== -1 && mpP.indexOf('profiles: profiles') !== -1 &&
      mpP.indexOf('resolveProfileColors') !== -1 && mpP.indexOf('var MP_LOGIC_VERSION') === -1,
      'MP改善#4: mp.js は profile を名簿で保持し welcome に同梱、色を調停する');
-  ok(appP.indexOf('var MP_LOGIC_VERSION = 6;') !== -1,
+  ok(appP.indexOf('var MP_LOGIC_VERSION = 7;') !== -1,
      'MP改善#4: profile は追加型でバージョンを上げなかった (その後ハンデで 4、レース完走方式で 5、現像マルチで 6 に上げた)');
   ok(cssP.indexOf('.mp-avatar') !== -1 && cssP.indexOf('.mp-prof-icons') !== -1 &&
      cssP.indexOf('#mpTurnDot.has-icon') !== -1,
@@ -2349,7 +2357,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(cssH.indexOf('#mpHandicapSeg') !== -1 && cssH.indexOf('.mp-handicap-badge') !== -1 &&
      cssH.indexOf('.diff-sub') !== -1,
      'ハンデ配線: style.css にハンデ節・バッジ・チップ2段目のスタイルがある');
-  // 配線: start の piecesMap (レースのみ) と MP_LOGIC_VERSION 4
+  // 配線: start の piecesMap (レースのみ) と MP_LOGIC_VERSION 4 のまま (当時)
   ok(appH.indexOf('payload.piecesMap = racePiecesMap(mp.lobbyPieces, order, mpHandicapLevels());') !== -1 &&
      appH.indexOf('sanitizePiecesMap(ev.piecesMap, ev.order, ev.pieces)') !== -1,
      'ハンデ配線: start はレース時のみ piecesMap を載せ、受信側で検証する');
@@ -2552,7 +2560,7 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      '堅牢化: 猶予カウントダウンと復帰まわりの文言が配線されている');
   // MP_LOGIC_VERSION は当時 5 のまま (追加型プロトコルで旧端末と混在安全
   // だったため)。その後 v61 の現像マルチで 6 に上がった (下の v61 検証)
-  ok(appR.indexOf('var MP_LOGIC_VERSION = 6;') !== -1,
+  ok(appR.indexOf('var MP_LOGIC_VERSION = 7;') !== -1,
      '堅牢化: MP_LOGIC_VERSION は当時据え置き (現行は v61 で 6)');
 }
 

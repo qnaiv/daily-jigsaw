@@ -656,6 +656,12 @@ function createEngine(opts) {
         return null;
       case 'complete':
         return null;
+      case 'lock': case 'unlock':
+        // 塊ロック (v68): 共有状態なので seq 経路で全端末に行き渡らせる。
+        // 形と存在だけここで見て、状態依存の検証 (施錠済み/リース中) は
+        // 適用側 (ホストでは例外→却下、ゲストでは snapshot 回復) で行う
+        if (!clusterExists(ev.cluster)) return 'no-cluster';
+        return null;
       default:
         return 'bad-event';
     }
