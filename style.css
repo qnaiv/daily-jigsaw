@@ -826,7 +826,9 @@ button { font: inherit; cursor: pointer; }
 /* BGM の曲名クレジット: その曲が再生されている間、右下隅へ小さく出しっぱなし。
  * 止まると消える (表示連動は app.js が playing / pause イベントで行う)。 */
 #bgmToast {
-  position: absolute; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 6;
+  /* ズーム操作バー (左下) と MP ピンボタン (右下) の一段上に置く。
+     同じ段だと長い曲名がズーム率表示に被るため (v70) */
+  position: absolute; right: 10px; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 6;
   max-width: 72vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   background: rgba(24,17,10,.55); color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 999px;
   padding: 4px 13px; font-size: 11.5px; letter-spacing: .03em; pointer-events: none;
