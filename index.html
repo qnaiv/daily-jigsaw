@@ -155,6 +155,7 @@
       <span id="zoomLabel" class="mono">100%</span>
       <button id="zoomInBtn" class="zoom-btn" type="button" aria-label="拡大">＋</button>
       <button id="fitViewBtn" class="zoom-btn zoom-fit" type="button">全体</button>
+      <span id="bgmToast" aria-hidden="true"><span id="bgmToastInner"></span></span>
     </div>
     <div id="mpBadge" hidden><span class="mp-badge-dot"></span><span id="mpBadgeText">協力プレイ</span></div>
     <div id="mpTurnBar" hidden><span id="mpTurnDot"></span><span id="mpTurnText"></span></div>
@@ -162,7 +163,6 @@
     <button id="mpPinBtn" class="fab mp-pin-btn" type="button" hidden aria-label="合図ピンを送る"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-10.4A6.5 6.5 0 0 1 12 4a6.5 6.5 0 0 1 6.5 6.6C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10.6" r="2.3"/></svg></button>
     <div id="mpWaitVeil" hidden><p id="mpWaitText">みんなの準備を待っています…</p><div id="mpWaitActions"></div><button id="mpWaitLeaveBtn" class="btn" type="button" hidden>部屋を出る</button></div>
     <canvas id="minimap" width="264" height="236" aria-hidden="true"></canvas>
-    <div id="bgmToast" aria-hidden="true"></div>
     <div id="resumeBanner" hidden>つづきから再開しました <button id="resumeClose" type="button" aria-label="閉じる">×</button></div>
     <div id="loadingOverlay">読み込み中…</div>
   </div>

@@ -825,17 +825,22 @@ button { font: inherit; cursor: pointer; }
 
 /* BGM の曲名クレジット: その曲が再生されている間、右下隅へ小さく出しっぱなし。
  * 止まると消える (表示連動は app.js が playing / pause イベントで行う)。 */
+/* 曲名はズームバーに組み込む (v71 案1)。入りきらない曲名は
+   内側を往復スクロール (マーキー) して全文読めるようにする */
 #bgmToast {
-  /* ズーム操作バー (左下) と MP ピンボタン (右下) の一段上に置く。
-     同じ段だと長い曲名がズーム率表示に被るため (v70) */
-  position: absolute; right: 10px; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 6;
-  max-width: 72vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  background: rgba(24,17,10,.55); color: #fff; border: 1px solid rgba(255,255,255,.16); border-radius: 999px;
-  padding: 4px 13px; font-size: 11.5px; letter-spacing: .03em; pointer-events: none;
-  opacity: 0; transition: opacity .6s ease;
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  display: none; max-width: 34vw; overflow: hidden; white-space: nowrap;
+  margin-left: 4px; padding: 4px 2px 4px 10px;
+  border-left: 1px solid rgba(255,255,255,.25);
+  color: #fff; font-size: 11.5px; letter-spacing: .03em; pointer-events: none;
 }
-#bgmToast.show { opacity: .92; }
+#bgmToast.show { display: block; }
+#bgmToastInner { display: inline-block; will-change: transform; }
+#bgmToast.scroll #bgmToastInner { animation: bgmMarquee var(--mq-dur, 8s) ease-in-out infinite; }
+@keyframes bgmMarquee {
+  0%, 18% { transform: translateX(0); }
+  62%, 82% { transform: translateX(var(--mq-dist, 0px)); }
+  100% { transform: translateX(0); }
+}
 
 /* 汎用トースト: 画面下部中央に短く出して消える注記 (モーダルより手前) */
 #appToast {

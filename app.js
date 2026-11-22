@@ -2830,20 +2830,36 @@ function bgmPlayPromise(p) {
  * (曲の切替時)。クロスフェードでは新しい曲が主役になるフェード開始時点で
  * 切り替える。 */
 function bgmSetNowPlayingText() {
-  var el = $('bgmToast');
-  if (!el || bgm.current < 0) return;
+  var inner = $('bgmToastInner');
+  if (!inner || bgm.current < 0) return;
   var t = BGM_TRACKS[bgm.current];
-  el.textContent = '♪ ' + t.title + ' — ' + t.artist;
+  inner.textContent = '♪ ' + t.title + ' — ' + t.artist;
+  bgmFitMarquee();
+}
+/* 曲名がズームバー内の表示幅に入りきらないときだけ、往復スクロール
+ * (マーキー) で全文読めるようにする。距離と時間ははみ出し量から決める */
+function bgmFitMarquee() {
+  var el = $('bgmToast'), inner = $('bgmToastInner');
+  if (!el || !inner) return;
+  el.classList.remove('scroll');
+  inner.style.removeProperty('--mq-dist');
+  if (!el.classList.contains('show')) return;
+  var over = inner.scrollWidth - el.clientWidth;
+  if (over <= 2) return;
+  el.style.setProperty('--mq-dist', -over + 'px');
+  el.style.setProperty('--mq-dur', Math.max(5, over / 28 + 3.5).toFixed(1) + 's');
+  el.classList.add('scroll');
 }
 function bgmShowNowPlaying() {
-  bgmSetNowPlayingText();
   var el = $('bgmToast');
   if (el && bgm.current >= 0) el.classList.add('show');
+  bgmSetNowPlayingText(); // .show の後で幅を測る (マーキー判定)
 }
 function bgmHideNowPlaying() {
   var el = $('bgmToast');
   if (el) el.classList.remove('show');
 }
+window.addEventListener('resize', function () { bgmFitMarquee(); });
 function bgmLoadDeck(deck, idx) {
   deck.track = idx;
   deck.playsLeft = 1; // loadedmetadata で短い曲なら 2 に更新される
@@ -3188,7 +3204,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v70'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v71'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
