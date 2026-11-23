@@ -1605,8 +1605,8 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
      cssSB.indexOf('.wall-samplebox') !== -1 && cssSB.indexOf('.wall-samplebox-clip') !== -1 && cssSB.indexOf('pointer-events: none') !== -1, 'サンプル箱配線: 壁への描画・最前面・操作不可・濃さ連動 + 壁下端で切るクリップラッパーがある');
   ok(appSB.indexOf('function renderFrameSizeButtons(') !== -1 && appSB.indexOf('clampFrameCenter(fr, wallSize())') !== -1 &&
      htmlSB.indexOf('id="wallFrameSizes"') !== -1 && cssSB.indexOf('.frame-size-btn') !== -1, '額サイズ配線: 選択バーにサイズボタン群がありクランプ経由で保存する');
-  ok(swSB.indexOf("VERSION = 'v71'") !== -1, 'sw: VERSION は v64');
-  ok(appSB.indexOf("var APP_VERSION = 'v71'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
+  ok(swSB.indexOf("VERSION = 'v73'") !== -1, 'sw: VERSION は v64');
+  ok(appSB.indexOf("var APP_VERSION = 'v73'") !== -1 && htmlSB.indexOf('id="appVersion"') !== -1, '版表示: 設定画面の版表記が sw の VERSION と一致する');
   // マルチの巻き戻り対策 (v64): seq 採番の前倒し、却下の mid 照合、
   // 再掴み中のエコー保留、snapshot のドラッグ保護、ゴースト残像の掃除
   ok(fsB.readFileSync(pathB.join(__dirname, 'mp.js'), 'utf8').indexOf('lastSeq = seq;\n    if (typeof hooks.applyEvent') !== -1 &&
@@ -2265,6 +2265,25 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
   ok(cssP.indexOf('.mp-avatar') !== -1 && cssP.indexOf('.mp-prof-icons') !== -1 &&
      cssP.indexOf('#mpTurnDot.has-icon') !== -1,
      'MP改善#4: style.css にアバターと編集シートのスタイルがある');
+  // v73: プロフィールはゲーム共通設定。未設定ならランダムで初期設定され、
+  // トップのランク行左のアイコンから編集モーダルを開く
+  ok(typeof L.randomProfile === 'function' && Array.isArray(L.PROFILE_NAME_POOL) && L.PROFILE_NAME_POOL.length >= 10,
+     'v73: randomProfile と名前プールが PureLogic にある');
+  const rp0 = L.randomProfile(() => 0);
+  ok(rp0.name === L.PROFILE_NAME_POOL[0] && rp0.icon === 'piece' && rp0.color === 0,
+     'v73: randomProfile は rng=0 でプール先頭・piece・色0を返す');
+  const rp9 = L.randomProfile(() => 0.999);
+  ok(L.PROFILE_NAME_POOL.indexOf(rp9.name) !== -1 && L.PROFILE_ICON_IDS.indexOf(rp9.icon) !== -1 &&
+     rp9.color >= 0 && rp9.color < 8 && L.normalizeProfile(rp9) !== null,
+     'v73: randomProfile の結果は常にプール内・正規化を通る');
+  ok(appP.indexOf('if (!store.profile) { store.profile = randomProfile();') !== -1 &&
+     appP.indexOf('function paintProfileBtn()') !== -1 &&
+     appP.indexOf("$('profileBtn').addEventListener('click', mpOpenProfileEditor);") !== -1 &&
+     appP.indexOf("$('mpProfRandomBtn')") !== -1 && appP.indexOf('mpProfClearBtn') === -1,
+     'v73: 初回ランダム設定・トップのアイコンボタン・ランダム振り直しが配線されている (消すボタンは廃止)');
+  ok(htmlP.indexOf('id="profileBtn"') !== -1 && htmlP.indexOf('id="mpProfRandomBtn"') !== -1 &&
+     htmlP.indexOf('id="rankBadge"') === -1 && htmlP.indexOf('class="rank-row-wrap"') !== -1,
+     'v73: ランク行左に profileBtn があり、数字バッジは廃止');
   // アイコン SVG が確定10点ぶん app.js に埋め込まれている (gen_sample.py の ICONS が正)
   const iconIds = ['piece', 'star', 'flower', 'leaf', 'moon', 'bird', 'fish', 'mushroom', 'acorn', 'bell'];
   ok(iconIds.every(function (id) { return appP.indexOf("{ id: '" + id + "', name: '") !== -1; }),

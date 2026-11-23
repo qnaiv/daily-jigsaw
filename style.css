@@ -172,6 +172,17 @@ button { font: inherit; cursor: pointer; }
   border-bottom: 1px solid var(--line); padding-bottom: 16px;
   display: flex; flex-direction: column; gap: 7px;
 }
+/* プロフィール (ゲーム共通設定): ランク行の左の丸が自分のアイコン。
+   タップで名前・アイコン・色の編集モーダルを開く (v73) */
+.rank-row-wrap { display: flex; align-items: center; gap: 10px; width: 100%; }
+.rank-row-wrap .rank-row { flex: 1; min-width: 0; }
+.profile-btn {
+  flex: none;
+  width: 46px; height: 46px; border-radius: 50%; border: none; padding: 0;
+  background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  display: flex; align-items: center; justify-content: center;
+}
+.profile-btn .mp-avatar { box-shadow: 0 2px 8px rgba(90,70,40,.35); }
 .start-kicker {
   margin: 0; font-size: 11px; font-weight: 700;
   letter-spacing: .34em; color: var(--brass);

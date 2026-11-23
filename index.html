@@ -48,15 +48,18 @@
       <p id="fallbackNote" class="fallback-note" hidden>写真を読み込めなかったので代替画像で遊べます</p>
     </header>
 
-    <!-- ランク表示: タップでランク詳細ダイアログ -->
-    <button id="rankRow" class="rank-row" type="button">
-      <span id="rankBadge" class="rank-badge">1</span>
-      <span class="rank-main">
-        <span id="rankName" class="rank-name">ランク1 ・ かけだし</span>
-        <span class="rank-bar"><span id="rankFill" class="rank-fill" style="width:0%"></span></span>
-      </span>
-      <span id="rankNext" class="rank-next"></span>
-    </button>
+    <!-- ランク表示: タップでランク詳細ダイアログ。左の丸はプロフィール
+         (ゲーム共通設定): タップで名前・アイコン・色を編集 (v73) -->
+    <div class="rank-row-wrap">
+      <button id="profileBtn" class="profile-btn" type="button" aria-label="プロフィールを編集"></button>
+      <button id="rankRow" class="rank-row" type="button">
+        <span class="rank-main">
+          <span id="rankName" class="rank-name">ランク1 ・ かけだし</span>
+          <span class="rank-bar"><span id="rankFill" class="rank-fill" style="width:0%"></span></span>
+        </span>
+        <span id="rankNext" class="rank-next"></span>
+      </button>
+    </div>
 
     <!-- 遊びの設定はセレクトボックス2つで切り替える。モードの説明は
          ⓘ から開くダイアログの中だけに置く -->
@@ -673,7 +676,7 @@
         <button id="mpProfSaveBtn" class="btn cert-primary" type="button">保存する</button>
         <button id="mpProfCancelBtn" class="btn" type="button">やめる</button>
       </div>
-      <button id="mpProfClearBtn" class="btn btn-underline" type="button">プロフィールを消す（未設定に戻す）</button>
+      <button id="mpProfRandomBtn" class="btn btn-underline" type="button">ランダムに変える</button>
     </div>
   </div>
 </div>

@@ -2032,6 +2032,18 @@ function normalizeProfile(p) {
   if (name == null && icon == null && color == null) return null;
   return { name: name, icon: icon, color: color };
 }
+/* 初期プロフィールの名前プールとランダム生成 (v73): プロフィールは
+ * ゲーム共通設定になり、未設定なら最初からランダムな組み合わせが
+ * 入っている。編集画面の「ランダムに変える」でも使う */
+var PROFILE_NAME_POOL = ['ねこ', 'いぬ', 'うさぎ', 'ぱんだ', 'くま', 'きつね', 'たぬき', 'ぺんぎん', 'ふくろう', 'いるか', 'こあら', 'ひよこ', 'もも', 'さくら', 'ほし', 'つき', 'そら', 'うみ', 'もり', 'かぜ'];
+function randomProfile(rng) {
+  var r = typeof rng === 'function' ? rng : Math.random;
+  return {
+    name: PROFILE_NAME_POOL[Math.floor(r() * PROFILE_NAME_POOL.length)],
+    icon: PROFILE_ICON_IDS[Math.floor(r() * PROFILE_ICON_IDS.length)],
+    color: Math.floor(r() * PROFILE_COLOR_COUNT)
+  };
+}
 /* 抽選対象に入るか: 未所持で、季節物はその月の間だけ */
 function wallDrawEligible(item, wall, month) {
   if (!item) return false;
@@ -2369,6 +2381,7 @@ var PureLogic = {
   SAMPLE_BOX_ART: SAMPLE_BOX_ART, sampleBoxArtRect: sampleBoxArtRect, sampleBoxElementRect: sampleBoxElementRect,
   emptyWall: emptyWall, normalizeWall: normalizeWall, nextWallItemUid: nextWallItemUid,
   PROFILE_ICON_IDS: PROFILE_ICON_IDS, PROFILE_NAME_MAX: PROFILE_NAME_MAX, normalizeProfile: normalizeProfile,
+  PROFILE_NAME_POOL: PROFILE_NAME_POOL, randomProfile: randomProfile,
   TOUR_SEGMENTS: TOUR_SEGMENTS, TOUR_STEP_COUNT: TOUR_STEP_COUNT,
   wallDrawEligible: wallDrawEligible, drawWallItem: drawWallItem,
   grantWallItems: grantWallItems, recordWallHistory: recordWallHistory,
@@ -2414,6 +2427,9 @@ var store = loadStore();
 store.uiTheme = normalizeUiTheme(store.uiTheme); // 旧テーマ値は無効値として既定 'walnut' に落とす
 store.wall = normalizeWall(store.wall); // 壁インテリア (旧データには無いので空で作る。旧 store.rewards は読み捨て)
 store.profile = normalizeProfile(store.profile); // プレイヤープロフィール (MP改善#4。旧データには無いので null)
+/* プロフィールはゲーム共通設定 (v73): 未設定ならランダムな組み合わせで
+ * 初期設定し、すぐ保存して次回も同じになるようにする */
+if (!store.profile) { store.profile = randomProfile(); try { saveStore(); } catch (e) { /* 保存は次の機会にも行われる */ } }
 store.mpHandicap = normalizeHandicap(store.mpHandicap); // レースのハンデ段階 0..+4 (旧データには無いので 0)
 store.playMode = normalizePlayMode(store.playMode); // プレイスタイル 'normal' | 'develop' (v53 現像モード。旧データには無いので 'normal')
 store.xp = (typeof store.xp === 'number' && isFinite(store.xp) && store.xp > 0) ? Math.floor(store.xp) : 0;
@@ -3204,7 +3220,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v71'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v73'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -3533,19 +3549,28 @@ function makeFallbackCanvas(dateStr) {
  * openaccess-cdn.clevelandart.org は返さないため CORS モードでは読めない。
  * 素読み込みだとキャンバスは汚染されるが、ピクセル読み取り系は全て
  * try/catch + 代替色フォールバックで守ってある (pieceSideColor 等)。 */
+/* 画像読み込み (CORS あり→なしの順に試す)。実機では応答が固まって
+ * onload も onerror も来ないことがあり、待つ側 (壁の額・帯) が
+ * 永久に表示されなくなるため、各試行にタイムアウトを付ける (v72) */
 function loadImgCorsFallback(url) {
-  return new Promise(function (resolve, reject) {
-    var img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = function () { resolve(img); };
-    img.onerror = function () {
-      var plain = new Image();
-      plain.onload = function () { resolve(plain); };
-      plain.onerror = function () { reject(new Error('image load failed')); };
-      plain.src = url;
-    };
-    img.src = url;
-  });
+  var attempt = function (cors) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        img.onload = img.onerror = null;
+        try { img.src = ''; } catch (e) {}
+        reject(new Error('image load timeout'));
+      }, 10000);
+      if (cors) img.crossOrigin = 'anonymous';
+      img.onload = function () { if (done) return; done = true; clearTimeout(timer); resolve(img); };
+      img.onerror = function () { if (done) return; done = true; clearTimeout(timer); reject(new Error('image load failed')); };
+      img.src = url;
+    });
+  };
+  return attempt(true).then(null, function () { return attempt(false); });
 }
 function loadSourceImage() {
   var size = imageSizeFor(difficulty);
@@ -5955,6 +5980,10 @@ function renderWall() {
  * 額は実ピース形状の盤面で描き直し (画面表示と同じレシピ)、小物は
  * 画像をそのまま置く。重なり順は画面と同じ (額 → 小物)。
  * 下部にブランドのフッターを付ける。 */
+/* 壁まわりの画像ジョブが固まっても全体を止めないための見切り (v72) */
+function settleWithin(promise, ms) {
+  return Promise.race([promise, new Promise(function (res) { setTimeout(res, ms); })]);
+}
 function buildShareFrameCanvas(f, unitW, boardPx) {
   var rec = recordByWallKey(f.recordKey);
   var st = frameStyleById(f.color) || frameStyleById('walnut');
@@ -5973,6 +6002,10 @@ function buildShareFrameCanvas(f, unitW, boardPx) {
   }
   return renderWallBoardFast(rec, boardPx).then(function (board) {
     paintFrameUnit(ctx, st, U, board, 'ready', f.recordKey, upper);
+    return { cv: cv, size: geo.size };
+  }).catch(function () {
+    // 1 枚の失敗で帯全体 (Promise.all) を道連れにしない (v72)
+    paintFrameUnit(ctx, st, U, null, 'missing', f.recordKey, upper);
     return { cv: cv, size: geo.size };
   });
 }
@@ -6027,7 +6060,7 @@ function buildWallShareImage() {
         img.src = 'wall-items/' + it.id + '.webp';
       });
     });
-    return Promise.all(itemJobs);
+    return settleWithin(Promise.all(itemJobs), 8000);
   }).then(flushFrame).then(function () {
     // 床の猫: 足元を床に合わせ、足下に楕円の影を落とす
     var catJobs = (store.wall.catsPlaced || []).map(function (p) {
@@ -6055,7 +6088,7 @@ function buildWallShareImage() {
         img.src = 'cats/' + c.id + '.webp';
       });
     });
-    return Promise.all(catJobs);
+    return settleWithin(Promise.all(catJobs), 8000);
   }).then(flushFrame).then(function () {
     ctx.fillStyle = '#F7F2E7';
     ctx.fillRect(0, H, W, footer);
@@ -6133,7 +6166,7 @@ function renderWallPreviewCanvas(aspect) {
         img.src = 'wall-items/' + it.id + '.webp';
       });
     });
-    return Promise.all(itemJobs);
+    return settleWithin(Promise.all(itemJobs), 8000);
   }).then(flush).then(function () {
     var catJobs = (store.wall.catsPlaced || []).map(function (p) {
       return new Promise(function (res) {
@@ -6160,7 +6193,7 @@ function renderWallPreviewCanvas(aspect) {
         img.src = 'cats/' + c.id + '.webp';
       });
     });
-    return Promise.all(catJobs);
+    return settleWithin(Promise.all(catJobs), 8000);
   }).then(flush).then(function () { return cv; });
 }
 /* 壁帯プレビューのキャッシュ: 壁の要約が同じなら再描画しない。
@@ -6941,16 +6974,22 @@ function paintWallFrameUnit(cv, f, rec, st) {
   paintFrameUnit(ctx, st, U, null, rec ? 'loading' : 'missing', f.recordKey, upperPieces);
   if (!rec) return;
   var reveal = function () { if (cv.parentElement) cv.parentElement.style.opacity = ''; };
+  // 読み込みが固まっても額が透明なまま残らないよう、6 秒で
+  // プレースホルダだけは見せる (盤面が届けば後から上書きする) (v72)
+  var slowTimer = setTimeout(reveal, 6000);
   // 盤面は額 Canvas の実寸に合わせる (v65: 従来は表示の数倍の
   // 736〜960px で毎回生成していた)
   renderWallBoardFast(rec, Math.max(160, Math.min(512, px))).then(function (board) {
+    clearTimeout(slowTimer);
     if (!cv.isConnected) return; // 壁を作り直していたら古い描画は捨てる
-    var c2 = cv.getContext('2d');
-    c2.setTransform(scale, 0, 0, scale, 0, 0);
-    c2.clearRect(0, 0, geo.size, geo.size);
-    paintFrameUnit(c2, st, U, board, 'ready', f.recordKey, upperPieces);
+    try {
+      var c2 = cv.getContext('2d');
+      c2.setTransform(scale, 0, 0, scale, 0, 0);
+      c2.clearRect(0, 0, geo.size, geo.size);
+      paintFrameUnit(c2, st, U, board, 'ready', f.recordKey, upperPieces);
+    } catch (e) { /* 描画に失敗しても額の枠だけは見せる */ }
     reveal();
-  }).catch(function () { reveal(); });
+  }).catch(function () { clearTimeout(slowTimer); reveal(); });
 }
 /* 完成盤面を実ピース形状で描く (コレクション詳細 paintDetailBoard と
  * 同じ辺生成・輪郭パス。ピースの形と数はレコードの日付×難易度で決まる
@@ -8113,8 +8152,9 @@ function loadSquareSource(r, url, size) {
       return cv;
     };
     // load 直後 (デコード前) に描くと Firefox で帯状の描画欠けが出るため、
-    // decode() の完了を待ってからキャンバスへ転写する
-    if (img.decode) return img.decode().then(draw, draw);
+    // decode() の完了を待ってからキャンバスへ転写する。decode が固まる
+    // 場合に備えて 3 秒で見切る (v72)
+    if (img.decode) return Promise.race([img.decode(), new Promise(function (res) { setTimeout(res, 3000); })]).then(draw, draw);
     return draw();
   }, function () { return makeFallbackCanvas(r.date); });
   squareSourceCache.set(ck, p);
@@ -8268,9 +8308,8 @@ function openStartPicker(kind) {
 /* ランク行 (スタート画面) とランク詳細ダイアログの描画 (v57) */
 function paintRankRow() {
   var info = rankFromXp(store.xp);
-  var badge = $('rankBadge');
-  if (!badge) return;
-  badge.textContent = info.rank;
+  var badge = $('rankBadge'); // 行内の数字バッジは廃止 (v73)。残っている場合だけ更新
+  if (badge) badge.textContent = info.rank;
   $('rankName').textContent = 'ランク' + info.rank + ' ・ ' + rankTitle(info.rank);
   $('rankFill').style.width = (info.needed ? Math.round(info.into / info.needed * 100) : 100) + '%';
   $('rankNext').textContent = info.needed ? 'あと ' + info.toNext + ' XP' : 'MAX';
@@ -9664,6 +9703,16 @@ function mpRenderProfileRows() {
   ['mpProfileSummary', 'mpProfileSummaryLobby'].forEach(function (id) {
     var el = $(id); if (el) el.textContent = summary;
   });
+}
+/* トップ画面のプロフィールボタン (自分のアイコン) を描き直す (v73) */
+function paintProfileBtn() {
+  var btn = $('profileBtn');
+  if (!btn) return;
+  var p = store.profile;
+  if (p && p.icon && p.color != null) btn.innerHTML = mpAvatarHtml(p.icon, p.color, 40);
+  else if (p && p.icon) btn.innerHTML = '<span class="mp-avatar" style="background:#a89a7d;width:40px;height:40px">' + (mpAvatarSvgString(p.icon, 40) || '') + '</span>';
+  else btn.innerHTML = '<span class="mp-avatar mp-avatar-plain" style="background:#a89a7d;width:40px;height:40px"></span>';
+  btn.title = p && p.name ? p.name : '';
 }
 var mpProfDraft = null; // 編集中の { name, icon, color }
 function mpOpenProfileEditor() {
@@ -11480,19 +11529,20 @@ $('mpProfSaveBtn').addEventListener('click', function () {
   saveStore();
   mpCloseProfileEditor();
   mpRenderProfileRows();
+  paintProfileBtn();
   mpSendMyProfile(); // 部屋にいる間は即座に共有し直す
   mpRenderRoster();
 });
 $('mpProfCancelBtn').addEventListener('click', mpCloseProfileEditor);
-$('mpProfClearBtn').addEventListener('click', function () {
-  store.profile = null;
-  saveStore();
-  mpCloseProfileEditor();
-  mpRenderProfileRows();
-  mpSendMyProfile();
-  mpRenderRoster();
-  showToast('プロフィールを未設定に戻しました');
+/* 「ランダムに変える」: 下書きを丸ごと振り直す (保存するまで確定しない) */
+$('mpProfRandomBtn').addEventListener('click', function () {
+  if (!mpProfDraft) return;
+  mpProfDraft = randomProfile();
+  $('mpProfName').value = mpProfDraft.name;
+  mpRenderProfileEditor();
 });
+/* トップ画面の自分のアイコンからも同じ編集モーダルを開く (v73) */
+$('profileBtn').addEventListener('click', mpOpenProfileEditor);
 $('mpManualBackBtn').addEventListener('click', function () {
   if (mp.session) return; // 接続を始めた後はロビー/退出フローに任せる
   $('mpManualView').hidden = true;
@@ -11578,6 +11628,7 @@ function startGame(pool) {
   buildDifficultySeg();
   buildPlayModeSeg();
   paintRankRow();
+  paintProfileBtn();
   if (firstStart) { uiHome = true; firstStart = false; } // ページを開き直したら必ずスタート画面から
   // スタート画面: 未開封なら包装された箱 (柄は日付×難易度グループで決定的)、開始済みなら続きからパネル
   renderStartScreen();
