@@ -2274,7 +2274,7 @@ var TOUR_SEGMENTS = { start: [0, 1], play: [2, 3], settings: [4, 5], wall: [6, 7
 var TOUR_STEP_COUNT = 8;
 /* ---------- v53: 現像モード + 手触り (純ロジック) ---------- */
 /* プレイスタイル: 'develop' (現像) 以外はすべて 'normal' に落とす */
-function normalizePlayMode(v) { return v === 'develop' ? 'develop' : 'normal'; }
+function normalizePlayMode(v) { return v === 'develop' ? 'develop' : (v === 'hand' ? 'hand' : 'normal'); }
 /* 合体音の音階ラダー (C メジャーペンタトニック)。短時間に続けて
  * 合体させるほど段階が上がり、間が空くと最初に戻る */
 var MERGE_LADDER_FREQS = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51, 1567.98, 1760];
@@ -2309,6 +2309,68 @@ function developRevealedFromClusters(clusters) {
   });
   return out;
 }
+/* てふだモード (v74): 全ピースを「 grid でつながった約5ピースの塊 (手札)」へ
+ * 決定的に分割する。日付×ピース数のシードで決まるので、再開時も同じ分割になる。
+ * 手札は配列の順に配る (先頭が1手目)。 */
+function computeHandPartition(dateStr, pieces) {
+  var n = Math.round(Math.sqrt(pieces));
+  var rng = rngFromString('hand:' + dateStr + ':' + pieces);
+  var assigned = [];
+  for (var i = 0; i < pieces; i++) assigned.push(false);
+  var hands = [], remaining = pieces;
+  function neighbors(id) {
+    var r = Math.floor(id / n), c = id % n, out = [];
+    if (c > 0) out.push(id - 1);
+    if (c < n - 1) out.push(id + 1);
+    if (r > 0) out.push(id - n);
+    if (r < n - 1) out.push(id + n);
+    return out;
+  }
+  while (remaining > 0) {
+    var size = Math.min(5, remaining);
+    var start = -1, guard = 0, cand;
+    while (start < 0 && guard++ < pieces * 3) { cand = Math.floor(rng() * pieces); if (!assigned[cand]) start = cand; }
+    if (start < 0) { for (var k = 0; k < pieces; k++) if (!assigned[k]) { start = k; break; } }
+    var hand = [start]; assigned[start] = true;
+    while (hand.length < size) {
+      var frontier = [];
+      for (var a = 0; a < hand.length; a++) {
+        var nb = neighbors(hand[a]);
+        for (var b = 0; b < nb.length; b++) if (!assigned[nb[b]] && frontier.indexOf(nb[b]) < 0) frontier.push(nb[b]);
+      }
+      if (!frontier.length) break;
+      var pick = frontier[Math.floor(rng() * frontier.length)];
+      assigned[pick] = true; hand.push(pick);
+    }
+    hands.push(hand); remaining -= hand.length;
+  }
+  // 後始末: 成長が囲んでしまった1〜2ピースの小さい手札は、隣の手札へ寄せる
+  // (寄せ先は最大7ピースまで。手札1枚だけが配られる間抜けなターンをなくす)
+  var changed = true, guard2 = 0;
+  while (changed && guard2++ < 60) {
+    changed = false;
+    for (var hi = 0; hi < hands.length && !changed; hi++) {
+      if (hands[hi].length > 2 || !hands[hi].length) continue;
+      var src = hands[hi], plan = [], movedAll = true;
+      for (var pi = 0; pi < src.length; pi++) {
+        var pid = src[pi], placed = false;
+        for (var hj = 0; hj < hands.length; hj++) {
+          if (hj === hi || hands[hj].length + plan.filter(function (pp) { return pp.to === hj; }).length >= 7) continue;
+          var adj = neighbors(pid).some(function (q) { return hands[hj].indexOf(q) >= 0; }) ||
+            plan.some(function (pp) { return pp.to === hj && neighbors(pid).indexOf(pp.id) >= 0; });
+          if (adj) { plan.push({ id: pid, to: hj }); placed = true; break; }
+        }
+        if (!placed) { movedAll = false; break; }
+      }
+      if (movedAll) {
+        plan.forEach(function (pp) { hands[pp.to].push(pp.id); });
+        hands.splice(hi, 1);
+        changed = true;
+      }
+    }
+  }
+  return hands;
+}
 var PureLogic = {
   BASE_DATE_FALLBACK: BASE_DATE_FALLBACK, DIFFICULTIES: DIFFICULTIES,
   TABSIZE: TABSIZE, JITTER: JITTER, SNAP_DIST: SNAP_DIST,
@@ -2342,7 +2404,7 @@ var PureLogic = {
   racePiecesMap: racePiecesMap, sanitizePiecesMap: sanitizePiecesMap, sanitizeBgmSync: sanitizeBgmSync,
   bestFrameTier: bestFrameTier, frameTierPieces: frameTierPieces,
   clustersInRect: clustersInRect, shiftClusters: shiftClusters,
-  scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter,
+  scatterRect: scatterRect, deskBounds: deskBounds, initialScatter: initialScatter, computeHandPartition: computeHandPartition,
   clusterCellBounds: clusterCellBounds, clampClusterToRect: clampClusterToRect,
   normalizeClustersToRect: normalizeClustersToRect, clampClustersTranslation: clampClustersTranslation,
   viewAfterResizeKeepingCenter: viewAfterResizeKeepingCenter,
@@ -3220,7 +3282,7 @@ document.addEventListener('visibilitychange', function () {
  * 掴む = 紙の「サッ」/ 置く = 木の「トッ」/ 合体 = クリック + 2 音チャイム /
  * クリア = オルゴール風アルペジオ / 蓋 = 紙の擦れ + 小さなノック。
  * AudioContext は最初のユーザー操作でだけ生成する (自動再生ポリシー)。 */
-var APP_VERSION = 'v73'; // sw.js の VERSION と一致させる (テストで照合)
+var APP_VERSION = 'v74'; // sw.js の VERSION と一致させる (テストで照合)
 /* SE音量: store.seVolume (0〜1、未保存なら 1)。実際のゲインは
  * 基準 SE_MASTER_BASE × seVolume。0.22 → 0.26 (2026-11-10) → 0.52 →
  * 1.0 (2026-11-21) でもまだ小さいという実機報告を受け、3.0 へ
@@ -3445,6 +3507,33 @@ function migrateProgressToStages(pool) {
 var difficulty = DIFFICULTIES.indexOf(store.lastDifficulty) >= 0 ? store.lastDifficulty : 36;
 var state = null; // ゲーム開始時に構築
 
+
+/* 次の手札を配る判定と配布 (てふだモード、ソロ専用)。
+ * 今の手札のピースが全部ひとつの塊に収まったら、次の手札のピースを
+ * 初期散らばりと同じ座標で単品の塊として机に追加する。 */
+function maybeDealNextHand() {
+  if (!state || !state.hands || state.handDealt >= state.hands.length) return;
+  var hand = state.hands[state.handDealt - 1];
+  if (!hand || !hand.length) return;
+  var owner = null;
+  for (var i = 0; i < state.clusters.length; i++) {
+    if (state.clusters[i].pieces.indexOf(hand[0]) >= 0) { owner = state.clusters[i]; break; }
+  }
+  if (!owner) return;
+  for (var j = 0; j < hand.length; j++) if (owner.pieces.indexOf(hand[j]) < 0) return;
+  var nextSet = new Set(state.hands[state.handDealt]);
+  var add = initialScatter(playDate, difficulty).filter(function (c) { return nextSet.has(c.pieces[0]); });
+  if (!add.length) return;
+  state.clusters = state.clusters.concat(add);
+  state.handDealt++;
+  var ids = [];
+  add.forEach(function (c) { ids.push(c.pieces[0]); });
+  startMergeFlash(ids); // 新しく配られたピースを光らせる
+  seTone([660, 990], 0.09, 0.16);
+  persistProgress();
+  updateProgressUI();
+  draw();
+}
 function newGameState(pool) {
   var prog = progressFor(playDate, difficulty);
   var gameStarted = progressIsStarted(prog);
@@ -3463,7 +3552,7 @@ function newGameState(pool) {
   } else {
     entry = stageEntry(playStage, pool);
   }
-  return {
+  var st = {
     pool: pool,
     stage: playStage,
     entry: entry,
@@ -3484,6 +3573,8 @@ function newGameState(pool) {
     previewCount: prog.previewCount || 0,
     mergeFlash: null,                 // { ids:Set, start:ms } 合体フィードバック
     devMode: gameStarted ? !!prog.dev : normalizePlayMode(store.playMode) === 'develop', // 現像モード (v53): 開始済みはセーブの dev が正
+    handMode: gameStarted ? !!prog.hand : normalizePlayMode(store.playMode) === 'hand', // てふだモード (v74): 開始済みはセーブの hand が正
+    hands: null, handDealt: 0, // てふだモードの分割と配布済み手札数 (return 直前に確定させる)
     devRevealed: new Set(developRevealedFromClusters(gameStarted ? prog.clusters : [])),
     devAnim: null, mergeAnims: [], dropAnim: null, clearGloss: null, // 手触り演出 (v53、描画専用)
     cleared: !!prog.cleared,
@@ -3495,6 +3586,18 @@ function newGameState(pool) {
     srcCanvas: null, boardPx: 0,
     resumed: prog.clusters.length > 0
   };
+  if (st.handMode) {
+    st.hands = computeHandPartition(playDate, difficulty);
+    if (gameStarted) {
+      // 配布済みの手札は「ピースが全部机にある手札」の先頭からの個数と一致する (配布は手札単位で原子的)
+      var present = new Set();
+      st.clusters.forEach(function (c) { c.pieces.forEach(function (id) { present.add(id); }); });
+      var k = 0;
+      while (k < st.hands.length && st.hands[k].every(function (id) { return present.has(id); })) k++;
+      st.handDealt = Math.max(1, k);
+    }
+  }
+  return st;
 }
 function persistProgress() {
   if (mpInRoom()) return; // 協力プレイはソロの進行中セーブと分離する (MULTIPLAYER_DESIGN §5)
@@ -3507,6 +3610,8 @@ function persistProgress() {
   prog.previewCount = state.previewCount;
   prog.cleared = state.cleared;
   prog.dev = !!state.devMode; // 現像モードのランは再開時も現像のまま (v53)
+  prog.hand = !!state.handMode; // てふだモードのランは再開時もてふだのまま (v74)
+  prog.handDealt = state.handDealt || 0;
   prog.started = state.gameStarted;
   /* ゲーム開始が確定したら、そのときのお題キーを progress に固定する
    * (以後の再開ではこのキーが最優先になり、お題が途中で変わらない) */
@@ -5219,6 +5324,7 @@ function afterBoardChange() {
   updateProgressUI();
   draw();
   if (mpInRoom() && mp.mode === 'race') { mpRaceAfterBoard(); return; } // レース: 進捗/完成を seq へ報告し、結果表示は finish の確定を待つ
+  if (!state.cleared && state.handMode && !mpInRoom()) maybeDealNextHand(); // てふだ: 手札がまとまったら次を配る
   if (!state.cleared && isComplete(state.clusters, state.n)) onClear();
 }
 /* 面は机1つだけになったので、切替 UI はズーム表示の更新のみ */
@@ -5277,7 +5383,7 @@ setInterval(function () {
 function updateProgressUI() {
   var max = 0;
   state.clusters.forEach(function (c) { if (c.pieces.length > max) max = c.pieces.length; });
-  $('progressText').textContent = '最大の塊 ' + max + ' / ' + difficulty + ' ・ 塊 ' + state.clusters.length;
+  $('progressText').textContent = (state.handMode && state.hands ? '手札 ' + state.handDealt + ' / ' + state.hands.length + ' ・ ' : '') + '最大の塊 ' + max + ' / ' + difficulty + ' ・ 塊 ' + state.clusters.length;
   $('timerText').textContent = formatTime(currentElapsed());
 }
 
@@ -8260,16 +8366,17 @@ function onDifficultyPicked(d) {
  * 進捗が消えるので「はじめから」と同じ確認モーダルを挟む */
 var pendingPlayMode = null;
 function effectivePlayMode() {
-  if (state && state.gameStarted) return state.devMode ? 'develop' : 'normal';
+  if (state && state.gameStarted) return state.devMode ? 'develop' : (state.handMode ? 'hand' : 'normal');
   return normalizePlayMode(store.playMode);
 }
 function buildPlayModeSeg() {
   var btn = $('playModeSel');
   if (!btn) return;
-  btn.textContent = effectivePlayMode() === 'develop' ? '現像' : 'ふつう';
+  var m = effectivePlayMode();
+  btn.textContent = m === 'develop' ? '現像' : (m === 'hand' ? 'てふだ' : 'ふつう');
 }
 function onPlayModePicked(mode) {
-  onPlayModeChip(mode === 'develop' ? 'develop' : 'normal');
+  onPlayModeChip(normalizePlayMode(mode));
   buildPlayModeSeg(); // 確認モーダルで止まった場合などに表示を実態へ戻す
 }
 /* ピース数/モードの選択シート (v63)。Firefox Android ではネイティブ
@@ -8282,7 +8389,7 @@ function openStartPicker(kind) {
   box.innerHTML = '';
   var cur = kind === 'difficulty' ? String(difficulty) : effectivePlayMode();
   var opts = kind === 'difficulty' ? difficultyOptions : [
-    { value: 'normal', label: 'ふつう' }, { value: 'develop', label: '現像' }
+    { value: 'normal', label: 'ふつう' }, { value: 'develop', label: '現像' }, { value: 'hand', label: 'てふだ' }
   ];
   $('startPickerTitle').textContent = kind === 'difficulty' ? 'ピース数' : 'モード';
   opts.forEach(function (o) {
@@ -8348,14 +8455,14 @@ function onPlayModeChip(mode) {
   if (state && freshStartNeedsConfirm({ started: state.gameStarted, cleared: state.cleared, clusters: state.clusters })) {
     pendingPlayMode = mode;
     $('freshConfirmText').textContent = difficulty + 'ピースの進捗は消えます。' +
-      (mode === 'develop' ? '現像モード' : 'ふつうモード') + 'ではじめから遊びますか？';
+      (mode === 'develop' ? '現像モード' : (mode === 'hand' ? 'てふだモード' : 'ふつうモード')) + 'ではじめから遊びますか？';
     $('freshConfirmModal').hidden = false;
     return;
   }
   store.playMode = mode;
   saveStore();
   if (state && state.gameStarted) { restartPuzzle(); return; } // クリア済み: 進捗を捨てて新しいモードの箱に戻る
-  if (state) state.devMode = mode === 'develop';
+  if (state) { state.devMode = mode === 'develop'; state.handMode = mode === 'hand'; }
   buildPlayModeSeg();
 }
 /* 箱は1つだけ (ステージ制)。タップで最新の未挑戦 (または再プレイ先) が開く */
@@ -9086,7 +9193,14 @@ function openBox() {
   setTimeout(function () {
     if (!state) return;
     if (action === 'open') {
-      state.clusters = initialScatter(playDate, difficulty);
+      var allScattered = initialScatter(playDate, difficulty);
+      if (state.handMode && state.hands && state.hands.length) {
+        var firstSet = new Set(state.hands[0]);
+        state.clusters = allScattered.filter(function (c) { return firstSet.has(c.pieces[0]); });
+        state.handDealt = 1;
+      } else {
+        state.clusters = allScattered;
+      }
       selection.clear(); // 散らばった新しい塊に旧選択は引き継がない
       state.gameStarted = true;
       state.phase = 'play';
@@ -9133,11 +9247,11 @@ function renderStartScreen() {
       // クリア済みのステージ×難易度は進捗サマリーの代わりにクリア表示にする
       var rec = findRecordForStage(playStage, difficulty);
       var best = rec ? rec.bestTimeSec : currentElapsed();
-      $('resumeInfo').textContent = difficulty + 'ピース ・ クリア済み ・ ベストタイム ' + formatTime(best) + (state.devMode ? ' ・ 現像モード' : '');
+      $('resumeInfo').textContent = difficulty + 'ピース ・ クリア済み ・ ベストタイム ' + formatTime(best) + (state.devMode ? ' ・ 現像モード' : '') + (state.handMode ? ' ・ てふだモード' : '');
     } else {
       var max = 0;
       state.clusters.forEach(function (c) { if (c.pieces.length > max) max = c.pieces.length; });
-      $('resumeInfo').textContent = difficulty + 'ピース ・ 最大の塊 ' + max + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed()) + (state.devMode ? ' ・ 現像モード' : '');
+      $('resumeInfo').textContent = difficulty + 'ピース ・ 最大の塊 ' + max + ' / ' + difficulty + ' ・ ' + formatTime(currentElapsed()) + (state.devMode ? ' ・ 現像モード' : '') + (state.handMode ? ' ・ てふだモード' : '');
     }
   }
   updateStartWallRow();
